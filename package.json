@@ -3,5 +3,8 @@
   "private": true,
   "engines": {
     "node": "20.x"
+  },
+  "dependencies": {
+    "viem": "^2.21.54"
   }
 }

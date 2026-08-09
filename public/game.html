@@ -953,17 +953,19 @@ async function cashOut(b){
     if(typeof window.Megapot.loadUserTickets==='function') await window.Megapot.loadUserTickets();
     cashoutsToday++;
     syncMission();
-    $('status').textContent='Entry '+(b.i+1)+' cashed at '+m.toFixed(2)+'× · house bought '+tickets+' tickets';
+    const bought = res.tickets ?? tickets;
+    const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
+    $('status').textContent='Entry '+(b.i+1)+' cashed at '+m.toFixed(2)+'× · house bought '+bought+' tickets'+txNote;
     $('status').classList.add('won');
     playCash();
     const go=$('go'+b.i);
     if(go){
       const r=go.getBoundingClientRect();
       confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
-      spawnTicketFlight(go, tickets);
+      spawnTicketFlight(go, bought);
     }
-    showTicketPreview(tickets, m);
-    maybeShare(m, tickets);
+    showTicketPreview(bought, m);
+    maybeShare(m, bought);
   }catch(err){
     console.error(err);
     $('status').textContent='House buy error — no tickets credited';
@@ -1675,9 +1677,16 @@ async function houseBuyTickets(count, recipient, meta = {}){
     });
     const j = await r.json().catch(()=>({}));
     if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
-    // On-chain only — never invent ticket rows
+    // On-chain only — never invent ticket rows client-side
     await loadUserTickets();
-    return { ok: true, onchain: true, count, ...j };
+    return {
+      ok: true,
+      onchain: true,
+      count: j.tickets ?? count,
+      tickets: j.tickets ?? count,
+      txHash: j.txHash,
+      ...j,
+    };
   }catch(e){
     return { ok: false, error: e?.message || String(e) };
   }
