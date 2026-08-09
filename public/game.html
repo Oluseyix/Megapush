@@ -1294,32 +1294,30 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
 // House wallet that receives player USDC stakes (public address only — never a private key).
 // Priority: ?treasury=0x… → localStorage → hardcoded default below.
 const PLACEHOLDER_TREASURY = '0x0000000000000000000000000000000000000001';
+function isAddr(a){ return typeof a === 'string' && /^0x[a-fA-F0-9]{40}$/.test(a); }
+function isPlaceholderTreasury(addr){
+  return !isAddr(addr)
+    || addr.toLowerCase() === PLACEHOLDER_TREASURY.toLowerCase()
+    || /^0x0{40}$/i.test(addr);
+}
 function readConfigAddress(key, fallback){
   try{
     const q = new URLSearchParams(location.search).get(key);
-    if(q && /^0x[a-fA-F0-9]{40}$/.test(q)) return q;
+    if(isAddr(q) && !isPlaceholderTreasury(q)) return q;
   }catch(_){}
   try{
     const s = localStorage.getItem(key);
-    if(s && /^0x[a-fA-F0-9]{40}$/.test(s)) return s;
+    if(isAddr(s) && !isPlaceholderTreasury(s)) return s;
   }catch(_){}
   return fallback;
 }
-// House wallet (receives stake USDC). Override via localStorage key mp_house_treasury or ?mp_house_treasury=
-let HOUSE_TREASURY = readConfigAddress(
-  'mp_house_treasury',
-  '0x804BEb025844c189b72C8D810a1A7776043677FF',
-);
+// House wallet (receives stake USDC)
+const DEFAULT_HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+let HOUSE_TREASURY = readConfigAddress('mp_house_treasury', DEFAULT_HOUSE_TREASURY);
 // Backend cashout URL. Example: 'http://localhost:8787/game/cashout'
 let HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url')) || '';
 const REFERRER = '0x0000000000000000000000000000000000000001';
 const RPC = 'https://sepolia.base.org';
-
-function isPlaceholderTreasury(addr){
-  return !addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)
-    || addr.toLowerCase() === PLACEHOLDER_TREASURY.toLowerCase()
-    || /^0x0{40}$/i.test(addr);
-}
 
 /** Ask once for house address if still placeholder (solo testing often uses your own wallet). */
 function ensureTreasuryConfigured(){
