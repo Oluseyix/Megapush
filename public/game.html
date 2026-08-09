@@ -696,7 +696,7 @@ button:focus:not(:focus-visible){outline:none}
       <p>No ticket shop. You earn lottery tickets by timing the climb.</p>
       <div class="steps">
         <div class="step"><n>1</n><div>Buy an entry with Sepolia USDC<small>Stake from your wallet</small></div></div>
-        <div class="step"><n>2</n><div>Cash out before it flies<small>$1 stake → 1 ticket on cash-out</small></div></div>
+        <div class="step"><n>2</n><div>Cash out before it flies<small>$5 @ 2× → 10 tickets · whole mult only</small></div></div>
         <div class="step"><n>3</n><div>Tickets enter the Megapot draw<small>5 numbers + bonus · daily draw</small></div></div>
       </div>
     </div>
@@ -982,11 +982,11 @@ function paintBet(b){
     if(!hasStake){
       ft.innerHTML='Pick a stake amount';
     }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
-      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+Math.max(0,Math.floor(Number(b.amt)||0))+' tix</b>';
+      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+Math.max(0,Math.floor(Number(b.amt)||0)*Math.floor(Number(b.auto)||0))+' tix</b>';
     }else if(b.autoOn){
       ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
     }else{
-      ft.innerHTML='Stake USDC · cash out → <b>'+Math.max(0,Math.floor(Number(b.amt)||0))+' tickets</b> (1:1)';
+      ft.innerHTML='Stake USDC · cash out → tickets = stake × whole mult (e.g. $5 @ 2× = 10)';
     }
   }
   if(b.state==='pending'){
@@ -1007,11 +1007,11 @@ function paintBet(b){
     st.textContent='Climbing';
     go.className='go cash';
     go.disabled=false;
-    go.textContent='Cash out · '+Math.max(0,Math.floor(Number(b.amt)||0))+' tickets';
+    go.textContent='Cash out · '+(Math.max(0,Math.floor(Number(b.amt)||0)*Math.floor(Number(m)||0)))+' tickets';
     ft.innerHTML=b.autoOn?'Auto at <b>'+b.auto+'×</b>':'Manual cash out';
   }
   if(b.state==='won'){
-    const tixEst = Math.max(0, Math.floor(Number(b.amt)||0));
+    const tixEst = Math.max(0, Math.floor(Number(b.amt)||0) * Math.floor(Number(b.at)||0));
     const tixShow = b.ticketsBought != null ? b.ticketsBought : tixEst;
     st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Buying tickets' : 'Cashed out');
     go.className='go wait';
@@ -1160,8 +1160,9 @@ function maybeShare(at, tickets){
 async function cashOut(b){
   if(b.state!=='live') return;
   const at = m;
-  // Tickets = stake 1:1 (not stake×mult). Mult only decides win vs crash.
-  const tickets = Math.max(0, Math.floor(Number(b.amt) || 0));
+  // Tickets = floor(stake) × floor(mult) — whole numbers only (no decimal mult)
+  // e.g. $5 @ 2× → 10, $5 @ 3× → 15, $5 @ 1.2× → 5 (floor 1.2 = 1)
+  const tickets = Math.max(0, Math.floor(Number(b.amt) || 0) * Math.floor(Number(at) || 0));
   const entryId = b.entryId || ((window.Megapot?.account || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
   const stakeAmt = Number(b.amt) || 0;
 

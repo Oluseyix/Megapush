@@ -76,17 +76,17 @@ module.exports = async function handler(req, res) {
 
   const stake = Number(body.stake);
   const multiplier = Number(body.multiplier);
-  // Tickets are stake 1:1 (USDC dollars → tickets). Multiplier is game-only, not a money mult.
+  // Tickets = floor(stake) × floor(mult) — whole numbers only (no decimal mult)
   let tickets = Math.floor(Number(body.count));
   if (!Number.isFinite(tickets) || tickets <= 0) {
-    if (Number.isFinite(stake) && stake > 0) {
-      tickets = Math.floor(stake);
-    }
+    const s = Number.isFinite(stake) && stake > 0 ? Math.floor(stake) : 0;
+    const mx = Number.isFinite(multiplier) && multiplier > 0 ? Math.floor(multiplier) : 0;
+    if (s > 0 && mx > 0) tickets = s * mx;
   }
   if (!Number.isFinite(tickets) || tickets <= 0) {
     return res.status(400).json({
       ok: false,
-      error: 'tickets must be ≥ 1 (pass count or stake amount)',
+      error: 'tickets must be ≥ 1 (pass count or stake × whole mult)',
     });
   }
 
