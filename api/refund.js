@@ -21,9 +21,13 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Use POST' });
   }
 
-  const key = process.env.HOUSE_PRIVATE_KEY;
+  const key = (process.env.HOUSE_PRIVATE_KEY || process.env.HOUSE_KEY || '').trim();
   if (!key) {
-    return res.status(500).json({ ok: false, error: 'HOUSE_PRIVATE_KEY not configured' });
+    return res.status(500).json({
+      ok: false,
+      error:
+        'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Project → Settings → Environment Variables (Production + Preview), then Redeploy.',
+    });
   }
 
   let body = req.body;

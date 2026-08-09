@@ -13,7 +13,6 @@ let houseTxChain = Promise.resolve();
 /** @type {null | Promise<{ ready: true, publicClient: any, walletClient: any, account: any, house: string, usdcAbi: any, megapotAbi: any, PRECISE_UNIT: bigint, SOURCE: `0x${string}`, USDC: string, RANDOM_BUYER: string, JACKPOT: string, maxUint256: bigint, formatUnits: Function }>} */
 let depsPromise = null;
 let cachedTicketPrice = null; // { value: bigint, at: number }
-let knownAllowanceOk = false; // max approve already set this isolate
 
 function withHouseLock(fn) {
   const run = houseTxChain.then(() => fn());
@@ -59,8 +58,15 @@ async function getDeps() {
       const { privateKeyToAccount } = await import('viem/accounts');
       const { baseSepolia } = await import('viem/chains');
 
-      const key = process.env.HOUSE_PRIVATE_KEY;
-      if (!key) throw Object.assign(new Error('HOUSE_PRIVATE_KEY not configured'), { statusCode: 500 });
+      const key = (process.env.HOUSE_PRIVATE_KEY || process.env.HOUSE_KEY || '').trim();
+      if (!key) {
+        throw Object.assign(
+          new Error(
+            'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Settings → Environment Variables, then Redeploy.',
+          ),
+          { statusCode: 500 },
+        );
+      }
 
       const RPC = process.env.RPC_URL || 'https://sepolia.base.org';
       const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -136,8 +142,13 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Use POST' });
   }
 
-  if (!process.env.HOUSE_PRIVATE_KEY) {
-    return res.status(500).json({ ok: false, error: 'HOUSE_PRIVATE_KEY not configured' });
+  const keyCheck = (process.env.HOUSE_PRIVATE_KEY || process.env.HOUSE_KEY || '').trim();
+  if (!keyCheck) {
+    return res.status(500).json({
+      ok: false,
+      error:
+        'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Project → Settings → Environment Variables (Production + Preview), then Redeploy.',
+    });
   }
 
   let body = req.body;
@@ -280,31 +291,40 @@ module.exports = async function handler(req, res) {
 
       const cost = ticketPrice * BigInt(tickets);
 
-      // Fast approve: skip if we already max-approved this isolate, else check once
-      if (!knownAllowanceOk) {
-        let allowance = await publicClient.readContract({
+      // ALWAYS re-check allowance for this cost (do not trust isolate cache — caused
+      // "ERC20: transfer amount exceeds allowance" reverts on cash-out).
+      let allowance = await publicClient.readContract({
+        address: USDC,
+        abi: usdcAbi,
+        functionName: 'allowance',
+        args: [house, RANDOM_BUYER],
+      });
+      if (allowance < cost) {
+        if (allowance > 0n) {
+          await sendAndWait({
+            address: USDC,
+            abi: usdcAbi,
+            functionName: 'approve',
+            args: [RANDOM_BUYER, 0n],
+          });
+        }
+        await sendAndWait({
+          address: USDC,
+          abi: usdcAbi,
+          functionName: 'approve',
+          args: [RANDOM_BUYER, maxUint256],
+        });
+        allowance = await publicClient.readContract({
           address: USDC,
           abi: usdcAbi,
           functionName: 'allowance',
           args: [house, RANDOM_BUYER],
         });
         if (allowance < cost) {
-          if (allowance > 0n) {
-            await sendAndWait({
-              address: USDC,
-              abi: usdcAbi,
-              functionName: 'approve',
-              args: [RANDOM_BUYER, 0n],
-            });
-          }
-          await sendAndWait({
-            address: USDC,
-            abi: usdcAbi,
-            functionName: 'approve',
-            args: [RANDOM_BUYER, maxUint256],
-          });
+          throw new Error(
+            `USDC allowance still too low after approve (have ${allowance}, need ${cost})`,
+          );
         }
-        knownAllowanceOk = true;
       }
 
       async function countPlayerTickets() {
@@ -417,7 +437,6 @@ module.exports = async function handler(req, res) {
   } catch (e) {
     console.error('cashout error', e?.shortMessage || e?.message || e);
     depsPromise = null; // reset clients on hard failure
-    knownAllowanceOk = false;
     const status = e?.statusCode || 500;
     return res.status(status).json({
       ok: false,
