@@ -1,0 +1,17 @@
+{
+  "name": "MegaPush",
+  "short_name": "MegaPush",
+  "description": "Crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#AEB6F8",
+  "theme_color": "#0E6F62",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

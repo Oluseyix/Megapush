@@ -4,7 +4,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MegaPush</title>
+<title>MegaPush — Base Sepolia</title>
+<meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
+<meta name="application-name" content="MegaPush">
+<meta name="theme-color" content="#0E6F62">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/site.webmanifest">
+<meta property="og:title" content="MegaPush">
+<meta property="og:description" content="Cash out for Megapot lottery tickets on Base Sepolia.">
+<meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -1378,88 +1386,167 @@ function isMobile(){
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
 }
 
+function ensureTopLevelWindow(){
+  // Connections from iframes look suspicious to MetaMask
+  try{
+    if(window.top && window.top !== window.self){
+      const target = location.href;
+      try{ window.top.location.href = target; }catch(_){
+        window.open(target, '_blank', 'noopener,noreferrer');
+      }
+      return false;
+    }
+  }catch(_){}
+  return true;
+}
+
 function openWalletInstallHelp(){
-  const dappHost = location.host + location.pathname + location.search;
-  const dappUrl = location.href;
   if(isMobile()){
-    // Open current page inside MetaMask in-app browser
-    const mm = 'https://metamask.app.link/dapp/' + dappHost.replace(/^https?:\/\//, '');
+    // Prefer opening the HTTPS origin (not a third-party deep-link wrapper when possible)
     const go = confirm(
       'No browser wallet detected.\n\n' +
-      'On mobile, open this site inside MetaMask (or Coinbase Wallet) browser.\n\n' +
-      'OK = open in MetaMask\nCancel = stay here'
+      'On phone: open MetaMask → Browser tab → paste this site URL.\n\n' +
+      'OK = copy site URL'
     );
-    if(go) window.location.href = mm;
+    if(go){
+      navigator.clipboard?.writeText(location.href).catch(()=>{});
+      alert('URL copied. Open MetaMask → Browser → paste & go.');
+    }
     return;
   }
   const go = confirm(
     'No wallet extension detected in this browser.\n\n' +
-    'Install MetaMask (or another Base-compatible wallet), then refresh this page.\n\n' +
-    'OK = MetaMask download page'
+    'Install MetaMask for Chrome/Firefox/Brave, then refresh.\n\n' +
+    'OK = MetaMask download'
   );
   if(go) window.open('https://metamask.io/download/', '_blank', 'noopener,noreferrer');
 }
 
-async function ensureBaseSepolia(provider){
+async function getChainIdHex(provider){
+  try{
+    const id = await provider.request({ method: 'eth_chainId' });
+    return String(id).toLowerCase();
+  }catch(_){ return null; }
+}
+
+async function ensureBaseSepolia(provider, { interactive = true } = {}){
+  const want = '0x14a34';
+  const cur = await getChainIdHex(provider);
+  if(cur === want) return true;
+  if(!interactive) return false;
   try{
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: '0x14a34' }],
+      params: [{ chainId: want }],
     });
+    return true;
   }catch(switchErr){
     const code = switchErr?.code ?? switchErr?.data?.originalError?.code;
+    if(code === 4001) return false;
     if(code === 4902 || /unrecognized chain|unknown chain/i.test(String(switchErr?.message || ''))){
+      // Adding a network is a second, explicit wallet prompt — only when needed
       await provider.request({
         method: 'wallet_addEthereumChain',
         params: [{
-          chainId: '0x14a34',
+          chainId: want,
           chainName: 'Base Sepolia',
           nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
           rpcUrls: ['https://sepolia.base.org'],
           blockExplorerUrls: ['https://sepolia.basescan.org'],
         }],
       });
-    } else if(code !== 4001){
-      // User rejected or other — rethrow non-cancel
-      throw switchErr;
+      return true;
     }
+    throw switchErr;
   }
 }
 
-async function connectWallet(){
+function bindProviderListeners(provider){
+  if(!provider?.on || providerListenersBound) return;
+  providerListenersBound = true;
+  provider.on('accountsChanged', (accs) => {
+    const b = $('walletBtn');
+    if(!accs?.length){
+      account = null;
+      walletClient = null;
+      if(b){ b.textContent = 'Connect'; b.classList.remove('on'); }
+      return;
+    }
+    account = accs[0];
+    walletClient = createWalletClient({
+      account: accs[0], chain: baseSepolia, transport: custom(provider),
+    });
+    if(b){ b.textContent = short(accs[0]); b.classList.add('on'); }
+    loadUserTickets();
+    refreshUsdcBalance();
+    loadWins();
+  });
+  provider.on('chainChanged', () => {
+    // Soft refresh of clients; do not force another add-chain popup
+    if(account && eip1193){
+      walletClient = createWalletClient({
+        account, chain: baseSepolia, transport: custom(eip1193),
+      });
+    }
+  });
+}
+
+/**
+ * Connect wallet with a clean MetaMask permission flow:
+ * 1) eth_accounts (silent) or eth_requestAccounts only — no deprecated enable()
+ * 2) switch/add Base Sepolia only if needed (separate prompts)
+ */
+async function connectWallet(opts = {}){
+  const { silent = false } = opts;
   const btn = $('walletBtn');
   try{
-    if(btn){ btn.disabled = true; btn.textContent = '…'; }
+    if(!ensureTopLevelWindow()) return null;
+    if(!silent && btn){ btn.disabled = true; btn.textContent = '…'; }
 
-    // Resolve provider (wait briefly for late injection)
-    eip1193 = getInjectedProviderSync() || await waitForInjectedProvider(2800);
+    eip1193 = getInjectedProviderSync() || await waitForInjectedProvider(silent ? 800 : 2800);
     if(!eip1193){
       if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
-      openWalletInstallHelp();
+      if(!silent) openWalletInstallHelp();
       return null;
     }
 
-    // Some wallets need enable() legacy path
-    let accounts;
+    let accounts = [];
     try{
-      accounts = await eip1193.request({ method: 'eth_requestAccounts' });
-    }catch(reqErr){
-      if(typeof eip1193.enable === 'function'){
-        accounts = await eip1193.enable();
-      } else {
-        throw reqErr;
+      accounts = await eip1193.request({ method: 'eth_accounts' }) || [];
+    }catch(_){ accounts = []; }
+
+    // Only open the MetaMask connect popup when the user clicked Connect
+    if(!accounts.length){
+      if(silent){
+        if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
+        return null;
       }
+      // Prefer permission request (clearer purpose) then accounts
+      try{
+        await eip1193.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }],
+        });
+      }catch(permErr){
+        // Older wallets may not support wallet_requestPermissions — fall through
+        if(permErr?.code === 4001) throw permErr;
+      }
+      accounts = await eip1193.request({ method: 'eth_requestAccounts' });
     }
+
     const addr = accounts?.[0];
     if(!addr){
       throw new Error('No account returned from wallet');
     }
 
+    // Chain switch only after accounts are known; skip on silent reconnect if already ok
     try{
-      await ensureBaseSepolia(eip1193);
+      await ensureBaseSepolia(eip1193, { interactive: !silent });
     }catch(e){
       console.warn('chain switch', e);
-      // Continue if user dismissed — still connect on whatever chain
+      if($('status') && !silent){
+        $('status').textContent = 'Connected — switch MetaMask network to Base Sepolia to play on-chain';
+      }
     }
 
     account = addr;
@@ -1468,36 +1555,7 @@ async function connectWallet(){
       chain: baseSepolia,
       transport: custom(eip1193),
     });
-
-    // Keep session in sync with wallet (bind once)
-    if(eip1193.on && !providerListenersBound){
-      providerListenersBound = true;
-      eip1193.on('accountsChanged', (accs) => {
-        const b = $('walletBtn');
-        if(!accs?.length){
-          account = null;
-          walletClient = null;
-          if(b){ b.textContent = 'Connect'; b.classList.remove('on'); }
-          return;
-        }
-        account = accs[0];
-        walletClient = createWalletClient({
-          account: accs[0], chain: baseSepolia, transport: custom(eip1193),
-        });
-        if(b){ b.textContent = short(accs[0]); b.classList.add('on'); }
-        loadUserTickets();
-        refreshUsdcBalance();
-        loadWins();
-      });
-      eip1193.on('chainChanged', () => {
-        if(account && eip1193){
-          walletClient = createWalletClient({
-            account, chain: baseSepolia, transport: custom(eip1193),
-          });
-          ensureBaseSepolia(eip1193).catch(()=>{});
-        }
-      });
-    }
+    bindProviderListeners(eip1193);
 
     if(btn){ btn.disabled = false; btn.textContent = short(addr); btn.classList.add('on'); }
     await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
@@ -1505,12 +1563,10 @@ async function connectWallet(){
   }catch(e){
     console.error('connectWallet', e);
     const msg = e?.shortMessage || e?.message || String(e);
-    if(e?.code === 4001){
-      // user rejected
-    }else if($('status')){
+    if(e?.code !== 4001 && $('status') && !silent){
       $('status').textContent = 'Wallet: ' + msg.slice(0, 80);
     }
-    if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
+    if(btn){ btn.disabled = false; btn.textContent = account ? short(account) : 'Connect'; }
     return null;
   }
 }
@@ -1835,13 +1891,11 @@ refreshTicketPrice();
 const btn = $('walletBtn');
 if(btn) btn.addEventListener('click', () => connectWallet());
 
-// Auto-reconnect if wallet already authorized (after provider injects)
-waitForInjectedProvider(2000).then((provider) => {
+// Silent reconnect only — never pop MetaMask until user clicks Connect
+waitForInjectedProvider(1500).then((provider) => {
   if(!provider) return;
   eip1193 = provider;
-  provider.request({ method: 'eth_accounts' }).then((accs) => {
-    if(accs?.[0]) connectWallet();
-  }).catch(()=>{});
+  connectWallet({ silent: true });
 }).catch(()=>{});
 
 // Wire Claim all button
