@@ -1305,8 +1305,11 @@ function readConfigAddress(key, fallback){
   }catch(_){}
   return fallback;
 }
-// SET THIS to your house wallet (or use localStorage / prompt on first stake)
-let HOUSE_TREASURY = readConfigAddress('mp_house_treasury', PLACEHOLDER_TREASURY);
+// House wallet (receives stake USDC). Override via localStorage key mp_house_treasury or ?mp_house_treasury=
+let HOUSE_TREASURY = readConfigAddress(
+  'mp_house_treasury',
+  '0x804BEb025844c189b72C8D810a1A7776043677FF',
+);
 // Backend cashout URL. Example: 'http://localhost:8787/game/cashout'
 let HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url')) || '';
 const REFERRER = '0x0000000000000000000000000000000000000001';
