@@ -439,25 +439,69 @@ nav::-webkit-scrollbar{display:none}
 .wallet-btn.on{background:var(--teal-2)}
 .wallet-btn:disabled{opacity:.6}
 
+/* Mobile: keep both entries side-by-side + compact so mult stays in view */
 @media(max-width:680px){
-  .bets{grid-template-columns:1fr}
+  .bets{grid-template-columns:1fr 1fr;gap:6px}
   .stub{display:none}
   .tiers{grid-template-columns:repeat(3,1fr)}
-  .stage{height:180px}
-  header{padding:10px 12px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand right" "nav nav";gap:8px 10px;align-items:center}
+  .stage{height:168px;margin:4px auto 6px}
+  .shell{padding:6px;border-radius:14px;margin-bottom:8px}
+  .mega{margin:0 0 8px;padding:10px 12px}
+  .mega .fig{font-size:clamp(22px,6.5vw,30px)}
+  .hero{padding:4px 0 6px}
+  .hero .lab{margin-bottom:2px}
+  .mult{font-size:clamp(40px,12vw,72px);letter-spacing:-2px}
+  .status{font-size:12px;margin:6px 0 4px;min-height:16px;padding:0 4px}
+  .prev-mults{margin:2px 0 4px;min-height:22px;gap:4px}
+  .prev-mults span{font-size:10px;padding:2px 5px}
+  header{padding:8px 10px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand right" "nav nav";gap:6px 8px;align-items:center}
   .header-left{display:contents}
-  .brand{grid-area:brand;font-size:16px}
-  nav{grid-area:nav;width:100%;justify-content:flex-start;gap:4px}
-  .tab{flex:1;padding:10px 8px;font-size:12.5px;min-height:42px;text-align:center;justify-content:center}
-  .right{grid-area:right;gap:6px}
-  .bal,.tix-chip{min-height:36px;display:inline-flex;align-items:center;font-size:12px;padding:6px 10px}
-  .wrap{padding:14px 12px calc(40px + var(--safe-b))}
-  .hero{padding:12px 0 14px}
+  .brand{grid-area:brand;font-size:15px}
+  nav{grid-area:nav;width:100%;justify-content:flex-start;gap:3px}
+  .tab{flex:1;padding:8px 6px;font-size:12px;min-height:38px;text-align:center;justify-content:center}
+  .right{grid-area:right;gap:5px}
+  .bal,.tix-chip{min-height:32px;display:inline-flex;align-items:center;font-size:11px;padding:5px 8px}
+  .wrap{padding:8px 10px calc(28px + var(--safe-b))}
+  .bet{padding:8px;border-radius:12px;border-width:1.5px}
+  .bet-top{margin-bottom:5px}
+  .bet-top .lab{font-size:9.5px;letter-spacing:1px}
+  .state{font-size:9px}
+  .pills{gap:3px;margin-bottom:5px}
+  .pill{padding:5px 0;border-radius:7px;font-size:10.5px;min-height:32px;border-width:1px}
+  .amt{width:min(100%,128px);max-width:128px;margin:0 auto 5px;padding:2px;border-radius:9px}
+  .rnd{width:30px;height:30px;font-size:14px}
+  .amt input{font-size:14px;max-width:56px}
+  .auto{padding:5px 6px;margin-bottom:5px;min-height:40px;gap:6px;border-radius:10px}
+  .auto .lab{font-size:8.5px;letter-spacing:.6px}
+  .auto-right{gap:5px}
+  .auto-mult{width:52px;min-width:52px;height:32px;font-size:13px;border-radius:8px;padding:0 4px}
+  .auto-mult::placeholder{font-size:10px}
+  .toggle{width:40px;height:24px;border-radius:12px}
+  .toggle i{width:16px;height:16px;top:4px;left:4px}
+  .toggle.on i{transform:translateX(16px)}
+  .go{padding:9px 6px;border-radius:9px;font-size:11px;min-height:40px;line-height:1.15}
+  .foot{font-size:9px;margin-top:4px;line-height:1.25}
+  .pot{width:100px;height:40px}
+  .pot-wrap{width:100px;height:40px;bottom:12px}
+  .plume{height:110px}
 }
 @media(max-width:380px){
-  .tab{padding:7px 8px;font-size:11.5px}
-  .bal{font-size:11.5px;padding:6px 8px}
-  .tix-chip{font-size:10px;padding:5px 7px}
+  /* Still two columns — compress further, never stack */
+  .bets{grid-template-columns:1fr 1fr;gap:4px}
+  .tab{padding:7px 4px;font-size:11px}
+  .bal{font-size:10.5px;padding:5px 6px}
+  .tix-chip{font-size:9.5px;padding:4px 6px}
+  .stage{height:150px}
+  .mult{font-size:clamp(36px,11vw,56px)}
+  .bet{padding:6px}
+  .pill{font-size:9.5px;min-height:28px;padding:4px 0}
+  .amt{max-width:112px}
+  .rnd{width:26px;height:26px;font-size:13px}
+  .amt input{font-size:13px;max-width:48px}
+  .auto-mult{width:46px;min-width:46px;height:28px;font-size:12px}
+  .go{font-size:10px;min-height:36px;padding:8px 4px}
+  .foot{font-size:8px}
+  .wrap{padding:6px 8px calc(24px + var(--safe-b))}
 }
 @media(prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
 :focus-visible{outline:3px solid var(--blue);outline-offset:3px;border-radius:8px}
