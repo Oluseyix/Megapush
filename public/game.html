@@ -599,7 +599,7 @@ button:focus:not(:focus-visible){outline:none}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <div>
           <div class="card-lab">Today's drawing</div>
-          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> live tickets · 5 + bonus</div>
+          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets (today + recent draws) · 5 + bonus</div>
         </div>
         <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink)" id="tixTimer">4h 12m</div>
       </div>
@@ -815,10 +815,10 @@ function renderTickets(){
     <div class="tix-row">
       <div class="tix-id">#${i+1}</div>
       <div class="tix-nums">
-        ${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}
+        ${(t.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
         <span class="bonus">${pad(t.bonus)}</span>
       </div>
-      <div class="tix-meta live">Live</div>
+      <div class="tix-meta live">${t.drawingLabel || 'Live'}</div>
     </div>
   `).join('');
 }
@@ -852,6 +852,19 @@ window.MegaPushUI = {
   renderTickets,
 };
 renderTickets();
+// Instant restore of last session tickets (survives refresh until chain reloads)
+try{
+  const last = localStorage.getItem('mp_last_wallet');
+  if(last){
+    const raw = localStorage.getItem('mp_tickets_'+last);
+    if(raw){
+      const j = JSON.parse(raw);
+      if(j && Array.isArray(j.tickets) && j.tickets.length){
+        window.MegaPushUI.applyTickets(j.tickets);
+      }
+    }
+  }
+}catch(_){}
 
 const pastDraws=[]; // filled from wins API when wallet connected
 
@@ -1676,7 +1689,7 @@ document.querySelectorAll('#nav .tab').forEach(tab=>{
     if(page) page.classList.add('on');
     // Re-pull on-chain tickets when opening Tickets (fixes stale empty list)
     if(tab.dataset.page === 'tickets' && window.Megapot?.loadUserTickets){
-      window.Megapot.loadUserTickets({ retries: 2, delayMs: 800 }).catch(()=>{});
+      window.Megapot.loadUserTickets({ retries: 3, delayMs: 400, lookback: 10 }).catch(()=>{});
     }
   });
 });
@@ -2170,15 +2183,22 @@ async function houseBuyTickets(count, recipient, meta = {}){
     if(bought <= 0){
       return { ok: false, error: 'House buy returned 0 tickets' };
     }
-    // Instant chip bump + background chain sync (do not await long polls)
+    // Bump chip, then load ALL recent drawings until count catches up
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
     if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
-    loadUserTickets({ expectAtLeast: before + 1, retries: 5, delayMs: 350 }).catch(()=>{});
+    const loaded = await loadUserTickets({
+      expectAtLeast: before + bought,
+      retries: 8,
+      delayMs: 500,
+      lookback: 10,
+    });
+    const actual = Array.isArray(loaded) ? loaded.length : (window.MegaPushUI?.ticketCount || before + bought);
     return {
       ok: true,
       onchain: true,
       count: bought,
       tickets: bought,
+      actualOnchain: actual,
       txHash: j.txHash,
       houseDebitedUsdc: j.houseDebitedUsdc,
       house: j.house,
@@ -2189,64 +2209,137 @@ async function houseBuyTickets(count, recipient, meta = {}){
   }
 }
 
-function applyTicketsToUi(mapped){
-  if(window.MegaPushUI && typeof window.MegaPushUI.applyTickets === 'function'){
-    return window.MegaPushUI.applyTickets(mapped);
-  }
-  // Fallback if bridge missing
-  const list = $('tixList');
-  if(list){
-    list.innerHTML = mapped.length ? mapped.map((t,i) =>
-      `<div class="tix-row"><div class="tix-id">#${i+1}</div>`+
-      `<div class="tix-nums">${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
-      `<div class="tix-meta live">Live</div></div>`
-    ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets yet · cash out a climb to earn them</div>';
-  }
-  if($('tixBal')) $('tixBal').textContent = String(mapped.length);
-  if($('tixCount')) $('tixCount').textContent = String(mapped.length);
-  return mapped.length;
+function ticketCacheKey(addr){
+  return 'mp_tickets_' + String(addr || '').toLowerCase();
 }
 
-function clearTicketsUi(){
+function saveTicketCache(addr, mapped){
+  try{
+    if(!addr) return;
+    localStorage.setItem(ticketCacheKey(addr), JSON.stringify({
+      at: Date.now(),
+      tickets: mapped || [],
+    }));
+    localStorage.setItem('mp_last_wallet', String(addr).toLowerCase());
+  }catch(_){}
+}
+
+function readTicketCache(addr){
+  try{
+    const raw = localStorage.getItem(ticketCacheKey(addr));
+    if(!raw) return null;
+    const j = JSON.parse(raw);
+    if(!j || !Array.isArray(j.tickets)) return null;
+    return j.tickets;
+  }catch(_){ return null; }
+}
+
+function applyTicketsToUi(mapped, opts = {}){
+  const list = Array.isArray(mapped) ? mapped : [];
+  if(window.MegaPushUI && typeof window.MegaPushUI.applyTickets === 'function'){
+    window.MegaPushUI.applyTickets(list);
+  } else {
+    const el = $('tixList');
+    if(el){
+      el.innerHTML = list.length ? list.map((t,i) =>
+        `<div class="tix-row"><div class="tix-id">#${i+1}</div>`+
+        `<div class="tix-nums">${(t.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
+        `<div class="tix-meta live">${t.drawingLabel || 'Live'}</div></div>`
+      ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets yet · cash out a climb to earn them</div>';
+    }
+    if($('tixBal')) $('tixBal').textContent = String(list.length);
+    if($('tixCount')) $('tixCount').textContent = String(list.length);
+  }
+  if(account && !opts.skipCache) saveTicketCache(account, list);
+  return list.length;
+}
+
+function clearTicketsUi(opts = {}){
+  if(opts.keepCache){
+    // only wipe UI numbers if explicitly disconnecting without cache restore
+  }
   if(window.MegaPushUI && typeof window.MegaPushUI.clearTickets === 'function'){
     window.MegaPushUI.clearTickets();
-    return;
+  } else {
+    if($('tixBal')) $('tixBal').textContent = '0';
+    if($('tixCount')) $('tixCount').textContent = '0';
+    const el = $('tixList');
+    if(el) el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
   }
-  if($('tixBal')) $('tixBal').textContent = '0';
-  if($('tixCount')) $('tixCount').textContent = '0';
+  if(opts.dropCache && account){
+    try{ localStorage.removeItem(ticketCacheKey(account)); }catch(_){}
+  }
+}
+
+function restoreTicketCacheFor(addr){
+  const cached = readTicketCache(addr);
+  if(cached && cached.length){
+    applyTicketsToUi(cached, { skipCache: true });
+    return cached;
+  }
+  return null;
 }
 
 /**
- * Load on-chain tickets into classic UI via window.MegaPushUI bridge.
- * opts.expectAtLeast — poll until count >= this or retries exhausted (RPC index lag).
+ * Load tickets across recent drawings (not only currentDrawingId).
+ * Tickets from the previous drawing stay visible so a refresh does not wipe them.
  */
 async function loadUserTickets(opts = {}){
   const retries = Math.max(0, Number(opts.retries) || 0);
-  const delayMs = Math.max(200, Number(opts.delayMs) || 1000);
+  const delayMs = Math.max(150, Number(opts.delayMs) || 400);
   const expectAtLeast = opts.expectAtLeast != null ? Math.max(0, Math.floor(Number(opts.expectAtLeast))) : null;
+  const lookback = Math.max(1, Math.min(12, Number(opts.lookback) || 8));
 
   if(!account){
-    clearTicketsUi();
+    // Do NOT wipe — restore last wallet cache if present
+    try{
+      const last = localStorage.getItem('mp_last_wallet');
+      if(last) restoreTicketCacheFor(last);
+    }catch(_){}
     return [];
   }
+
+  // Instant paint from cache while chain loads
+  restoreTicketCacheFor(account);
 
   let lastMapped = [];
   for(let attempt = 0; attempt <= retries; attempt++){
     try{
-      // Always re-read drawing id so we don't stick to a stale round
       drawingId = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
-      const tickets = await publicClient.readContract({
-        address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, drawingId],
-      });
-      const arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
-      lastMapped = arr.map((t, i) => ({
-        // Display uses 1-based index (#1, #2…) — raw NFT id is huge and not user-facing
-        n: i + 1,
-        tokenId: t.ticketId != null ? String(t.ticketId) : String(i + 1),
-        picks: (t.normals || []).map(Number),
-        bonus: Number(t.bonusball),
-        status: 'live',
-      }));
+      const current = typeof drawingId === 'bigint' ? drawingId : BigInt(drawingId);
+      const drawingIds = [];
+      for(let i = 0; i < lookback; i++){
+        const d = current - BigInt(i);
+        if(d < 0n) break;
+        drawingIds.push(d);
+      }
+
+      const byToken = new Map();
+      for(const d of drawingIds){
+        try{
+          const tickets = await publicClient.readContract({
+            address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, d],
+          });
+          const arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
+          const isCurrent = d === current;
+          for(const t of arr){
+            const tokenId = t.ticketId != null ? String(t.ticketId) : '';
+            if(!tokenId || byToken.has(tokenId)) continue;
+            byToken.set(tokenId, {
+              tokenId,
+              picks: (t.normals || []).map(Number),
+              bonus: Number(t.bonusball),
+              status: 'live',
+              drawingId: String(d),
+              drawingLabel: isCurrent ? 'Live' : ('Draw #'+String(d)),
+            });
+          }
+        }catch(e){
+          console.warn('getUserTickets drawing', String(d), e);
+        }
+      }
+
+      lastMapped = Array.from(byToken.values()).map((t, i) => ({ ...t, n: i + 1 }));
       applyTicketsToUi(lastMapped);
 
       if(expectAtLeast == null || lastMapped.length >= expectAtLeast) return lastMapped;
@@ -2361,8 +2454,8 @@ function disconnectWallet(){
   if(typeof window.setUnclaimedWinnings === 'function'){
     window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
   }
-  // Clear ticket UI to empty (no paper data)
-  clearTicketsUi();
+  // Clear live UI but keep localStorage cache so refresh can restore
+  clearTicketsUi({ dropCache: false });
   if($('status')) $('status').textContent = 'Wallet disconnected';
   return true;
 }

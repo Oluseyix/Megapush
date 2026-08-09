@@ -78,6 +78,11 @@ async function getDeps() {
         'function ticketPrice() view returns (uint256)',
         'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
       ]);
+      const ticketReadAbi = parseAbi([
+        'function currentDrawingId() view returns (uint256)',
+        'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
+      ]);
+      const TICKET_NFT = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
 
       const pk = key.startsWith('0x') ? key : `0x${key}`;
       const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
@@ -101,6 +106,8 @@ async function getDeps() {
         house,
         usdcAbi,
         megapotAbi,
+        ticketReadAbi,
+        TICKET_NFT,
         PRECISE_UNIT,
         SOURCE,
         USDC,
@@ -179,6 +186,8 @@ module.exports = async function handler(req, res) {
         house,
         usdcAbi,
         megapotAbi,
+        ticketReadAbi,
+        TICKET_NFT,
         PRECISE_UNIT,
         SOURCE,
         USDC,
@@ -298,9 +307,40 @@ module.exports = async function handler(req, res) {
         knownAllowanceOk = true;
       }
 
-      // Buy in chunks of ≤10 (RandomBuyer limit). Sequential nonces, no extra sleep.
+      async function countPlayerTickets() {
+        try {
+          const drawingId = await publicClient.readContract({
+            address: JACKPOT,
+            abi: ticketReadAbi,
+            functionName: 'currentDrawingId',
+          });
+          // Current + previous drawings (drawing can roll mid-session)
+          let total = 0;
+          for (let i = 0; i < 3; i++) {
+            const d = drawingId - BigInt(i);
+            if (d < 0n) break;
+            try {
+              const rows = await publicClient.readContract({
+                address: TICKET_NFT,
+                abi: ticketReadAbi,
+                functionName: 'getUserTickets',
+                args: [recipient, d],
+              });
+              total += Array.isArray(rows) ? rows.length : 0;
+            } catch (_) {}
+          }
+          return total;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      const beforeCount = await countPlayerTickets();
+
+      // Buy in chunks of ≤10 (RandomBuyer limit)
       const buyTxs = [];
       let remaining = tickets;
+      let bought = 0;
       while (remaining > 0) {
         const chunk = Math.min(10, remaining);
         const hash = await sendAndWait({
@@ -310,26 +350,65 @@ module.exports = async function handler(req, res) {
           args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
         });
         buyTxs.push(hash);
+        bought += chunk;
         remaining -= chunk;
       }
 
-      // Receipt success = tickets bought. Do not block on balance re-reads.
+      // Confirm on-chain; if short (RPC lag or partial), retry missing tickets
+      let afterCount = beforeCount;
+      if (beforeCount != null) {
+        for (let attempt = 0; attempt < 6; attempt++) {
+          await sleep(400 + attempt * 150);
+          afterCount = await countPlayerTickets();
+          if (afterCount != null && afterCount >= beforeCount + tickets) break;
+        }
+        const have = afterCount != null ? afterCount - beforeCount : bought;
+        let missing = tickets - Math.max(0, have);
+        // Safety: only top-up a few times if chain still short
+        let topUps = 0;
+        while (missing > 0 && topUps < 3) {
+          const chunk = Math.min(10, missing);
+          const hash = await sendAndWait({
+            address: RANDOM_BUYER,
+            abi: megapotAbi,
+            functionName: 'buyTickets',
+            args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
+          });
+          buyTxs.push(hash);
+          bought += chunk;
+          topUps++;
+          await sleep(500);
+          afterCount = await countPlayerTickets();
+          const have2 = afterCount != null ? afterCount - beforeCount : bought;
+          missing = tickets - Math.max(0, have2);
+        }
+      }
+
+      const delivered =
+        beforeCount != null && afterCount != null
+          ? Math.max(0, afterCount - beforeCount)
+          : bought;
+
       return {
         ok: true,
         txHash: buyTxs[buyTxs.length - 1],
         buyTxs,
-        tickets,
+        tickets: delivered > 0 ? delivered : bought,
+        requested: tickets,
+        delivered,
+        beforeCount,
+        afterCount,
         entryId: entryId || undefined,
         recipient,
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,
-        mode: 'randomBuyer_fast',
+        mode: 'randomBuyer_verified',
         spender: RANDOM_BUYER,
-        cost: cost.toString(),
+        cost: (ticketPrice * BigInt(bought)).toString(),
         ticketPrice: ticketPrice.toString(),
         ticketPriceUsdc: formatUnits(ticketPrice, 6),
         house,
-        houseDebitedUsdc: formatUnits(cost, 6),
+        houseDebitedUsdc: formatUnits(ticketPrice * BigInt(bought), 6),
         debitConfirmed: true,
       };
     });
