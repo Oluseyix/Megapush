@@ -372,19 +372,18 @@ nav::-webkit-scrollbar{display:none}
   display:block;transition:background .2s,transform .2s;
 }
 .onboard-dots i.on{background:var(--ink);transform:scale(1.15)}
+/* Same vertical band as mission fab (right:14px; top:38%) */
 .help-fab{
-  position:fixed;left:14px;top:calc(72px + env(safe-area-inset-top,0px));z-index:45;
-  width:44px;height:44px;border-radius:12px;
-  background:#fff;border:1.5px solid var(--line);
-  box-shadow:0 8px 22px rgba(30,38,87,.16);
-  font-size:15px;font-weight:800;color:var(--ink);
+  position:fixed;left:14px;top:38%;z-index:40;
+  width:48px;height:48px;border-radius:50%;
+  background:#fff;border:1px solid var(--line);
+  box-shadow:0 6px 20px rgba(30,38,87,.18);
+  font-size:16px;font-weight:800;color:var(--ink);
   display:flex;align-items:center;justify-content:center;
   letter-spacing:.2px;
+  transform:translateY(-50%);
 }
-.help-fab:active{transform:scale(.96)}
-@media(max-width:680px){
-  .help-fab{top:calc(108px + env(safe-area-inset-top,0px));left:12px}
-}
+.help-fab:active{transform:translateY(-50%) scale(.96)}
 .modal h2{font-family:'Archivo Black',sans-serif;font-size:22px;margin-bottom:6px}
 .modal p{font-size:14px;color:var(--mid);line-height:1.45;margin-bottom:12px}
 .modal .steps{display:flex;flex-direction:column;gap:10px;margin:14px 0 18px}
@@ -411,12 +410,13 @@ nav::-webkit-scrollbar{display:none}
   background:#fff;border:1px solid var(--line);
   box-shadow:0 6px 20px rgba(30,38,87,.18);
   font-size:20px;display:flex;align-items:center;justify-content:center;
+  transform:translateY(-50%);
 }
-.mission-fab:active{transform:scale(.96)}
+.mission-fab:active{transform:translateY(-50%) scale(.96)}
 .mission-pop{
   position:fixed;right:14px;top:38%;z-index:41;
   width:min(280px,calc(100vw - 28px));
-  transform:translateY(calc(-100% - 10px));
+  transform:translateY(calc(-50% - 100% - 10px));
   background:#fff;border:1px solid var(--line);border-radius:16px;
   padding:14px;box-shadow:0 12px 32px rgba(30,38,87,.16);
 }
