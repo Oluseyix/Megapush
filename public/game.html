@@ -185,16 +185,34 @@ nav::-webkit-scrollbar{display:none}
 .amt{display:flex;align-items:center;background:#fff;border:1.5px solid var(--line);border-radius:11px;padding:3px;margin-bottom:7px}
 .rnd{width:44px;height:44px;border-radius:50%;background:var(--wash);font-size:17px;font-weight:700;color:#4A5163;flex:none;display:flex;align-items:center;justify-content:center}
 .amt input{flex:1;width:100%;min-width:0;background:none;border:none;text-align:center;font-family:'Archivo Black',sans-serif;font-size:18px;color:var(--ink);outline:none}
-.auto{display:flex;align-items:center;justify-content:space-between;gap:6px;background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:6px 9px;margin-bottom:8px}
-.auto-left{display:flex;align-items:center;gap:6px}
-.auto input[type=text]{width:46px;background:var(--wash);border:none;border-radius:6px;padding:4px;text-align:center;font-family:'Archivo Black',sans-serif;font-size:12px;color:var(--ink);outline:none}
-.auto.off input[type=text]{opacity:.35;pointer-events:none}
-.toggle{width:44px;height:28px;border-radius:14px;background:#D4D4D8;position:relative;cursor:pointer;transition:background .2s;flex:none}
+.auto{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:#fff;border:1.5px solid var(--line);border-radius:12px;
+  padding:8px 10px;margin-bottom:8px;min-height:48px;
+}
+.auto .lab{flex:1;min-width:0;line-height:1.2}
+.auto-right{display:flex;align-items:center;gap:8px;flex:none}
+.auto-mult{
+  width:72px;min-width:72px;height:40px;box-sizing:border-box;
+  background:var(--wash);border:1.5px solid var(--line);border-radius:10px;
+  padding:0 8px;text-align:center;
+  font-family:'Archivo Black',sans-serif;font-size:16px;color:var(--ink);
+  outline:none;-webkit-appearance:none;appearance:none;
+}
+.auto-mult:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14);background:#fff}
+.auto-mult::placeholder{color:#9AA0B4;font-size:14px;font-weight:400;font-family:'Plus Jakarta Sans',system-ui,sans-serif}
+.auto.on-row{border-color:rgba(20,190,92,.35);background:#F7FDF9}
+.auto.on-row .auto-mult{
+  border-color:var(--green);background:#fff;color:var(--ink);
+  box-shadow:0 0 0 2px rgba(20,190,92,.12);
+}
+.auto.off .auto-mult{opacity:.45;pointer-events:none}
+.auto:not(.off) .auto-mult{opacity:1;pointer-events:auto}
+.toggle{width:48px;height:30px;border-radius:15px;background:#D4D4D8;position:relative;cursor:pointer;transition:background .2s;flex:none}
 .toggle.on{background:var(--green)}
-.toggle i{position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 2px rgba(0,0,0,.15)}
-.toggle.on i{transform:translateX(16px)}
-
-.auto.locked{opacity:.7}
+.toggle i{position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.toggle.on i{transform:translateX(18px)}
+.auto.locked{opacity:.75}
 .auto .toggle{flex:none;cursor:pointer}
 .auto.off .toggle{opacity:1}
 
@@ -703,11 +721,11 @@ $('bets').innerHTML=bets.map(b=>`
     <button type="button" class="rnd" data-act="plus" data-i="${b.i}" aria-label="Increase">+</button>
   </div>
   <div class="auto off" id="auwrap${b.i}">
-    <div class="auto-left">
-      <span class="lab">Auto cash out</span>
-      <input type="text" id="au${b.i}" value="" placeholder="×" disabled>
+    <span class="lab">Auto cash out</span>
+    <div class="auto-right">
+      <input type="text" class="auto-mult" id="au${b.i}" value="" placeholder="e.g. 2×" inputmode="decimal" aria-label="Auto cash out multiplier" disabled>
+      <div class="toggle" data-act="toggle" data-i="${b.i}" role="switch" aria-checked="false" aria-label="Toggle auto cash out"><i></i></div>
     </div>
-    <div class="toggle" data-act="toggle" data-i="${b.i}" role="switch" aria-checked="false"><i></i></div>
   </div>
   <button type="button" class="go" id="go${b.i}" data-act="go" data-i="${b.i}" disabled>Select stake</button>
   <div class="foot" id="ft${b.i}">Pick a stake amount</div>
@@ -731,11 +749,16 @@ function paintBet(b){
   const autoEditable = b.state==='idle' && b.autoOn;
   if(wrap){
     wrap.classList.toggle('off', !b.autoOn);
+    wrap.classList.toggle('on-row', !!b.autoOn && !autoLocked);
     wrap.classList.toggle('locked', autoLocked);
     if(inp){
       inp.disabled = !autoEditable;
       inp.value = (b.auto != null && b.auto !== '') ? b.auto : '';
-      inp.placeholder = '×';
+      inp.placeholder = 'e.g. 2×';
+      // When turned on, make the field easy to find/edit
+      if(autoEditable){
+        inp.removeAttribute('disabled');
+      }
     }
     if(tog){
       tog.classList.toggle('on', b.autoOn);
@@ -1190,6 +1213,11 @@ document.addEventListener('click',e=>{
       syncAutoFromInput(b);
     }
     paintBet(b);
+    // Focus the multiplier box next to the toggle so it's obvious
+    if(b.autoOn){
+      const au=$('au'+b.i);
+      if(au){ setTimeout(()=>{ au.focus(); au.select?.(); }, 30); }
+    }
     return;
   }
 
