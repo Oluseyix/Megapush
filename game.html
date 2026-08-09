@@ -959,7 +959,7 @@ function paintBet(b){
     go.className='go wait';
     go.disabled=true;
     go.textContent='Confirm in wallet…';
-    ft.innerHTML='Sign the USDC transfer in MetaMask';
+    ft.innerHTML='Sign the USDC transfer in your wallet';
   }
   if(b.state==='queued'){
     st.textContent='Queued';
@@ -1530,10 +1530,10 @@ document.addEventListener('click',e=>{
           return;
         }
         if(!window.Megapot.account){
-          $('status').textContent='Connect wallet to stake USDC';
+          $('status').textContent='Please connect your wallet';
           await window.Megapot.connectWallet?.();
           if(!window.Megapot.account){
-            alert('Connect your wallet first, then tap Stake again.');
+            alert('Please connect your wallet.');
             paintBet(b);
             return;
           }
@@ -1948,9 +1948,7 @@ async function connectWallet(opts = {}){
     if(!eip1193){
       if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
       if(!silent){
-        alert(isMobile()
-          ? 'Open this site in MetaMask Browser (copy the URL).'
-          : 'Install MetaMask (or Base wallet) and refresh.');
+        alert('Please connect your wallet.');
       }
       return null;
     }
@@ -1992,7 +1990,7 @@ async function connectWallet(opts = {}){
 async function stakeUsdc(amountUsd, entryIndex = 0){
   try{
     if(!account || !walletClient || !eip1193){
-      return { ok: false, error: 'Connect wallet first (Base Sepolia)' };
+      return { ok: false, error: 'Please connect your wallet' };
     }
     const cfg = ensureTreasuryConfigured();
     if(!cfg.ok) return cfg;
@@ -2003,7 +2001,7 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
 
     const onSepolia = await ensureBaseSepolia(eip1193, { interactive: true });
     if(!onSepolia){
-      return { ok: false, error: 'Switch MetaMask to Base Sepolia to stake' };
+      return { ok: false, error: 'Please switch to Base Sepolia to stake' };
     }
 
     const raw = parseUnits(String(amt), 6);
@@ -2321,7 +2319,7 @@ const claimBtn = $('claimAll');
 if(claimBtn){
   claimBtn.addEventListener('click', async () => {
     if(!window.Megapot.account){
-      claimBtn.textContent = 'Connect wallet first';
+      claimBtn.textContent = 'Please connect your wallet';
       setTimeout(()=> claimBtn.textContent = 'Claim all', 1500);
       await connectWallet();
       return;
