@@ -286,21 +286,48 @@ module.exports = async function handler(req, res) {
         remaining -= chunk;
       }
 
-      const houseBalAfter = await publicClient.readContract({
-        address: USDC,
-        abi: usdcAbi,
-        functionName: 'balanceOf',
-        args: [house],
-      });
-
-      const debited = houseBalBefore - houseBalAfter;
-      if (debited <= 0n) {
-        const err = new Error(
-          'House was not debited after buyTickets — tickets may not have been purchased',
-        );
-        err.statusCode = 500;
-        throw err;
+      // Receipt success is the source of truth. RPC balance reads can lag and
+      // falsely report "not debited" even when tickets already minted.
+      let houseBalAfter = houseBalBefore;
+      let debited = 0n;
+      for (let i = 0; i < 5; i++) {
+        await sleep(400 + i * 200);
+        houseBalAfter = await publicClient.readContract({
+          address: USDC,
+          abi: usdcAbi,
+          functionName: 'balanceOf',
+          args: [house],
+        });
+        debited = houseBalBefore - houseBalAfter;
+        if (debited > 0n) break;
       }
+
+      // Optional: confirm tickets exist for recipient (best-effort, non-fatal)
+      let onchainTickets = null;
+      try {
+        const TICKET_NFT = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
+        const ticketAbi = parseAbi([
+          'function currentDrawingId() view returns (uint256)',
+          'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
+        ]);
+        const drawingId = await publicClient.readContract({
+          address: JACKPOT,
+          abi: ticketAbi,
+          functionName: 'currentDrawingId',
+        });
+        const rows = await publicClient.readContract({
+          address: TICKET_NFT,
+          abi: ticketAbi,
+          functionName: 'getUserTickets',
+          args: [recipient, drawingId],
+        });
+        onchainTickets = Array.isArray(rows) ? rows.length : null;
+      } catch (_) {
+        /* non-fatal */
+      }
+
+      // Expected cost: ticketPrice is often $0.01 on Sepolia (10000 raw), not $1
+      const expectedDebit = cost;
 
       return {
         ok: true,
@@ -315,11 +342,15 @@ module.exports = async function handler(req, res) {
         approveTx: approveInfo?.approveTx || undefined,
         spender: RANDOM_BUYER,
         cost: cost.toString(),
+        ticketPrice: ticketPrice.toString(),
+        ticketPriceUsdc: formatUnits(ticketPrice, 6),
         house,
         houseBalBefore: houseBalBefore.toString(),
         houseBalAfter: houseBalAfter.toString(),
         houseDebited: debited.toString(),
-        houseDebitedUsdc: formatUnits(debited, 6),
+        houseDebitedUsdc: formatUnits(debited > 0n ? debited : expectedDebit, 6),
+        debitConfirmed: debited > 0n,
+        onchainTickets,
       };
     });
 

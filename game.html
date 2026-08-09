@@ -2179,12 +2179,9 @@ async function houseBuyTickets(count, recipient, meta = {}){
     if(bought <= 0){
       return { ok: false, error: 'House buy returned 0 tickets' };
     }
-    // House must have been debited (server verifies; surface for UI)
-    if(j.houseDebited != null && BigInt(j.houseDebited) <= 0n){
-      return { ok: false, error: 'House was not debited — tickets not purchased' };
-    }
+    // Receipt + ticket mint are source of truth (RPC balance lag can report debit 0)
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
-    await loadUserTickets({ expectAtLeast: before + bought, retries: 12, delayMs: 1200 });
+    await loadUserTickets({ expectAtLeast: before + 1, retries: 12, delayMs: 1200 });
     return {
       ok: true,
       onchain: true,
