@@ -258,17 +258,34 @@ nav::-webkit-scrollbar{display:none}
 .field select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236B7280' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:36px}
 .field input:focus,.field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
 .field-hint{font-size:11.5px;color:var(--mid);margin-top:6px;font-weight:500}
-.amt-row{display:flex;border:1.5px solid var(--line);border-radius:11px;overflow:hidden;margin:12px 0 8px;align-items:stretch}
-.amt-prefix{display:flex;align-items:center;padding:0 0 0 14px;font-family:'Archivo Black',sans-serif;font-size:17px;color:var(--soft)}
-.amt-row input{flex:1;border:none;padding:12px;font-family:'Archivo Black',sans-serif;font-size:17px;color:var(--ink);outline:none;min-width:0;min-height:48px}
-.max-btn{padding:0 14px;background:var(--wash);font-size:11px;font-weight:800;color:var(--mid);border-left:1px solid var(--line);min-height:48px}
+.amt-row{
+  display:flex;width:100%;max-width:100%;box-sizing:border-box;
+  border:1.5px solid var(--line);border-radius:11px;overflow:hidden;
+  margin:0;align-items:stretch;background:#fff;
+}
+.amt-prefix{
+  display:flex;align-items:center;justify-content:center;
+  padding:0 4px 0 14px;flex:none;
+  font-family:'Archivo Black',sans-serif;font-size:17px;color:var(--soft);
+}
+.amt-row input{
+  flex:1 1 auto;width:100%;min-width:0;max-width:100%;box-sizing:border-box;
+  border:none;padding:12px 14px 12px 6px;
+  font-family:'Archivo Black',sans-serif;font-size:17px;color:var(--ink);
+  outline:none;min-height:48px;background:transparent;
+}
+.max-btn{padding:0 14px;background:var(--wash);font-size:11px;font-weight:800;color:var(--mid);border-left:1px solid var(--line);min-height:48px;flex:none}
 .pcts{display:flex;gap:5px;margin-bottom:12px}
 .pcts button{flex:1;padding:8px;border-radius:8px;font-size:12.5px;font-weight:600;background:var(--wash);border:1px solid var(--line);color:var(--mid);min-height:44px}
 .pcts button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.fee{border-top:1px solid var(--line);padding-top:11px;margin:12px 0}
-.fee-row{display:flex;justify-content:space-between;font-size:13px;color:var(--mid);margin-bottom:3px}
-.fee-row.final{color:var(--ink);font-weight:700;margin-top:4px}
-.fee-row.final span:last-child{font-family:'Archivo Black',sans-serif;font-size:15px}
+.fee{border-top:1px solid var(--line);padding-top:12px;margin:16px 0 0;clear:both}
+.fee-row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;color:var(--mid);margin-bottom:6px}
+.fee-row.final{color:var(--ink);font-weight:700;margin-top:6px}
+.fee-row.final span:last-child{font-family:'Archivo Black',sans-serif;font-size:15px;flex:none}
+#page-winnings .field{margin-top:16px;width:100%;max-width:100%;box-sizing:border-box}
+#page-winnings .field input[type=text]{width:100%;max-width:100%;box-sizing:border-box}
+#page-winnings .amt-row{margin-top:0}
+#page-winnings .card{overflow:hidden}
 .review-box{background:var(--wash);border-radius:12px;padding:14px;margin:12px 0}
 .review-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;color:var(--mid)}
 .review-row b{color:var(--ink);font-weight:700;word-break:break-all;text-align:right;max-width:60%}
@@ -516,23 +533,21 @@ button:focus:not(:focus-visible){outline:none}
       <div class="card-lab">Your lottery winnings</div>
       <div class="card-val" id="wdAvail">—</div>
       <div class="card-sub" id="wdSub">Unclaimed Megapot wins · connect wallet to load</div>
-      <button class="go" style="margin-top:12px;display:none" type="button" id="wdClaimBtn">Claim on Tickets tab</button>
-      <div class="seg" style="margin-top:12px">
-        <button type="button" class="on">Summary</button>
-        <button type="button" id="wdHistoryBtn">History</button>
-      </div>
+      <button class="go" style="margin-top:12px;display:none" type="button" id="wdClaimBtn">Go to Tickets to claim</button>
+    </div>
 
-      <div class="field" style="margin-top:14px">
-        <label>Wallet</label>
+    <div class="card">
+      <div class="field" style="margin-top:0">
+        <label for="addr">Wallet</label>
         <input type="text" id="addr" placeholder="Connect wallet" autocomplete="off" spellcheck="false" readonly>
-        <div class="field-hint" id="addrHint">Claimed wins pay USDC to this address on Base Sepolia</div>
+        <div class="field-hint" id="addrHint">Claimed wins pay USDC here on Base Sepolia</div>
       </div>
 
       <div class="field">
-        <label>Unclaimed total</label>
-        <div class="amt-row" style="margin:8px 0">
+        <label for="wd-amt">Unclaimed total</label>
+        <div class="amt-row" id="wdAmtRow">
           <span class="amt-prefix">$</span>
-          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00" readonly>
+          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00" readonly aria-label="Unclaimed total">
         </div>
       </div>
 
@@ -540,7 +555,7 @@ button:focus:not(:focus-visible){outline:none}
         <div class="fee-row"><span>Status</span><span id="netFee">—</span></div>
         <div class="fee-row final"><span>To claim</span><span class="num" id="youGet">—</span></div>
       </div>
-      <div class="foot" style="margin-top:10px">Claim pays lottery USDC to your wallet on Base Sepolia</div>
+      <div class="foot" style="margin-top:12px">Claim from the Tickets tab · USDC goes to your wallet</div>
     </div>
   </div>
 </div>
