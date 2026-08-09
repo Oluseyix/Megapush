@@ -811,9 +811,9 @@ function renderTickets(){
       : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
     return;
   }
-  list.innerHTML=ticketData.map(t=>`
+  list.innerHTML=ticketData.map((t,i)=>`
     <div class="tix-row">
-      <div class="tix-id">#${pad(t.id)}</div>
+      <div class="tix-id">#${i+1}</div>
       <div class="tix-nums">
         ${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}
         <span class="bonus">${pad(t.bonus)}</span>
@@ -2196,8 +2196,8 @@ function applyTicketsToUi(mapped){
   // Fallback if bridge missing
   const list = $('tixList');
   if(list){
-    list.innerHTML = mapped.length ? mapped.map(t =>
-      `<div class="tix-row"><div class="tix-id">#${pad(t.id % 1000)}</div>`+
+    list.innerHTML = mapped.length ? mapped.map((t,i) =>
+      `<div class="tix-row"><div class="tix-id">#${i+1}</div>`+
       `<div class="tix-nums">${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
       `<div class="tix-meta live">Live</div></div>`
     ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets yet · cash out a climb to earn them</div>';
@@ -2239,8 +2239,10 @@ async function loadUserTickets(opts = {}){
         address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, drawingId],
       });
       const arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
-      lastMapped = arr.map(t => ({
-        id: Number(t.ticketId),
+      lastMapped = arr.map((t, i) => ({
+        // Display uses 1-based index (#1, #2…) — raw NFT id is huge and not user-facing
+        n: i + 1,
+        tokenId: t.ticketId != null ? String(t.ticketId) : String(i + 1),
         picks: (t.normals || []).map(Number),
         bonus: Number(t.bonusball),
         status: 'live',
