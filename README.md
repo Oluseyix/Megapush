@@ -1,6 +1,6 @@
 # MegaPush
 
-Aviator-style crash game that cash-outs into **Megapot lottery tickets** (not USDC).  
+Crash game that cash-outs into **Megapot lottery tickets** (not USDC).  
 **Chain: Base Sepolia** (`84532`).
 
 ## Deliverable
