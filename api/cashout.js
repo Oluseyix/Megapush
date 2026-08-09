@@ -4,6 +4,10 @@
  *
  * Body: { entryId, stake, multiplier, recipient, count? }
  * tickets = count || floor(stake * multiplier)
+ *
+ * USDC approve target is ALWAYS:
+ *   ≤10 → JackpotRandomTicketBuyer (NOT Jackpot)
+ *   ≥11 → BatchPurchaseFacilitator
  */
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -53,6 +57,13 @@ module.exports = async function handler(req, res) {
 
   const entryId = body.entryId != null ? String(body.entryId) : null;
 
+  // Base Sepolia Megapot (fixed)
+  const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+  const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
+  const BATCH = '0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c';
+  const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
+  const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+
   try {
     const {
       createPublicClient,
@@ -62,24 +73,23 @@ module.exports = async function handler(req, res) {
       keccak256,
       toBytes,
       formatUnits,
+      maxUint256,
     } = await import('viem');
     const { privateKeyToAccount } = await import('viem/accounts');
     const { baseSepolia } = await import('viem/chains');
 
     const RPC = process.env.RPC_URL || 'https://sepolia.base.org';
-    const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
-    const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-    const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
-    const BATCH = '0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c';
-    const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
     const PRECISE_UNIT = 1000000000000000000n;
     const SOURCE = keccak256(toBytes('megapush'));
 
-    const abi = parseAbi([
-      'function ticketPrice() view returns (uint256)',
+    // USDC ERC-20 only for allowance/approve/balance — never approve Jackpot
+    const usdcAbi = parseAbi([
       'function balanceOf(address account) view returns (uint256)',
       'function allowance(address owner, address spender) view returns (uint256)',
       'function approve(address spender, uint256 amount) returns (bool)',
+    ]);
+    const megapotAbi = parseAbi([
+      'function ticketPrice() view returns (uint256)',
       'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
       'function createBatchOrder(address _recipient, uint64 _dynamicTicketCount, (uint8[] normals, uint8 bonusball)[] _userStaticTickets, address[] _referrers, uint256[] _referralSplit, bytes32 _source)',
       'function hasActiveBatchOrder(address _recipient) view returns (bool)',
@@ -87,6 +97,7 @@ module.exports = async function handler(req, res) {
 
     const pk = key.startsWith('0x') ? key : `0x${key}`;
     const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
+    const house = account.address;
 
     const publicClient = createPublicClient({
       chain: baseSepolia,
@@ -98,23 +109,24 @@ module.exports = async function handler(req, res) {
       transport: http(RPC),
     });
 
-    let ticketPrice = 1000000n; // 1 USDC default
+    let ticketPrice = 1000000n; // 1e6 = 1 USDC (6 decimals)
     try {
       ticketPrice = await publicClient.readContract({
         address: JACKPOT,
-        abi,
+        abi: megapotAbi,
         functionName: 'ticketPrice',
       });
     } catch (_) {
-      /* keep default */
+      /* default */
     }
 
     const cost = ticketPrice * BigInt(tickets);
+
     const houseBal = await publicClient.readContract({
       address: USDC,
-      abi,
+      abi: usdcAbi,
       functionName: 'balanceOf',
-      args: [account.address],
+      args: [house],
     });
     if (houseBal < cost) {
       return res.status(400).json({
@@ -124,44 +136,115 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    async function ensureApprove(spender, amount) {
-      const allowance = await publicClient.readContract({
+    /**
+     * Ensure USDC allowance(house → spender) >= cost.
+     * spender MUST be RANDOM_BUYER or BATCH — never Jackpot.
+     */
+    async function ensureUsdcAllowance(spender, amount) {
+      if (
+        spender.toLowerCase() !== RANDOM_BUYER.toLowerCase() &&
+        spender.toLowerCase() !== BATCH.toLowerCase()
+      ) {
+        throw new Error(`Refusing to approve unexpected spender ${spender}`);
+      }
+
+      let allowance = await publicClient.readContract({
         address: USDC,
-        abi,
+        abi: usdcAbi,
         functionName: 'allowance',
-        args: [account.address, spender],
+        args: [house, spender],
       });
-      if (allowance >= amount) return null;
-      const hash = await walletClient.writeContract({
+
+      if (allowance >= amount) {
+        return { approveTx: null, allowance: allowance.toString(), skipped: true };
+      }
+
+      // Some ERC20s require resetting non-zero allowance to 0 first
+      if (allowance > 0n) {
+        const resetHash = await walletClient.writeContract({
+          address: USDC,
+          abi: usdcAbi,
+          functionName: 'approve',
+          args: [spender, 0n],
+          account,
+          chain: baseSepolia,
+        });
+        const resetReceipt = await publicClient.waitForTransactionReceipt({
+          hash: resetHash,
+        });
+        if (resetReceipt.status !== 'success') {
+          throw new Error('USDC approve(0) failed');
+        }
+      }
+
+      // Approve exact cost + a bit of headroom, or max for reliability
+      const approveAmount = amount > maxUint256 / 2n ? amount : maxUint256;
+
+      const approveHash = await walletClient.writeContract({
         address: USDC,
-        abi,
+        abi: usdcAbi,
         functionName: 'approve',
-        args: [spender, amount],
+        args: [spender, approveAmount],
         account,
         chain: baseSepolia,
       });
-      await publicClient.waitForTransactionReceipt({ hash });
-      return hash;
+
+      const approveReceipt = await publicClient.waitForTransactionReceipt({
+        hash: approveHash,
+      });
+      if (approveReceipt.status !== 'success') {
+        throw new Error('USDC approve failed on-chain');
+      }
+
+      // Re-read allowance after confirm — avoid racing into buyTickets
+      allowance = await publicClient.readContract({
+        address: USDC,
+        abi: usdcAbi,
+        functionName: 'allowance',
+        args: [house, spender],
+      });
+      if (allowance < amount) {
+        throw new Error(
+          `Allowance still insufficient after approve: have ${allowance}, need ${amount}, spender ${spender}`,
+        );
+      }
+
+      return {
+        approveTx: approveHash,
+        allowance: allowance.toString(),
+        skipped: false,
+      };
     }
 
     let txHash;
+    let approveInfo;
+    let mode;
 
     if (tickets <= 10) {
-      await ensureApprove(RANDOM_BUYER, cost);
+      // ── Random path: approve RANDOM_BUYER only ──
+      mode = 'randomBuyer';
+      approveInfo = await ensureUsdcAllowance(RANDOM_BUYER, cost);
+
       txHash = await walletClient.writeContract({
         address: RANDOM_BUYER,
-        abi,
+        abi: megapotAbi,
         functionName: 'buyTickets',
         args: [BigInt(tickets), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
         account,
         chain: baseSepolia,
       });
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const buyReceipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (buyReceipt.status !== 'success') {
+        throw new Error('buyTickets transaction reverted');
+      }
     } else {
-      await ensureApprove(BATCH, cost);
+      // ── Bulk path: approve BATCH only ──
+      mode = 'batch';
+      approveInfo = await ensureUsdcAllowance(BATCH, cost);
+
       const active = await publicClient.readContract({
         address: BATCH,
-        abi,
+        abi: megapotAbi,
         functionName: 'hasActiveBatchOrder',
         args: [recipient],
       });
@@ -172,15 +255,19 @@ module.exports = async function handler(req, res) {
           tickets,
         });
       }
+
       txHash = await walletClient.writeContract({
         address: BATCH,
-        abi,
+        abi: megapotAbi,
         functionName: 'createBatchOrder',
         args: [recipient, BigInt(tickets), [], [REFERRER], [PRECISE_UNIT], SOURCE],
         account,
         chain: baseSepolia,
       });
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const batchReceipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (batchReceipt.status !== 'success') {
+        throw new Error('createBatchOrder transaction reverted');
+      }
     }
 
     return res.status(200).json({
@@ -191,7 +278,10 @@ module.exports = async function handler(req, res) {
       recipient,
       stake: Number.isFinite(stake) ? stake : undefined,
       multiplier: Number.isFinite(multiplier) ? multiplier : undefined,
-      mode: tickets <= 10 ? 'randomBuyer' : 'batch',
+      mode,
+      approveTx: approveInfo?.approveTx || undefined,
+      spender: tickets <= 10 ? RANDOM_BUYER : BATCH,
+      cost: cost.toString(),
       // never include private key
     });
   } catch (e) {
@@ -199,6 +289,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error: e?.shortMessage || e?.message || String(e),
+      tickets,
     });
   }
 };
