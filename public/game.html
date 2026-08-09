@@ -756,27 +756,45 @@ function paintBet(b){
     }
   }
   if(b.state==='idle'){
-    st.textContent='Ready';go.className='go';go.textContent='Buy $'+b.amt.toFixed(0);
+    st.textContent='Ready';
+    go.className='go';
+    go.disabled=false;
+    go.textContent='Stake $'+b.amt.toFixed(0)+' USDC';
     ft.innerHTML=b.autoOn?'Stake USDC · auto cash-out → <b>'+Math.floor(b.amt*b.auto)+' tix</b> @ '+b.auto+'×':'Stake USDC · cash out for tickets';
   }
+  if(b.state==='pending'){
+    st.textContent='Confirm…';
+    go.className='go wait';
+    go.disabled=true;
+    go.textContent='Confirm in wallet…';
+    ft.innerHTML='Sign the USDC transfer in MetaMask';
+  }
   if(b.state==='queued'){
-    st.textContent='Queued';go.className='go';go.textContent='Cancel bet';
-    
+    st.textContent='Queued';
+    go.className='go';
+    go.disabled=false;
+    go.textContent='Cancel bet';
     ft.innerHTML=b.autoOn?'Auto armed at <b>'+b.auto+'×</b> · cancel bet':'Queued · cancel bet';
   }
   if(b.state==='live'){
-    st.textContent='Climbing';go.className='go cash';go.textContent='Cash out · '+Math.floor(b.amt*m)+' tickets';
-    
+    st.textContent='Climbing';
+    go.className='go cash';
+    go.disabled=false;
+    go.textContent='Cash out · '+Math.floor(b.amt*m)+' tickets';
     ft.innerHTML=b.autoOn?'Auto at <b>'+b.auto+'×</b>':'Manual cash out';
   }
   if(b.state==='won'){
-    st.textContent='Cashed out';go.className='go wait';go.textContent='+'+Math.floor(b.amt*b.at)+' tickets';
-    
-    ft.innerHTML='Banked at <b>'+b.at.toFixed(2)+'×</b>';
+    st.textContent=b.payoutFailed?'Payout failed':'Cashed out';
+    go.className='go wait';
+    go.disabled=true;
+    go.textContent=b.payoutFailed?'Tickets failed':('+' + Math.floor(b.amt*b.at)+' tickets');
+    ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b>';
   }
   if(b.state==='lost'){
-    st.textContent='Missed';go.className='go wait';go.textContent='0 tickets';
-    
+    st.textContent='Missed';
+    go.className='go wait';
+    go.disabled=true;
+    go.textContent='0 tickets';
     ft.innerHTML=lastAutoMiss&&lastAutoMiss.i===b.i
       ?`Flew at <b>${lastAutoMiss.crash.toFixed(2)}×</b> · auto was ${lastAutoMiss.auto}×`
       :'Flew away first';
@@ -1120,53 +1138,80 @@ document.addEventListener('click',e=>{
     // Queued → cancel + treasury refund via backend
     if(b.state==='queued'){
       (async()=>{
-        if(!window.Megapot?.account){
-          b.state='idle'; b.entryId=null; paintBet(b); return;
-        }
-        $('status').textContent='Cancelling entry…';
-        const res = window.Megapot.refundStake
-          ? await window.Megapot.refundStake(b.entryId, b.amt)
-          : { ok:false, error:'Refund API not configured' };
-        if(res?.ok){
-          b.state='idle'; b.entryId=null; b.stakeTx=null;
+        try{
+          if(!window.Megapot?.account){
+            b.state='idle'; b.entryId=null; paintBet(b); return;
+          }
+          $('status').textContent='Cancelling entry…';
+          const res = window.Megapot.refundStake
+            ? await window.Megapot.refundStake(b.entryId, b.amt)
+            : { ok:false, error:'Refund API not configured (HOUSE_BUY_URL)' };
+          if(res?.ok){
+            b.state='idle'; b.entryId=null; b.stakeTx=null;
+            paintBet(b);
+            $('status').textContent='Bet cancelled · USDC refund submitted';
+            if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+          }else{
+            const err=res?.error||'try again';
+            $('status').textContent='Cancel/refund failed: '+err;
+            alert('Cancel failed: '+err);
+            paintBet(b);
+          }
+        }catch(err){
+          console.error(err);
+          $('status').textContent='Cancel error: '+(err?.message||err);
           paintBet(b);
-          $('status').textContent='Bet cancelled · USDC refund submitted';
-          if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
-        }else{
-          $('status').textContent='Cancel/refund failed: '+(res?.error||'try again');
         }
       })();
       return;
     }
-    if(b.state!=='idle') return;
+    if(b.state!=='idle' && b.state!=='pending') return;
+    if(b.state==='pending') return; // already signing
     // Stake: require wallet + real USDC transfer to HOUSE_TREASURY
     (async()=>{
-      b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
-      syncAutoFromInput(b);
-      if(!window.Megapot){
-        $('status').textContent='Wallet module loading…'; return;
-      }
-      if(!window.Megapot.account){
-        $('status').textContent='Connect wallet to stake USDC';
-        await window.Megapot.connectWallet?.();
-        if(!window.Megapot.account) return;
-      }
-      const go=$('go'+b.i);
-      if(go){ go.disabled=true; go.textContent='Confirm in wallet…'; }
-      $('status').textContent='Stake: sign USDC transfer of $'+b.amt.toFixed(0)+'…';
-      const res = await window.Megapot.stakeUsdc(b.amt, b.i);
-      if(go) go.disabled=false;
-      if(!res?.ok){
-        $('status').textContent=res?.error || 'Stake failed';
+      try{
+        b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
+        syncAutoFromInput(b);
+        if(!window.Megapot){
+          $('status').textContent='Wallet module still loading — wait 1s and try again';
+          alert('Wallet module not ready. Refresh the page if this keeps happening.');
+          return;
+        }
+        if(!window.Megapot.account){
+          $('status').textContent='Connect wallet to stake USDC';
+          await window.Megapot.connectWallet?.();
+          if(!window.Megapot.account){
+            alert('Connect your wallet first, then tap Stake again.');
+            paintBet(b);
+            return;
+          }
+        }
+        b.state='pending';
         paintBet(b);
-        return;
+        $('status').textContent='Stake: sign USDC transfer of '+b.amt.toFixed(0)+' USDC…';
+        const res = await window.Megapot.stakeUsdc(b.amt, b.i);
+        if(!res?.ok){
+          b.state='idle';
+          const err=res?.error || 'Stake failed';
+          $('status').textContent=err;
+          alert(err);
+          paintBet(b);
+          return;
+        }
+        b.entryId=res.entryId;
+        b.stakeTx=res.tx;
+        b.state='queued';
+        paintBet(b);
+        $('status').textContent='Entry queued · stake tx confirmed';
+        if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+      }catch(err){
+        console.error('stake', err);
+        b.state='idle';
+        const msg=err?.shortMessage||err?.message||String(err);
+        $('status').textContent='Stake error: '+msg;
+        alert('Stake error: '+msg);
+        paintBet(b);
       }
-      b.entryId=res.entryId;
-      b.stakeTx=res.tx;
-      b.state='queued';
-      paintBet(b);
-      $('status').textContent='Entry queued · stake tx confirmed';
-      if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
     })();
     return;
   }
@@ -1245,8 +1290,13 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
  *
  * CONFIG
  */
-const HOUSE_TREASURY = '0x0000000000000000000000000000000000000001'; // receives player stake USDC — SET THIS
-const HOUSE_BUY_URL = ''; // e.g. 'https://your-api.com/game/cashout' — required for ticket payouts
+// ═══ CONFIG — must set HOUSE_TREASURY or Stake will refuse ═══
+// House wallet that receives player USDC stakes (public address only).
+const HOUSE_TREASURY = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_treasury'))
+  || '0x0000000000000000000000000000000000000001';
+// Backend cashout URL (POST). Empty = cash-out tickets won't work.
+const HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url'))
+  || '';
 const REFERRER = '0x0000000000000000000000000000000000000001';
 const RPC = 'https://sepolia.base.org';
 
@@ -1520,37 +1570,50 @@ async function connectWallet(opts = {}){
 
 /** Player signs USDC transfer to HOUSE_TREASURY for stake amount (human dollars → 6 dec). */
 async function stakeUsdc(amountUsd, entryIndex = 0){
-  if(!account || !walletClient){
-    return { ok: false, error: 'Connect wallet first' };
-  }
-  if(!HOUSE_TREASURY || !/^0x[a-fA-F0-9]{40}$/.test(HOUSE_TREASURY) || /^0x0{40}$/i.test(HOUSE_TREASURY)){
-    return { ok: false, error: 'Set HOUSE_TREASURY (house wallet address) in game config' };
-  }
-  if(HOUSE_TREASURY.toLowerCase() === '0x0000000000000000000000000000000000000001'){
-    return { ok: false, error: 'Set HOUSE_TREASURY to your funded house wallet (not placeholder)' };
-  }
-  const amt = Math.max(0, Number(amountUsd));
-  if(!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'Invalid stake' };
-
-  await ensureBaseSepolia(eip1193, { interactive: true });
-  const raw = parseUnits(String(amt), 6);
-  const bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
-  if(bal < raw){
-    return { ok: false, error: 'Insufficient Sepolia USDC (need '+amt+' USDC)' };
-  }
-
   try{
+    if(!account || !walletClient || !eip1193){
+      return { ok: false, error: 'Connect wallet first (Base Sepolia)' };
+    }
+    const treasury = HOUSE_TREASURY;
+    if(!treasury || !/^0x[a-fA-F0-9]{40}$/.test(treasury)){
+      return { ok: false, error: 'HOUSE_TREASURY is not a valid address in game config' };
+    }
+    if(treasury.toLowerCase() === '0x0000000000000000000000000000000000000001'){
+      return {
+        ok: false,
+        error: 'Set HOUSE_TREASURY in public/game.html (or localStorage mp_house_treasury) to your house wallet address',
+      };
+    }
+    const amt = Math.max(0, Number(amountUsd));
+    if(!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'Invalid stake amount' };
+
+    const onSepolia = await ensureBaseSepolia(eip1193, { interactive: true });
+    if(!onSepolia){
+      return { ok: false, error: 'Switch MetaMask to Base Sepolia to stake' };
+    }
+
+    const raw = parseUnits(String(amt), 6);
+    let bal;
+    try{
+      bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
+    }catch(e){
+      return { ok: false, error: 'Could not read USDC balance — check RPC / network' };
+    }
+    if(bal < raw){
+      const have = Number(formatUnits(bal, 6)).toFixed(2);
+      return { ok: false, error: `Insufficient Sepolia USDC (have ${have}, need ${amt})` };
+    }
+
     const hash = await walletClient.writeContract({
       address: USDC,
       abi,
       functionName: 'transfer',
-      args: [HOUSE_TREASURY, raw],
+      args: [treasury, raw],
       account,
       chain: CHAIN,
     });
     await publicClient.waitForTransactionReceipt({ hash });
     const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
-    // Optional notify backend of stake
     if(HOUSE_BUY_URL){
       const base = HOUSE_BUY_URL.replace(/\/game\/cashout\/?$/i, '');
       try{
@@ -1564,6 +1627,7 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
     await refreshUsdcBalance();
     return { ok: true, tx: hash, entryId, amount: amt };
   }catch(e){
+    console.error('stakeUsdc', e);
     return { ok: false, error: e?.shortMessage || e?.message || String(e) };
   }
 }
