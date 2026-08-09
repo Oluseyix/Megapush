@@ -1,19 +1,22 @@
 /**
- * POST /api/cashout — house buys Megapot tickets on Base Sepolia.
+ * POST /api/cashout — house buys Megapot tickets on Base Sepolia for the player.
  * Private key: process.env.HOUSE_PRIVATE_KEY only (never log or return it).
  *
- * - Serialize all house txs (in-memory lock per warm isolate)
- * - Always await receipt between approve and buy
- * - Nonce from getTransactionCount(..., blockTag: 'pending')
- * - Retry once on "nonce too low"
+ * Flow (house is DEBITED, player receives ticket NFTs):
+ * 1) House wallet holds USDC (player stakes already transferred here at bet time)
+ * 2) House approves RandomBuyer
+ * 3) House calls buyTickets(_count, player, …) — USDC leaves house → Megapot
+ * 4) Ticket NFTs mint to player (immediate for RandomBuyer ≤10 per call)
+ *
+ * Large wins are split into chunks of 10 RandomBuyer buys (no delayed batch).
+ * Returns houseDebited so the client can prove house spent funds.
  */
 
-/** Global queue: only one cash-out at a time on this isolate */
+/** Global queue: only one house job at a time on this isolate */
 let houseTxChain = Promise.resolve();
 
 function withHouseLock(fn) {
   const run = houseTxChain.then(() => fn());
-  // Keep chain alive even if this job fails
   houseTxChain = run.then(
     () => undefined,
     () => undefined,
@@ -86,11 +89,14 @@ module.exports = async function handler(req, res) {
     });
   }
 
+  // Safety cap per request (Vercel time + house float)
+  const MAX_TICKETS = 40;
+  if (tickets > MAX_TICKETS) tickets = MAX_TICKETS;
+
   const entryId = body.entryId != null ? String(body.entryId) : null;
 
   const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
   const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
-  const BATCH = '0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c';
   const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
   const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 
@@ -121,13 +127,18 @@ module.exports = async function handler(req, res) {
       const megapotAbi = parseAbi([
         'function ticketPrice() view returns (uint256)',
         'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
-        'function createBatchOrder(address _recipient, uint64 _dynamicTicketCount, (uint8[] normals, uint8 bonusball)[] _userStaticTickets, address[] _referrers, uint256[] _referralSplit, bytes32 _source)',
-        'function hasActiveBatchOrder(address _recipient) view returns (bool)',
       ]);
 
       const pk = key.startsWith('0x') ? key : `0x${key}`;
       const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
       const house = account.address;
+
+      // Never mint tickets to the house wallet by mistake
+      if (recipient.toLowerCase() === house.toLowerCase()) {
+        const err = new Error('Recipient cannot be the house wallet — tickets must go to the player');
+        err.statusCode = 400;
+        throw err;
+      }
 
       const publicClient = createPublicClient({
         chain: baseSepolia,
@@ -139,7 +150,6 @@ module.exports = async function handler(req, res) {
         transport: http(RPC),
       });
 
-      /** Pending-aware nonce (includes in-flight txs). */
       async function pendingNonce() {
         return publicClient.getTransactionCount({
           address: house,
@@ -147,11 +157,6 @@ module.exports = async function handler(req, res) {
         });
       }
 
-      /**
-       * writeContract with explicit pending nonce.
-       * On nonce-too-low: re-read pending nonce and retry once.
-       * Always wait for receipt before returning.
-       */
       async function sendAndWait(buildArgs) {
         const attempt = async (nonce) => {
           const hash = await walletClient.writeContract({
@@ -167,7 +172,6 @@ module.exports = async function handler(req, res) {
           if (receipt.status !== 'success') {
             throw new Error(`Transaction reverted: ${hash}`);
           }
-          // Let RPC index the tx before the next nonce fetch
           await sleep(750);
           return hash;
         };
@@ -177,7 +181,6 @@ module.exports = async function handler(req, res) {
           return await attempt(nonce);
         } catch (e) {
           if (!isNonceError(e)) throw e;
-          // Retry once with fresh pending nonce
           await sleep(1000);
           nonce = await pendingNonce();
           return await attempt(nonce);
@@ -195,31 +198,30 @@ module.exports = async function handler(req, res) {
         /* default 1 USDC */
       }
 
-      const cost = ticketPrice * BigInt(tickets);
-
-      const houseBal = await publicClient.readContract({
+      const houseBalBefore = await publicClient.readContract({
         address: USDC,
         abi: usdcAbi,
         functionName: 'balanceOf',
         args: [house],
       });
-      if (houseBal < cost) {
+
+      // Afford only what house can pay (house is debited, not credited)
+      const maxAffordable = Number(houseBalBefore / ticketPrice);
+      if (maxAffordable < 1) {
         const err = new Error(
-          `House USDC low: have ${formatUnits(houseBal, 6)}, need ${formatUnits(cost, 6)} for ${tickets} tickets`,
+          `House USDC empty: have ${formatUnits(houseBalBefore, 6)} — cannot buy tickets`,
         );
         err.statusCode = 400;
         throw err;
       }
+      if (tickets > maxAffordable) {
+        tickets = maxAffordable;
+      }
 
-      /**
-       * allowance(house, spender) → approve if needed → wait receipt → re-check.
-       * spender = RANDOM_BUYER or BATCH only (never Jackpot).
-       */
+      const cost = ticketPrice * BigInt(tickets);
+
       async function ensureUsdcAllowance(spender, amount) {
-        if (
-          spender.toLowerCase() !== RANDOM_BUYER.toLowerCase() &&
-          spender.toLowerCase() !== BATCH.toLowerCase()
-        ) {
+        if (spender.toLowerCase() !== RANDOM_BUYER.toLowerCase()) {
           throw new Error(`Refusing to approve unexpected spender ${spender}`);
         }
 
@@ -234,7 +236,6 @@ module.exports = async function handler(req, res) {
           return { approveTx: null, skipped: true };
         }
 
-        // Reset non-zero allowance first (some ERC20s require this)
         if (allowance > 0n) {
           await sendAndWait({
             address: USDC,
@@ -260,65 +261,64 @@ module.exports = async function handler(req, res) {
         });
         if (allowance < amount) {
           throw new Error(
-            `Allowance still insufficient after approve: have ${allowance}, need ${amount}, spender ${spender}`,
+            `Allowance still insufficient after approve: have ${allowance}, need ${amount}`,
           );
         }
 
         return { approveTx, skipped: false };
       }
 
-      let txHash;
-      let approveInfo;
-      let mode;
+      // Approve once for full cost, then buy in chunks of ≤10 (immediate NFT mint)
+      const approveInfo = await ensureUsdcAllowance(RANDOM_BUYER, cost);
 
-      if (tickets <= 10) {
-        mode = 'randomBuyer';
-        // 1) approve RANDOM_BUYER → wait receipt (inside sendAndWait)
-        approveInfo = await ensureUsdcAllowance(RANDOM_BUYER, cost);
-        // 2) only then buyTickets → wait receipt
-        txHash = await sendAndWait({
+      const buyTxs = [];
+      let remaining = tickets;
+      while (remaining > 0) {
+        const chunk = Math.min(10, remaining);
+        const hash = await sendAndWait({
           address: RANDOM_BUYER,
           abi: megapotAbi,
           functionName: 'buyTickets',
-          args: [BigInt(tickets), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
+          args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
         });
-      } else {
-        mode = 'batch';
-        approveInfo = await ensureUsdcAllowance(BATCH, cost);
+        buyTxs.push(hash);
+        remaining -= chunk;
+      }
 
-        const active = await publicClient.readContract({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'hasActiveBatchOrder',
-          args: [recipient],
-        });
-        if (active) {
-          const err = new Error('Recipient has an active batch order');
-          err.statusCode = 409;
-          throw err;
-        }
+      const houseBalAfter = await publicClient.readContract({
+        address: USDC,
+        abi: usdcAbi,
+        functionName: 'balanceOf',
+        args: [house],
+      });
 
-        txHash = await sendAndWait({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'createBatchOrder',
-          args: [recipient, BigInt(tickets), [], [REFERRER], [PRECISE_UNIT], SOURCE],
-        });
+      const debited = houseBalBefore - houseBalAfter;
+      if (debited <= 0n) {
+        const err = new Error(
+          'House was not debited after buyTickets — tickets may not have been purchased',
+        );
+        err.statusCode = 500;
+        throw err;
       }
 
       return {
         ok: true,
-        txHash,
+        txHash: buyTxs[buyTxs.length - 1],
+        buyTxs,
         tickets,
         entryId: entryId || undefined,
         recipient,
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,
-        mode,
+        mode: 'randomBuyer_chunked',
         approveTx: approveInfo?.approveTx || undefined,
-        spender: tickets <= 10 ? RANDOM_BUYER : BATCH,
+        spender: RANDOM_BUYER,
         cost: cost.toString(),
         house,
+        houseBalBefore: houseBalBefore.toString(),
+        houseBalAfter: houseBalAfter.toString(),
+        houseDebited: debited.toString(),
+        houseDebitedUsdc: formatUnits(debited, 6),
       };
     });
 

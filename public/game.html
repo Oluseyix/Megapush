@@ -1013,18 +1013,18 @@ function paintBet(b){
   if(b.state==='won'){
     const tixEst = Math.max(0, Math.floor(Number(b.amt)*(b.at||0)));
     const tixShow = b.ticketsBought != null ? b.ticketsBought : tixEst;
-    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Cashed out' : 'Cashed out');
+    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Buying tickets' : 'Cashed out');
     go.className='go wait';
     go.disabled=true;
     if(b.payoutFailed){
       go.textContent='Tickets failed';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · house buy failed';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · house buy failed · stake refunded if possible';
     }else if(b.payoutPending){
-      go.textContent='+'+tixEst+' tickets';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · buying tickets…';
+      go.textContent='Buying…';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · house spending USDC on your tickets';
     }else{
       go.textContent='+'+tixShow+' tickets';
-      ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b>';
+      ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b> · tickets in your wallet';
     }
   }
   if(b.state==='lost'){
@@ -1159,81 +1159,111 @@ function maybeShare(at, tickets){
 
 async function cashOut(b){
   if(b.state!=='live') return;
-  // Lock cash-out multiplier immediately (don't wait for house tx)
   const at = m;
   const tickets = Math.max(0, Math.floor(Number(b.amt) * at));
-  const entryId = b.entryId || ('local-'+b.i+'-'+Date.now());
-  b.state = 'won';
+  const entryId = b.entryId || ((window.Megapot?.account || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
+  const stakeAmt = Number(b.amt) || 0;
+
+  // Pending payout — do NOT celebrate until house buys tickets for the player
   b.at = at;
   b.payoutFailed = false;
   b.payoutPending = tickets > 0;
   b.ticketsBought = null;
+  b.state = tickets > 0 ? 'won' : 'won';
   paintBet(b);
-
-  // Immediate UI: status, confetti, ticket preview card — before any network
-  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+tickets+' tickets';
-  $('status').classList.add('won');
-  playCash();
-  const go = $('go'+b.i);
-  if(go && tickets > 0){
-    const r = go.getBoundingClientRect();
-    confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
-    spawnTicketFlight(go, tickets);
-  }
-  if(tickets > 0){
-    showTicketPreview(tickets, at);
-    maybeShare(at, tickets);
-  }
 
   if(tickets <= 0){
     b.payoutPending = false;
     paintBet(b);
+    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · 0 tickets';
     return;
   }
 
-  // House buy in background — do not block the cash-out card
   if(!window.Megapot || typeof window.Megapot.houseBuyTickets !== 'function'){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Cashed out · house buy unavailable';
+    $('status').textContent = 'Cashed out · house ticket buy unavailable';
     return;
   }
 
-  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · buying '+tickets+' tickets…';
+  const player = window.Megapot.account;
+  if(!player){
+    b.payoutPending = false;
+    b.payoutFailed = true;
+    paintBet(b);
+    $('status').textContent = 'Please connect your wallet to receive tickets';
+    return;
+  }
+
+  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · house buying '+tickets+' tickets for you…';
+  $('status').classList.remove('won');
+
+  async function tryRefund(reason){
+    try{
+      if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
+        const rf = await window.Megapot.refundStake(entryId, stakeAmt);
+        if(rf?.ok){
+          $('status').textContent = 'Ticket buy failed · stake refunded to your wallet';
+          if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+          return true;
+        }
+        $('status').textContent = 'Ticket buy failed ('+reason+') · refund failed: '+(rf?.error||'unknown');
+        return false;
+      }
+    }catch(e){
+      console.warn('refund after cashout fail', e);
+    }
+    $('status').textContent = 'Ticket buy failed: '+reason;
+    return false;
+  }
+
   try{
-    const res = await window.Megapot.houseBuyTickets(tickets, window.Megapot.account, {
+    const res = await window.Megapot.houseBuyTickets(tickets, player, {
       entryId,
-      stake: b.amt,
+      stake: stakeAmt,
       multiplier: at,
-      recipient: window.Megapot.account,
+      recipient: player,
     });
     b.payoutPending = false;
     if(!res || !res.ok){
       b.payoutFailed = true;
       paintBet(b);
-      $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · house buy failed: '+(res?.error||'unknown');
+      await tryRefund(res?.error || 'unknown');
       return;
     }
+
+    // Success: house was debited, tickets minted to player
     const bought = res.tickets ?? tickets;
     b.ticketsBought = bought;
     b.payoutFailed = false;
     paintBet(b);
-    // Refresh on-chain tickets + balances (module is separate scope — await + poll)
-    // houseBuyTickets already polled chain; refresh UI + USDC once more for mobile lag
+
+    // Celebrate only after real house buy
+    $('status').classList.add('won');
+    playCash();
+    const go = $('go'+b.i);
+    if(go && bought > 0){
+      const r = go.getBoundingClientRect();
+      confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
+      spawnTicketFlight(go, bought);
+    }
+    if(bought > 0){
+      showTicketPreview(bought, at);
+      maybeShare(at, bought);
+    }
+
     try{
       if(typeof window.Megapot.loadUserTickets === 'function'){
-        await window.Megapot.loadUserTickets({ retries: 3, delayMs: 1500 });
+        await window.Megapot.loadUserTickets({ retries: 4, delayMs: 1200 });
       }
-      if(window.Megapot.refreshUsdcBalance){
-        await window.Megapot.refreshUsdcBalance();
-        setTimeout(()=>{ window.Megapot.refreshUsdcBalance?.(); }, 2500);
-      }
-    }catch(e){ console.warn('post-cashout refresh', e); }
+    }catch(e){ console.warn('post-cashout tickets', e); }
+
     cashoutsToday++;
     syncMission();
+    const debited = res.houseDebitedUsdc ? (' · house −$'+res.houseDebitedUsdc) : '';
     const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
-    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+txNote;
+    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+debited+txNote;
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
       pt.textContent = '+'+bought+' tickets';
@@ -1244,7 +1274,7 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · house buy error';
+    await tryRefund(err?.message || 'error');
   }
 }
 
@@ -2091,18 +2121,17 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
   }
 }
 
-/** Cancel queued bet — backend refunds USDC from treasury (player does not pull). */
+/** House refunds stake USDC to player (cancel queued bet or failed cash-out). */
 async function refundStake(entryId, amountUsd){
   if(!account) return { ok: false, error: 'Wallet not connected' };
   try{
-    // Optional — only if you deploy /api/refund later
     const r = await fetch('/api/refund', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entryId, stake: amountUsd, player: account }),
     });
     const j = await r.json().catch(()=>({}));
-    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status+' — refund API not deployed') };
+    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
     await refreshUsdcBalance();
     return { ok: true, ...j };
   }catch(e){
@@ -2116,12 +2145,16 @@ async function refundStake(entryId, amountUsd){
  */
 async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
-  if(count <= 0) return { ok: true, count: 0 };
+  if(count <= 0) return { ok: true, count: 0, tickets: 0 };
   if(!HOUSE_BUY_URL){
     return { ok: false, error: 'HOUSE_BUY_URL not set' };
   }
+  // Always mint to the connected player — never the house treasury
   const to = recipient || account;
-  if(!to) return { ok: false, error: 'Connect wallet — recipient required for house tickets' };
+  if(!to) return { ok: false, error: 'Please connect your wallet to receive tickets' };
+  if(HOUSE_TREASURY && to.toLowerCase() === HOUSE_TREASURY.toLowerCase()){
+    return { ok: false, error: 'Ticket recipient cannot be the house address' };
+  }
   try{
     const r = await fetch(HOUSE_BUY_URL, {
       method: 'POST',
@@ -2137,10 +2170,18 @@ async function houseBuyTickets(count, recipient, meta = {}){
       }),
     });
     const j = await r.json().catch(()=>({}));
-    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
-    const bought = j.tickets ?? count;
+    if(!r.ok || j.ok === false){
+      return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
+    }
+    const bought = Number(j.tickets ?? count) || 0;
+    if(bought <= 0){
+      return { ok: false, error: 'House buy returned 0 tickets' };
+    }
+    // House must have been debited (server verifies; surface for UI)
+    if(j.houseDebited != null && BigInt(j.houseDebited) <= 0n){
+      return { ok: false, error: 'House was not debited — tickets not purchased' };
+    }
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
-    // Poll until total on-chain tickets reaches pre-buy + new (RPC index lag)
     await loadUserTickets({ expectAtLeast: before + bought, retries: 12, delayMs: 1200 });
     return {
       ok: true,
@@ -2148,6 +2189,8 @@ async function houseBuyTickets(count, recipient, meta = {}){
       count: bought,
       tickets: bought,
       txHash: j.txHash,
+      houseDebitedUsdc: j.houseDebitedUsdc,
+      house: j.house,
       ...j,
     };
   }catch(e){
