@@ -373,7 +373,7 @@ button:focus:not(:focus-visible){outline:none}
   <div class="right">
     <button type="button" class="wallet-btn" id="walletBtn">Connect</button>
     <div class="tix-chip" id="tixChip" aria-live="polite"><b id="tixBal">42</b> tix</div>
-    <div class="bal" id="bal" aria-live="polite" aria-label="Balance">$248.00</div>
+    <div class="bal" id="bal" aria-live="polite" aria-label="Wallet balance">$248.00</div>
   </div>
 </header>
 
@@ -539,11 +539,11 @@ button:focus:not(:focus-visible){outline:none}
 <div class="modal-bg" id="onboardBg">
   <div class="modal">
     <h2>How MegaPush works</h2>
-    <p>No ticket shop. You earn lottery tickets by timing the climb.</p>
+    <p>Stake from your wallet. Cash out for Megapot tickets — the house buys them for you.</p>
     <div class="steps">
-      <div class="step"><n>1</n><div>Buy an entry with your balance<small>Stake $ into the round</small></div></div>
+      <div class="step"><n>1</n><div>Stake from your wallet<small>Connect on Base Sepolia · entry from your funds</small></div></div>
       <div class="step"><n>2</n><div>Cash out before it flies<small>Higher multiplier = more tickets · house pays</small></div></div>
-      <div class="step"><n>3</n><div>Tickets enter tonight's Megapot<small>5 numbers + bonus · daily draw</small></div></div>
+      <div class="step"><n>3</n><div>Tickets enter tonight's Megapot<small>No extra USDC on cash-out · daily draw</small></div></div>
     </div>
     <button type="button" class="go" id="onboardGo">Let's play</button>
   </div>
@@ -1114,7 +1114,7 @@ document.addEventListener('click',e=>{
     if(b.state!=='idle') return;
     b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
     syncAutoFromInput(b);
-    if(b.amt>balance){$('status').textContent='Not enough balance for that entry';return}
+    if(b.amt>balance){$('status').textContent='Not enough wallet balance for that entry';return}
     balance-=b.amt;$('bal').textContent='$'+balance.toFixed(2);
     b.state='queued';paintBet(b);return;
   }

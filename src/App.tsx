@@ -74,8 +74,9 @@ export default function App() {
         <p className="eyebrow">Aviator-style · Megapot tickets · {cfg.label}</p>
         <h1>Cash out for lottery tickets — house pays the USDC.</h1>
         <p className="lede">
-          Stake from play balance, ride the multiplier, cash out before it flies.
-          Tickets ≈ floor(stake × mult). You are never charged USDC on cash-out.
+          Stake from your wallet, ride the multiplier, cash out before it flies.
+          Tickets ≈ floor(stake × mult). You are never charged USDC again on
+          cash-out — the house buys tickets for you.
         </p>
 
         <div className="cta-row">
@@ -89,7 +90,7 @@ export default function App() {
 
         <ol className="loop">
           <li>Connect wallet ({cfg.shortLabel})</li>
-          <li>Stake from play balance → climb</li>
+          <li>Stake from your wallet → climb</li>
           <li>Cash out → house buys Megapot tickets for you</li>
           <li>Tickets enter the daily draw</li>
           <li>Claim wins on-chain → USDC (from draw, not cash-out)</li>

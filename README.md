@@ -7,9 +7,10 @@ Crash game that cash-outs into **Megapot lottery tickets** (not USDC).
 
 | Path | What |
 |------|------|
-| `public/game.html` | **Main app** — single-file HTML/CSS/JS + viem CDN |
-| `megapush.html` | Same file at project root (easy open / share) |
-| `src/` | Optional Vite + React shell (landing + iframe) |
+| `public/index.html` | **Landing** — Play CTA → game |
+| `public/game.html` | **Main game** — single-file HTML/CSS/JS + viem CDN |
+| `megapush.html` | Game file at project root (easy open / share) |
+| `src/` | Optional Vite + React shell |
 
 ## Run
 
@@ -24,7 +25,7 @@ npm install && npm run dev
 # http://localhost:5173/game.html → game
 ```
 
-Wallet needs: **Base Sepolia**, ETH for gas (claims only). Play stakes use **play balance**, not USDC.
+Wallet needs: **Base Sepolia**, funds to **stake from your wallet**, plus ETH for gas (claims). Cash-out does **not** charge the player USDC again — the house buys tickets.
 
 ## Config (top of Megapot module in `game.html`)
 
@@ -43,11 +44,11 @@ Source tag: `keccak256('megapush')`.
 
 ## Economy
 
-1. Stake from **play balance**
+1. Stake from the **player wallet** (connected on Base Sepolia)
 2. Multiplier climbs
 3. Cash out → tickets ≈ `floor(stake × multiplier)`
 4. **House** buys those Megapot tickets for the player
-5. Frontend **never** pulls player USDC on cash-out
+5. Frontend **never** pulls player USDC again on cash-out
 6. Draw wins claimed later via `claimWinnings` → USDC
 
 ## Base Sepolia contracts
