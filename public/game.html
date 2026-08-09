@@ -816,11 +816,21 @@ function paintBet(b){
     ft.innerHTML=b.autoOn?'Auto at <b>'+b.auto+'×</b>':'Manual cash out';
   }
   if(b.state==='won'){
-    st.textContent=b.payoutFailed?'Payout failed':'Cashed out';
+    const tixEst = Math.max(0, Math.floor(Number(b.amt)*(b.at||0)));
+    const tixShow = b.ticketsBought != null ? b.ticketsBought : tixEst;
+    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Cashed out' : 'Cashed out');
     go.className='go wait';
     go.disabled=true;
-    go.textContent=b.payoutFailed?'Tickets failed':('+' + Math.floor(b.amt*b.at)+' tickets');
-    ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b>';
+    if(b.payoutFailed){
+      go.textContent='Tickets failed';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · house buy failed';
+    }else if(b.payoutPending){
+      go.textContent='+'+tixEst+' tickets';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · buying tickets…';
+    }else{
+      go.textContent='+'+tixShow+' tickets';
+      ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b>';
+    }
   }
   if(b.state==='lost'){
     st.textContent='Missed';
@@ -953,58 +963,85 @@ function maybeShare(at, tickets){
 }
 
 async function cashOut(b){
-  if(b.state!=='live')return;
-  b.state='won';b.at=m;
-  const tickets=Math.max(0, Math.floor(Number(b.amt)*m));
-  const entryId=b.entryId || ('local-'+b.i+'-'+Date.now());
+  if(b.state!=='live') return;
+  // Lock cash-out multiplier immediately (don't wait for house tx)
+  const at = m;
+  const tickets = Math.max(0, Math.floor(Number(b.amt) * at));
+  const entryId = b.entryId || ('local-'+b.i+'-'+Date.now());
+  b.state = 'won';
+  b.at = at;
+  b.payoutFailed = false;
+  b.payoutPending = tickets > 0;
+  b.ticketsBought = null;
   paintBet(b);
-  if(tickets<=0){
-    $('status').textContent='Entry '+(b.i+1)+' cashed · 0 tickets';
-    $('status').classList.add('won');
-    playCash();
-    return;
+
+  // Immediate UI: status, confetti, ticket preview card — before any network
+  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+tickets+' tickets';
+  $('status').classList.add('won');
+  playCash();
+  const go = $('go'+b.i);
+  if(go && tickets > 0){
+    const r = go.getBoundingClientRect();
+    confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
+    spawnTicketFlight(go, tickets);
   }
-  if(!window.Megapot || typeof window.Megapot.houseBuyTickets!=='function'){
-    $('status').textContent='House buy unavailable — configure HOUSE_BUY_URL';
-    $('status').classList.remove('won');
-    b.state='live'; // allow retry? better leave won but failed payout flag
-    b.payoutFailed=true;
+  if(tickets > 0){
+    showTicketPreview(tickets, at);
+    maybeShare(at, tickets);
+  }
+
+  if(tickets <= 0){
+    b.payoutPending = false;
     paintBet(b);
     return;
   }
-  $('status').textContent='Requesting house tickets ×'+tickets+'…';
+
+  // House buy in background — do not block the cash-out card
+  if(!window.Megapot || typeof window.Megapot.houseBuyTickets !== 'function'){
+    b.payoutPending = false;
+    b.payoutFailed = true;
+    paintBet(b);
+    $('status').textContent = 'Cashed out · house buy unavailable';
+    return;
+  }
+
+  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · buying '+tickets+' tickets…';
   try{
-    const res=await window.Megapot.houseBuyTickets(tickets, window.Megapot.account, {
-      entryId, stake:b.amt, multiplier:m, recipient:window.Megapot.account
+    const res = await window.Megapot.houseBuyTickets(tickets, window.Megapot.account, {
+      entryId,
+      stake: b.amt,
+      multiplier: at,
+      recipient: window.Megapot.account,
     });
+    b.payoutPending = false;
     if(!res || !res.ok){
-      $('status').textContent='House buy failed: '+(res?.error||'unknown')+' — no tickets credited';
-      b.payoutFailed=true;
+      b.payoutFailed = true;
       paintBet(b);
+      $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · house buy failed: '+(res?.error||'unknown');
       return;
     }
-    // Refresh on-chain tickets only — never invent numbers
-    if(typeof window.Megapot.loadUserTickets==='function') await window.Megapot.loadUserTickets();
+    const bought = res.tickets ?? tickets;
+    b.ticketsBought = bought;
+    b.payoutFailed = false;
+    paintBet(b);
+    if(typeof window.Megapot.loadUserTickets === 'function'){
+      window.Megapot.loadUserTickets().catch(()=>{});
+    }
     cashoutsToday++;
     syncMission();
-    const bought = res.tickets ?? tickets;
     const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
-    $('status').textContent='Entry '+(b.i+1)+' cashed at '+m.toFixed(2)+'× · house bought '+bought+' tickets'+txNote;
-    $('status').classList.add('won');
-    playCash();
-    const go=$('go'+b.i);
-    if(go){
-      const r=go.getBoundingClientRect();
-      confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
-      spawnTicketFlight(go, bought);
+    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+txNote;
+    // Refresh preview title if still open
+    const pt = $('previewTitle');
+    if(pt && $('previewBg')?.classList.contains('show')){
+      pt.textContent = '+'+bought+' tickets';
     }
-    showTicketPreview(bought, m);
-    maybeShare(m, bought);
   }catch(err){
     console.error(err);
-    $('status').textContent='House buy error — no tickets credited';
-    b.payoutFailed=true;
+    b.payoutPending = false;
+    b.payoutFailed = true;
     paintBet(b);
+    $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · house buy error';
   }
 }
 
