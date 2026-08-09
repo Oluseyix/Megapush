@@ -364,6 +364,24 @@ nav::-webkit-scrollbar{display:none}
 .modal-bg.show{display:flex}
 .modal{background:#fff;border-radius:20px;width:100%;max-width:420px;max-height:min(88vh,640px);overflow-y:auto;padding:22px 18px 18px;box-shadow:0 16px 48px rgba(0,0,0,.22);animation:modalIn .35s cubic-bezier(.2,1.1,.4,1)}
 @keyframes modalIn{from{transform:translateY(12px) scale(.96);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.onboard-panel{display:none}
+.onboard-panel.on{display:block}
+.onboard-dots{display:flex;justify-content:center;gap:8px;margin:16px 0 4px}
+.onboard-dots i{
+  width:8px;height:8px;border-radius:50%;background:var(--line);
+  display:block;transition:background .2s,transform .2s;
+}
+.onboard-dots i.on{background:var(--ink);transform:scale(1.15)}
+.help-fab{
+  position:fixed;left:14px;bottom:calc(18px + var(--safe-b));z-index:40;
+  width:40px;height:40px;border-radius:12px;
+  background:#fff;border:1px solid var(--line);
+  box-shadow:0 6px 18px rgba(30,38,87,.14);
+  font-size:13px;font-weight:800;color:var(--ink);
+  display:flex;align-items:center;justify-content:center;
+  letter-spacing:.2px;
+}
+.help-fab:active{transform:scale(.96)}
 .modal h2{font-family:'Archivo Black',sans-serif;font-size:22px;margin-bottom:6px}
 .modal p{font-size:14px;color:var(--mid);line-height:1.45;margin-bottom:12px}
 .modal .steps{display:flex;flex-direction:column;gap:10px;margin:14px 0 18px}
@@ -623,19 +641,36 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
-<!-- First-run modal -->
+<!-- First-run / help modal (2 steps) -->
 <div class="modal-bg" id="onboardBg">
-  <div class="modal">
-    <h2>How MegaPush works</h2>
-    <p>Stake from your wallet. Cash out for Megapot tickets — the house buys them for you.</p>
-    <div class="steps">
-      <div class="step"><n>1</n><div>Stake from your wallet<small>Connect on Base Sepolia · entry from your funds</small></div></div>
-      <div class="step"><n>2</n><div>Cash out before it flies<small>Higher multiplier = more tickets · house pays</small></div></div>
-      <div class="step"><n>3</n><div>Tickets enter tonight's Megapot<small>No extra USDC on cash-out · daily draw</small></div></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+    <div class="onboard-panel on" data-step="0" id="onboardStep0">
+      <h2 id="onboardTitle">How MegaPush works</h2>
+      <p>No ticket shop. You earn lottery tickets by timing the climb.</p>
+      <div class="steps">
+        <div class="step"><n>1</n><div>Buy an entry with Sepolia USDC<small>Stake from your wallet</small></div></div>
+        <div class="step"><n>2</n><div>Cash out before it flies<small>Higher multiplier = more tickets</small></div></div>
+        <div class="step"><n>3</n><div>Tickets enter the Megapot draw<small>5 numbers + bonus · daily draw</small></div></div>
+      </div>
     </div>
-    <button type="button" class="go" id="onboardGo">Let's play</button>
+    <div class="onboard-panel" data-step="1" id="onboardStep1">
+      <h2>How winning works</h2>
+      <p>Your tickets are real Megapot entries in the same daily draw.</p>
+      <div class="steps">
+        <div class="step"><n>1</n><div>About 1 in 4 tickets win something<small>Many tiers, not only jackpot</small></div></div>
+        <div class="step"><n>2</n><div>Match bonus or numbers<small>Payout = minimum + premium share</small></div></div>
+        <div class="step"><n>3</n><div>Claim USDC on-chain<small>Use Claim all after the draw settles</small></div></div>
+      </div>
+    </div>
+    <div class="onboard-dots" id="onboardDots" aria-hidden="true">
+      <i class="on" data-dot="0"></i><i data-dot="1"></i>
+    </div>
+    <button type="button" class="go" id="onboardGo">Next</button>
   </div>
 </div>
+
+<!-- Re-open how-it-works anytime -->
+<button type="button" class="help-fab" id="helpFab" aria-label="How MegaPush works" title="How it works">?</button>
 
 <!-- Cash-out ticket preview -->
 <div class="modal-bg" id="previewBg">
@@ -1287,13 +1322,54 @@ function storageGet(k){
 function storageSet(k,v){
   try{localStorage.setItem(k,v)}catch(e){}
 }
-if(!storageGet('mp_onboarded')){
-  $('onboardBg').classList.add('show');
+/* 2-step first-run onboarding + re-open via help fab */
+let onboardStep = 0;
+const ONBOARD_STEPS = 2;
+
+function showOnboard(step){
+  onboardStep = Math.max(0, Math.min(ONBOARD_STEPS - 1, step|0));
+  document.querySelectorAll('.onboard-panel').forEach((p,i)=>{
+    p.classList.toggle('on', i === onboardStep);
+  });
+  document.querySelectorAll('#onboardDots i').forEach((d,i)=>{
+    d.classList.toggle('on', i === onboardStep);
+  });
+  const go = $('onboardGo');
+  if(go) go.textContent = onboardStep >= ONBOARD_STEPS - 1 ? "Let's play" : 'Next';
+  const title = document.querySelector('.onboard-panel.on h2');
+  if(title){
+    const t = $('onboardTitle');
+    if(t) t.id = '';
+    title.id = 'onboardTitle';
+  }
+  $('onboardBg')?.classList.add('show');
 }
-$('onboardGo').onclick=()=>{
-  storageSet('mp_onboarded','1');
-  $('onboardBg').classList.remove('show');
-};
+
+function hideOnboard(markDone){
+  $('onboardBg')?.classList.remove('show');
+  if(markDone) storageSet('mp_onboarded','1');
+  onboardStep = 0;
+}
+
+if(!storageGet('mp_onboarded')){
+  showOnboard(0);
+}
+
+if($('onboardGo')){
+  $('onboardGo').onclick = ()=>{
+    if(onboardStep < ONBOARD_STEPS - 1){
+      showOnboard(onboardStep + 1);
+      return;
+    }
+    hideOnboard(true);
+  };
+}
+
+if($('helpFab')){
+  $('helpFab').onclick = ()=>{
+    showOnboard(0);
+  };
+}
 $('previewOk').onclick=()=>$('previewBg').classList.remove('show');
 $('shareClose').onclick=()=>$('shareBg').classList.remove('show');
 $('shareCopy').onclick=()=>{
