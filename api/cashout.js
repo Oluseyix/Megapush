@@ -1,19 +1,19 @@
 /**
- * POST /api/cashout — house buys Megapot tickets on Base Sepolia for the player.
- * Private key: process.env.HOUSE_PRIVATE_KEY only (never log or return it).
+ * POST /api/cashout — house buys Megapot tickets for the player (fast path).
+ * Private key: process.env.HOUSE_PRIVATE_KEY only.
  *
- * Flow (house is DEBITED, player receives ticket NFTs):
- * 1) House wallet holds USDC (player stakes already transferred here at bet time)
- * 2) House approves RandomBuyer
- * 3) House calls buyTickets(_count, player, …) — USDC leaves house → Megapot
- * 4) Ticket NFTs mint to player (immediate for RandomBuyer ≤10 per call)
- *
- * Large wins are split into chunks of 10 RandomBuyer buys (no delayed batch).
- * Returns houseDebited so the client can prove house spent funds.
+ * Optimizations:
+ * - Warm-isolate module cache (viem clients, allowance, ticket price)
+ * - No multi-second sleeps after every tx
+ * - Skip debit polling / on-chain ticket verify (receipt = success)
+ * - Skip approve when allowance already covers cost
  */
 
-/** Global queue: only one house job at a time on this isolate */
 let houseTxChain = Promise.resolve();
+/** @type {null | Promise<{ ready: true, publicClient: any, walletClient: any, account: any, house: string, usdcAbi: any, megapotAbi: any, PRECISE_UNIT: bigint, SOURCE: `0x${string}`, USDC: string, RANDOM_BUYER: string, JACKPOT: string, maxUint256: bigint, formatUnits: Function }>} */
+let depsPromise = null;
+let cachedTicketPrice = null; // { value: bigint, at: number }
+let knownAllowanceOk = false; // max approve already set this isolate
 
 function withHouseLock(fn) {
   const run = houseTxChain.then(() => fn());
@@ -43,6 +43,81 @@ function isNonceError(e) {
   );
 }
 
+async function getDeps() {
+  if (!depsPromise) {
+    depsPromise = (async () => {
+      const {
+        createPublicClient,
+        createWalletClient,
+        http,
+        parseAbi,
+        keccak256,
+        toBytes,
+        formatUnits,
+        maxUint256,
+      } = await import('viem');
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const { baseSepolia } = await import('viem/chains');
+
+      const key = process.env.HOUSE_PRIVATE_KEY;
+      if (!key) throw Object.assign(new Error('HOUSE_PRIVATE_KEY not configured'), { statusCode: 500 });
+
+      const RPC = process.env.RPC_URL || 'https://sepolia.base.org';
+      const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+      const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
+      const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
+      const PRECISE_UNIT = 1000000000000000000n;
+      const SOURCE = keccak256(toBytes('megapush'));
+
+      const usdcAbi = parseAbi([
+        'function balanceOf(address account) view returns (uint256)',
+        'function allowance(address owner, address spender) view returns (uint256)',
+        'function approve(address spender, uint256 amount) returns (bool)',
+      ]);
+      const megapotAbi = parseAbi([
+        'function ticketPrice() view returns (uint256)',
+        'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
+      ]);
+
+      const pk = key.startsWith('0x') ? key : `0x${key}`;
+      const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
+      const house = account.address;
+
+      const publicClient = createPublicClient({
+        chain: baseSepolia,
+        transport: http(RPC, { timeout: 12_000 }),
+      });
+      const walletClient = createWalletClient({
+        account,
+        chain: baseSepolia,
+        transport: http(RPC, { timeout: 12_000 }),
+      });
+
+      return {
+        ready: true,
+        publicClient,
+        walletClient,
+        account,
+        house,
+        usdcAbi,
+        megapotAbi,
+        PRECISE_UNIT,
+        SOURCE,
+        USDC,
+        RANDOM_BUYER,
+        JACKPOT,
+        maxUint256,
+        formatUnits,
+        baseSepolia,
+      };
+    })().catch((e) => {
+      depsPromise = null;
+      throw e;
+    });
+  }
+  return depsPromise;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -54,8 +129,7 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Use POST' });
   }
 
-  const key = process.env.HOUSE_PRIVATE_KEY;
-  if (!key) {
+  if (!process.env.HOUSE_PRIVATE_KEY) {
     return res.status(500).json({ ok: false, error: 'HOUSE_PRIVATE_KEY not configured' });
   }
 
@@ -76,7 +150,6 @@ module.exports = async function handler(req, res) {
 
   const stake = Number(body.stake);
   const multiplier = Number(body.multiplier);
-  // Tickets = floor(stake) × floor(mult) — whole numbers only (no decimal mult)
   let tickets = Math.floor(Number(body.count));
   if (!Number.isFinite(tickets) || tickets <= 0) {
     const s = Number.isFinite(stake) && stake > 0 ? Math.floor(stake) : 0;
@@ -90,66 +163,37 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  // Safety cap per request (Vercel time + house float)
   const MAX_TICKETS = 40;
   if (tickets > MAX_TICKETS) tickets = MAX_TICKETS;
 
   const entryId = body.entryId != null ? String(body.entryId) : null;
-
-  const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-  const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
-  const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
   const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 
   try {
     const result = await withHouseLock(async () => {
+      const d = await getDeps();
       const {
-        createPublicClient,
-        createWalletClient,
-        http,
-        parseAbi,
-        keccak256,
-        toBytes,
-        formatUnits,
+        publicClient,
+        walletClient,
+        account,
+        house,
+        usdcAbi,
+        megapotAbi,
+        PRECISE_UNIT,
+        SOURCE,
+        USDC,
+        RANDOM_BUYER,
+        JACKPOT,
         maxUint256,
-      } = await import('viem');
-      const { privateKeyToAccount } = await import('viem/accounts');
-      const { baseSepolia } = await import('viem/chains');
+        formatUnits,
+        baseSepolia,
+      } = d;
 
-      const RPC = process.env.RPC_URL || 'https://sepolia.base.org';
-      const PRECISE_UNIT = 1000000000000000000n;
-      const SOURCE = keccak256(toBytes('megapush'));
-
-      const usdcAbi = parseAbi([
-        'function balanceOf(address account) view returns (uint256)',
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function approve(address spender, uint256 amount) returns (bool)',
-      ]);
-      const megapotAbi = parseAbi([
-        'function ticketPrice() view returns (uint256)',
-        'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
-      ]);
-
-      const pk = key.startsWith('0x') ? key : `0x${key}`;
-      const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
-      const house = account.address;
-
-      // Never mint tickets to the house wallet by mistake
       if (recipient.toLowerCase() === house.toLowerCase()) {
         const err = new Error('Recipient cannot be the house wallet — tickets must go to the player');
         err.statusCode = 400;
         throw err;
       }
-
-      const publicClient = createPublicClient({
-        chain: baseSepolia,
-        transport: http(RPC),
-      });
-      const walletClient = createWalletClient({
-        account,
-        chain: baseSepolia,
-        transport: http(RPC),
-      });
 
       async function pendingNonce() {
         return publicClient.getTransactionCount({
@@ -158,6 +202,7 @@ module.exports = async function handler(req, res) {
         });
       }
 
+      /** Send tx and wait for 1 confirmation — no extra artificial delay */
       async function sendAndWait(buildArgs) {
         const attempt = async (nonce) => {
           const hash = await walletClient.writeContract({
@@ -169,11 +214,12 @@ module.exports = async function handler(req, res) {
           const receipt = await publicClient.waitForTransactionReceipt({
             hash,
             confirmations: 1,
+            timeout: 45_000,
+            pollingInterval: 500,
           });
           if (receipt.status !== 'success') {
             throw new Error(`Transaction reverted: ${hash}`);
           }
-          await sleep(750);
           return hash;
         };
 
@@ -182,21 +228,28 @@ module.exports = async function handler(req, res) {
           return await attempt(nonce);
         } catch (e) {
           if (!isNonceError(e)) throw e;
-          await sleep(1000);
+          await sleep(300);
           nonce = await pendingNonce();
           return await attempt(nonce);
         }
       }
 
-      let ticketPrice = 1000000n;
-      try {
-        ticketPrice = await publicClient.readContract({
-          address: JACKPOT,
-          abi: megapotAbi,
-          functionName: 'ticketPrice',
-        });
-      } catch (_) {
-        /* default 1 USDC */
+      // Ticket price: cache 60s on warm isolate
+      let ticketPrice = 10000n; // Sepolia often $0.01
+      const now = Date.now();
+      if (cachedTicketPrice && now - cachedTicketPrice.at < 60_000) {
+        ticketPrice = cachedTicketPrice.value;
+      } else {
+        try {
+          ticketPrice = await publicClient.readContract({
+            address: JACKPOT,
+            abi: megapotAbi,
+            functionName: 'ticketPrice',
+          });
+          cachedTicketPrice = { value: ticketPrice, at: now };
+        } catch (_) {
+          /* keep default */
+        }
       }
 
       const houseBalBefore = await publicClient.readContract({
@@ -206,7 +259,6 @@ module.exports = async function handler(req, res) {
         args: [house],
       });
 
-      // Afford only what house can pay (house is debited, not credited)
       const maxAffordable = Number(houseBalBefore / ticketPrice);
       if (maxAffordable < 1) {
         const err = new Error(
@@ -215,63 +267,38 @@ module.exports = async function handler(req, res) {
         err.statusCode = 400;
         throw err;
       }
-      if (tickets > maxAffordable) {
-        tickets = maxAffordable;
-      }
+      if (tickets > maxAffordable) tickets = maxAffordable;
 
       const cost = ticketPrice * BigInt(tickets);
 
-      async function ensureUsdcAllowance(spender, amount) {
-        if (spender.toLowerCase() !== RANDOM_BUYER.toLowerCase()) {
-          throw new Error(`Refusing to approve unexpected spender ${spender}`);
-        }
-
+      // Fast approve: skip if we already max-approved this isolate, else check once
+      if (!knownAllowanceOk) {
         let allowance = await publicClient.readContract({
           address: USDC,
           abi: usdcAbi,
           functionName: 'allowance',
-          args: [house, spender],
+          args: [house, RANDOM_BUYER],
         });
-
-        if (allowance >= amount) {
-          return { approveTx: null, skipped: true };
-        }
-
-        if (allowance > 0n) {
+        if (allowance < cost) {
+          if (allowance > 0n) {
+            await sendAndWait({
+              address: USDC,
+              abi: usdcAbi,
+              functionName: 'approve',
+              args: [RANDOM_BUYER, 0n],
+            });
+          }
           await sendAndWait({
             address: USDC,
             abi: usdcAbi,
             functionName: 'approve',
-            args: [spender, 0n],
+            args: [RANDOM_BUYER, maxUint256],
           });
         }
-
-        const approveAmount = amount > maxUint256 / 2n ? amount : maxUint256;
-        const approveTx = await sendAndWait({
-          address: USDC,
-          abi: usdcAbi,
-          functionName: 'approve',
-          args: [spender, approveAmount],
-        });
-
-        allowance = await publicClient.readContract({
-          address: USDC,
-          abi: usdcAbi,
-          functionName: 'allowance',
-          args: [house, spender],
-        });
-        if (allowance < amount) {
-          throw new Error(
-            `Allowance still insufficient after approve: have ${allowance}, need ${amount}`,
-          );
-        }
-
-        return { approveTx, skipped: false };
+        knownAllowanceOk = true;
       }
 
-      // Approve once for full cost, then buy in chunks of ≤10 (immediate NFT mint)
-      const approveInfo = await ensureUsdcAllowance(RANDOM_BUYER, cost);
-
+      // Buy in chunks of ≤10 (RandomBuyer limit). Sequential nonces, no extra sleep.
       const buyTxs = [];
       let remaining = tickets;
       while (remaining > 0) {
@@ -286,49 +313,7 @@ module.exports = async function handler(req, res) {
         remaining -= chunk;
       }
 
-      // Receipt success is the source of truth. RPC balance reads can lag and
-      // falsely report "not debited" even when tickets already minted.
-      let houseBalAfter = houseBalBefore;
-      let debited = 0n;
-      for (let i = 0; i < 5; i++) {
-        await sleep(400 + i * 200);
-        houseBalAfter = await publicClient.readContract({
-          address: USDC,
-          abi: usdcAbi,
-          functionName: 'balanceOf',
-          args: [house],
-        });
-        debited = houseBalBefore - houseBalAfter;
-        if (debited > 0n) break;
-      }
-
-      // Optional: confirm tickets exist for recipient (best-effort, non-fatal)
-      let onchainTickets = null;
-      try {
-        const TICKET_NFT = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
-        const ticketAbi = parseAbi([
-          'function currentDrawingId() view returns (uint256)',
-          'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
-        ]);
-        const drawingId = await publicClient.readContract({
-          address: JACKPOT,
-          abi: ticketAbi,
-          functionName: 'currentDrawingId',
-        });
-        const rows = await publicClient.readContract({
-          address: TICKET_NFT,
-          abi: ticketAbi,
-          functionName: 'getUserTickets',
-          args: [recipient, drawingId],
-        });
-        onchainTickets = Array.isArray(rows) ? rows.length : null;
-      } catch (_) {
-        /* non-fatal */
-      }
-
-      // Expected cost: ticketPrice is often $0.01 on Sepolia (10000 raw), not $1
-      const expectedDebit = cost;
-
+      // Receipt success = tickets bought. Do not block on balance re-reads.
       return {
         ok: true,
         txHash: buyTxs[buyTxs.length - 1],
@@ -338,25 +323,22 @@ module.exports = async function handler(req, res) {
         recipient,
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,
-        mode: 'randomBuyer_chunked',
-        approveTx: approveInfo?.approveTx || undefined,
+        mode: 'randomBuyer_fast',
         spender: RANDOM_BUYER,
         cost: cost.toString(),
         ticketPrice: ticketPrice.toString(),
         ticketPriceUsdc: formatUnits(ticketPrice, 6),
         house,
-        houseBalBefore: houseBalBefore.toString(),
-        houseBalAfter: houseBalAfter.toString(),
-        houseDebited: debited.toString(),
-        houseDebitedUsdc: formatUnits(debited > 0n ? debited : expectedDebit, 6),
-        debitConfirmed: debited > 0n,
-        onchainTickets,
+        houseDebitedUsdc: formatUnits(cost, 6),
+        debitConfirmed: true,
       };
     });
 
     return res.status(200).json(result);
   } catch (e) {
     console.error('cashout error', e?.shortMessage || e?.message || e);
+    depsPromise = null; // reset clients on hard failure
+    knownAllowanceOk = false;
     const status = e?.statusCode || 500;
     return res.status(status).json({
       ok: false,

@@ -842,12 +842,9 @@ window.MegaPushUI = {
     renderTickets();
   },
   bumpTickets(n){
-    // Optimistic chip only when chain lag; list still from chain
     const add = Math.max(0, Math.floor(Number(n) || 0));
     if(add <= 0) return ticketCount;
-    ticketCount = Math.max(ticketCount, ticketCount + add);
-    // Prefer absolute if we know current list length
-    if(ticketData.length) ticketCount = Math.max(ticketCount, ticketData.length);
+    ticketCount = (ticketCount || 0) + add;
     syncTixUI();
     return ticketCount;
   },
@@ -1255,17 +1252,11 @@ async function cashOut(b){
       maybeShare(at, bought);
     }
 
-    try{
-      if(typeof window.Megapot.loadUserTickets === 'function'){
-        await window.Megapot.loadUserTickets({ retries: 4, delayMs: 1200 });
-      }
-    }catch(e){ console.warn('post-cashout tickets', e); }
-
+    // Tickets already loading in background from houseBuyTickets — don't wait
     cashoutsToday++;
     syncMission();
-    const debited = res.houseDebitedUsdc ? (' · house −$'+res.houseDebitedUsdc) : '';
     const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
-    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+debited+txNote;
+    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+txNote;
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
       pt.textContent = '+'+bought+' tickets';
@@ -2179,9 +2170,10 @@ async function houseBuyTickets(count, recipient, meta = {}){
     if(bought <= 0){
       return { ok: false, error: 'House buy returned 0 tickets' };
     }
-    // Receipt + ticket mint are source of truth (RPC balance lag can report debit 0)
+    // Instant chip bump + background chain sync (do not await long polls)
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
-    await loadUserTickets({ expectAtLeast: before + 1, retries: 12, delayMs: 1200 });
+    if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
+    loadUserTickets({ expectAtLeast: before + 1, retries: 5, delayMs: 350 }).catch(()=>{});
     return {
       ok: true,
       onchain: true,
