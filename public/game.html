@@ -1290,15 +1290,56 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
  *
  * CONFIG
  */
-// ═══ CONFIG — must set HOUSE_TREASURY or Stake will refuse ═══
-// House wallet that receives player USDC stakes (public address only).
-const HOUSE_TREASURY = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_treasury'))
-  || '0x0000000000000000000000000000000000000001';
-// Backend cashout URL (POST). Empty = cash-out tickets won't work.
-const HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url'))
-  || '';
+// ═══ CONFIG ═══
+// House wallet that receives player USDC stakes (public address only — never a private key).
+// Priority: ?treasury=0x… → localStorage → hardcoded default below.
+const PLACEHOLDER_TREASURY = '0x0000000000000000000000000000000000000001';
+function readConfigAddress(key, fallback){
+  try{
+    const q = new URLSearchParams(location.search).get(key);
+    if(q && /^0x[a-fA-F0-9]{40}$/.test(q)) return q;
+  }catch(_){}
+  try{
+    const s = localStorage.getItem(key);
+    if(s && /^0x[a-fA-F0-9]{40}$/.test(s)) return s;
+  }catch(_){}
+  return fallback;
+}
+// SET THIS to your house wallet (or use localStorage / prompt on first stake)
+let HOUSE_TREASURY = readConfigAddress('mp_house_treasury', PLACEHOLDER_TREASURY);
+// Backend cashout URL. Example: 'http://localhost:8787/game/cashout'
+let HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url')) || '';
 const REFERRER = '0x0000000000000000000000000000000000000001';
 const RPC = 'https://sepolia.base.org';
+
+function isPlaceholderTreasury(addr){
+  return !addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)
+    || addr.toLowerCase() === PLACEHOLDER_TREASURY.toLowerCase()
+    || /^0x0{40}$/i.test(addr);
+}
+
+/** Ask once for house address if still placeholder (solo testing often uses your own wallet). */
+function ensureTreasuryConfigured(){
+  if(!isPlaceholderTreasury(HOUSE_TREASURY)) return { ok: true, address: HOUSE_TREASURY };
+  const hint = account || '';
+  const entered = prompt(
+    'HOUSE_TREASURY is not set.\n\n'+
+    'Paste the Base Sepolia address that should RECEIVE stake USDC.\n'+
+    'For solo testing you can paste your own wallet address:\n'+
+    (hint ? '('+hint+')\n' : '')+
+    '\nThis is a public address only — never paste a private key.',
+    hint || ''
+  );
+  if(entered == null) return { ok: false, error: 'Stake cancelled — no treasury address' };
+  const addr = entered.trim();
+  if(!/^0x[a-fA-F0-9]{40}$/.test(addr) || isPlaceholderTreasury(addr)){
+    return { ok: false, error: 'Invalid treasury address' };
+  }
+  HOUSE_TREASURY = addr;
+  try{ localStorage.setItem('mp_house_treasury', addr); }catch(_){}
+  if(window.Megapot) window.Megapot.HOUSE_TREASURY = addr;
+  return { ok: true, address: addr };
+}
 
 import {
   createPublicClient,
@@ -1574,16 +1615,10 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
     if(!account || !walletClient || !eip1193){
       return { ok: false, error: 'Connect wallet first (Base Sepolia)' };
     }
-    const treasury = HOUSE_TREASURY;
-    if(!treasury || !/^0x[a-fA-F0-9]{40}$/.test(treasury)){
-      return { ok: false, error: 'HOUSE_TREASURY is not a valid address in game config' };
-    }
-    if(treasury.toLowerCase() === '0x0000000000000000000000000000000000000001'){
-      return {
-        ok: false,
-        error: 'Set HOUSE_TREASURY in public/game.html (or localStorage mp_house_treasury) to your house wallet address',
-      };
-    }
+    const cfg = ensureTreasuryConfigured();
+    if(!cfg.ok) return cfg;
+    const treasury = cfg.address;
+
     const amt = Math.max(0, Number(amountUsd));
     if(!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'Invalid stake amount' };
 
@@ -1625,7 +1660,7 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
       }catch(_){}
     }
     await refreshUsdcBalance();
-    return { ok: true, tx: hash, entryId, amount: amt };
+    return { ok: true, tx: hash, entryId, amount: amt, treasury };
   }catch(e){
     console.error('stakeUsdc', e);
     return { ok: false, error: e?.shortMessage || e?.message || String(e) };
@@ -1819,9 +1854,12 @@ window.Megapot = {
   houseBuyTickets,
   claimWinnings,
   refreshUsdcBalance,
+  ensureTreasuryConfigured,
   get account(){ return account; },
-  HOUSE_TREASURY,
-  HOUSE_BUY_URL,
+  get HOUSE_TREASURY(){ return HOUSE_TREASURY; },
+  set HOUSE_TREASURY(v){ HOUSE_TREASURY = v; },
+  get HOUSE_BUY_URL(){ return HOUSE_BUY_URL; },
+  set HOUSE_BUY_URL(v){ HOUSE_BUY_URL = v; },
   REFERRER,
   SOURCE,
   addresses: { JACKPOT, USDC, RANDOM_BUYER, BATCH, TICKET_NFT },
