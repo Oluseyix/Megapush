@@ -701,27 +701,30 @@ setInterval(()=>{
   const el2=$('tixTimer'); if(el2) el2.textContent=t;
 },1000);
 
-// autoOn defaults OFF — user must enable auto cash-out
-const bets=[{i:0,amt:5,auto:2,autoOn:false,state:'idle'},{i:1,amt:10,auto:5,autoOn:false,state:'idle'}];
+// No preselected stake or auto cash-out — user chooses everything
+const bets=[
+  {i:0,amt:null,auto:null,autoOn:false,state:'idle'},
+  {i:1,amt:null,auto:null,autoOn:false,state:'idle'},
+];
 const PILLS=[1,5,10,25];
 $('bets').innerHTML=bets.map(b=>`
 <div class="bet" id="bet${b.i}">
   <div class="bet-top"><span class="lab">Entry ${b.i+1}</span><span class="state" id="st${b.i}">Ready</span></div>
-  <div class="pills" id="pl${b.i}">${PILLS.map(p=>`<button type="button" class="pill${p===b.amt?' on':''}" data-act="pill" data-i="${b.i}" data-v="${p}">$${p}</button>`).join('')}</div>
+  <div class="pills" id="pl${b.i}">${PILLS.map(p=>`<button type="button" class="pill" data-act="pill" data-i="${b.i}" data-v="${p}">$${p}</button>`).join('')}</div>
   <div class="amt">
     <button type="button" class="rnd" data-act="minus" data-i="${b.i}" aria-label="Decrease">−</button>
-    <input id="in${b.i}" value="${b.amt}" inputmode="decimal" aria-label="Amount">
+    <input id="in${b.i}" value="" inputmode="decimal" placeholder="0" aria-label="Stake amount">
     <button type="button" class="rnd" data-act="plus" data-i="${b.i}" aria-label="Increase">+</button>
   </div>
-  <div class="auto ${b.autoOn?'':'off'}" id="auwrap${b.i}">
+  <div class="auto off" id="auwrap${b.i}">
     <div class="auto-left">
       <span class="lab">Auto cash out</span>
-      <input type="text" id="au${b.i}" value="${b.auto}" ${b.autoOn?'':'disabled'}>
+      <input type="text" id="au${b.i}" value="" placeholder="×" disabled>
     </div>
-    <div class="toggle ${b.autoOn?'on':''}" data-act="toggle" data-i="${b.i}" role="switch" aria-checked="${b.autoOn}"><i></i></div>
+    <div class="toggle" data-act="toggle" data-i="${b.i}" role="switch" aria-checked="false"><i></i></div>
   </div>
-  <button type="button" class="go" id="go${b.i}" data-act="go" data-i="${b.i}">Buy $${b.amt}</button>
-  <div class="foot" id="ft${b.i}"></div>
+  <button type="button" class="go" id="go${b.i}" data-act="go" data-i="${b.i}" disabled>Select stake</button>
+  <div class="foot" id="ft${b.i}">Pick a stake amount</div>
 </div>`).join('');
 
 let m=1,running=false,cp=0,timer=null,band=0;
@@ -745,7 +748,8 @@ function paintBet(b){
     wrap.classList.toggle('locked', autoLocked);
     if(inp){
       inp.disabled = !autoEditable;
-      inp.value = b.auto;
+      inp.value = (b.auto != null && b.auto !== '') ? b.auto : '';
+      inp.placeholder = '×';
     }
     if(tog){
       tog.classList.toggle('on', b.autoOn);
@@ -754,12 +758,32 @@ function paintBet(b){
       tog.style.opacity = autoLocked ? '.45' : '1';
     }
   }
+  // Keep stake input + pills in sync when idle
+  const stakeIn = $('in'+b.i);
+  if(stakeIn && (b.state==='idle' || b.state==='pending')){
+    stakeIn.value = (b.amt != null && b.amt > 0) ? b.amt : '';
+  }
+  const pills = $('pl'+b.i);
+  if(pills){
+    pills.querySelectorAll('.pill').forEach(p=>{
+      p.classList.toggle('on', b.amt != null && +p.dataset.v === +b.amt);
+    });
+  }
   if(b.state==='idle'){
     st.textContent='Ready';
     go.className='go';
-    go.disabled=false;
-    go.textContent='Stake $'+b.amt.toFixed(0)+' USDC';
-    ft.innerHTML=b.autoOn?'Stake USDC · auto cash-out → <b>'+Math.floor(b.amt*b.auto)+' tix</b> @ '+b.auto+'×':'Stake USDC · cash out for tickets';
+    const hasStake = b.amt != null && Number(b.amt) > 0;
+    go.disabled = !hasStake;
+    go.textContent = hasStake ? ('Stake $'+Number(b.amt).toFixed(0)+' USDC') : 'Select stake';
+    if(!hasStake){
+      ft.innerHTML='Pick a stake amount';
+    }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
+      ft.innerHTML='Stake USDC · auto cash-out → <b>'+Math.floor(b.amt*b.auto)+' tix</b> @ '+b.auto+'×';
+    }else if(b.autoOn){
+      ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
+    }else{
+      ft.innerHTML='Stake USDC · cash out manually for tickets';
+    }
   }
   if(b.state==='pending'){
     st.textContent='Confirm…';
@@ -854,7 +878,9 @@ function tick(){
   if(m>=cp){m=cp;paint();return crash()}
   paint();
   if(running&&Math.random()<0.18) playTick();
-  bets.forEach(b=>{if(b.state==='live'&&b.autoOn&&m>=b.auto)cashOut(b)});
+  bets.forEach(b=>{
+    if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
+  });
 }
 
 function confettiBurst(x,y,count=12){
@@ -1150,7 +1176,13 @@ $('inviteBtn').onclick=()=>{
 function syncAutoFromInput(b){
   const inp=$('au'+b.i);
   if(!inp) return;
-  const v=Math.min(50,Math.max(1.1,parseFloat(inp.value)||2));
+  const raw=parseFloat(inp.value);
+  if(!Number.isFinite(raw) || raw <= 0){
+    b.auto=null;
+    inp.value='';
+    return;
+  }
+  const v=Math.min(50,Math.max(1.01,raw));
   b.auto=Math.round(v*100)/100;
   inp.value=b.auto;
 }
@@ -1161,11 +1193,14 @@ document.addEventListener('click',e=>{
   const b=bets[+t.dataset.i],act=t.dataset.act;
   if(!b) return;
 
-  // Auto on/off only when idle (before bet is placed)
+  // Auto on/off only when idle (before bet is placed) — never auto-enable
   if(act==='toggle'){
     if(b.state!=='idle') return;
     b.autoOn=!b.autoOn;
-    if(b.autoOn) syncAutoFromInput(b);
+    if(b.autoOn){
+      // User turned it on — do not invent a multiplier; leave blank until they type
+      syncAutoFromInput(b);
+    }
     paintBet(b);
     return;
   }
@@ -1208,8 +1243,23 @@ document.addEventListener('click',e=>{
     // Stake: require wallet + real USDC transfer to HOUSE_TREASURY
     (async()=>{
       try{
-        b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
-        syncAutoFromInput(b);
+        const typed=parseFloat($('in'+b.i)?.value);
+        b.amt=Number.isFinite(typed) && typed > 0 ? Math.floor(typed) : null;
+        if(!b.amt || b.amt <= 0){
+          $('status').textContent='Select a stake amount first';
+          alert('Select a stake amount first');
+          paintBet(b);
+          return;
+        }
+        if(b.autoOn){
+          syncAutoFromInput(b);
+          if(b.auto==null || !(Number(b.auto) > 0)){
+            $('status').textContent='Enter an auto cash-out multiplier, or turn auto off';
+            alert('Enter an auto cash-out multiplier, or turn auto off');
+            paintBet(b);
+            return;
+          }
+        }
         if(!window.Megapot){
           $('status').textContent='Wallet module still loading — wait 1s and try again';
           alert('Wallet module not ready. Refresh the page if this keeps happening.');
@@ -1256,10 +1306,21 @@ document.addEventListener('click',e=>{
 
   // Stake controls only when idle
   if(b.state!=='idle') return;
-  if(act==='pill'){b.amt=+t.dataset.v;$('in'+b.i).value=b.amt;
-    $('pl'+b.i).querySelectorAll('.pill').forEach(p=>p.classList.toggle('on',+p.dataset.v===b.amt))}
-  if(act==='minus'){b.amt=Math.max(1,+(b.amt-1).toFixed(2));$('in'+b.i).value=b.amt}
-  if(act==='plus'){b.amt=+(b.amt+1).toFixed(2);$('in'+b.i).value=b.amt}
+  if(act==='pill'){
+    b.amt=+t.dataset.v;
+    $('in'+b.i).value=b.amt;
+    $('pl'+b.i).querySelectorAll('.pill').forEach(p=>p.classList.toggle('on',+p.dataset.v===b.amt));
+  }
+  if(act==='minus'){
+    const cur = b.amt != null && b.amt > 0 ? b.amt : 1;
+    b.amt=Math.max(1,+(cur-1).toFixed(2));
+    $('in'+b.i).value=b.amt;
+  }
+  if(act==='plus'){
+    const cur = b.amt != null && b.amt > 0 ? b.amt : 0;
+    b.amt=+(cur+1).toFixed(2);
+    $('in'+b.i).value=b.amt;
+  }
   paintBet(b);
 });
 
@@ -1308,14 +1369,18 @@ document.addEventListener('input',e=>{
   const b=bets[i];
   if(!b || b.state!=='idle') return;
   const v=parseFloat(inp.value);
-  if(isNaN(v)) return;
-  b.amt=v;
+  if(inp.value==='' || isNaN(v) || v <= 0){
+    b.amt=null;
+  }else{
+    b.amt=v;
+  }
   const pills=$('pl'+b.i);
   if(pills){
     pills.querySelectorAll('.pill').forEach(p=>{
-      p.classList.toggle('on', +p.dataset.v === b.amt);
+      p.classList.toggle('on', b.amt != null && +p.dataset.v === +b.amt);
     });
   }
+  paintBet(b);
 });
 
 bets.forEach(paintBet);paint();setTimeout(start,1600);
