@@ -478,7 +478,7 @@ button:focus:not(:focus-visible){outline:none}
         <tbody>
           <tr><td class="rk">1</td><td>0x55…aa</td><td class="num">47.2×</td><td>312</td></tr>
           <tr><td class="rk">2</td><td>0x7a…f2</td><td class="num">28.4×</td><td>198</td></tr>
-          <tr class="you"><td class="rk">YOU</td><td>0x9c…e1</td><td class="num">12.8×</td><td id="lbTix">86</td></tr>
+          <tr class="you"><td class="rk">YOU</td><td id="lbYou">—</td><td class="num" id="lbMult">—</td><td id="lbTix">0</td></tr>
           <tr><td class="rk">4</td><td>0x3c…91</td><td class="num">11.1×</td><td>74</td></tr>
           <tr><td class="rk">5</td><td>0x1d…c8</td><td class="num">9.6×</td><td>61</td></tr>
           <tr><td class="rk">6</td><td>0x8f…b4</td><td class="num">8.2×</td><td>48</td></tr>
@@ -495,9 +495,9 @@ button:focus:not(:focus-visible){outline:none}
   <!-- WINNINGS -->
   <div class="page" id="page-winnings">
     <div class="card">
-      <div class="card-lab">Available to withdraw</div>
-      <div class="card-val">$86.00</div>
-      <div class="card-sub">From claimed ticket wins</div>
+      <div class="card-lab">Wallet USDC (Base Sepolia)</div>
+      <div class="card-val" id="wdAvail">—</div>
+      <div class="card-sub" id="wdSub">Connect wallet to see on-chain balance</div>
       <div class="seg" style="margin-top:12px">
         <button type="button" class="on">Withdraw</button>
         <button type="button">History</button>
@@ -506,36 +506,34 @@ button:focus:not(:focus-visible){outline:none}
       <div class="field">
         <label for="network">Network</label>
         <select id="network" aria-label="Crypto network">
-          <option value="sol">Solana (SOL)</option>
-          <option value="eth">Ethereum (ETH)</option>
-          <option value="base">Base</option>
-          <option value="arb">Arbitrum</option>
-          <option value="poly">Polygon (MATIC)</option>
-          <option value="btc">Bitcoin (BTC)</option>
+          <option value="base" selected>Base Sepolia</option>
+          <option value="base-main">Base</option>
         </select>
       </div>
 
       <div class="field">
         <label for="addr">Wallet address</label>
-        <input type="text" id="addr" placeholder="Paste address" autocomplete="off" spellcheck="false">
-        <div class="field-hint" id="addrHint">Make sure the network matches your wallet</div>
+        <input type="text" id="addr" placeholder="Connect wallet" autocomplete="off" spellcheck="false" readonly>
+        <div class="field-hint" id="addrHint">Withdrawals go to your connected wallet</div>
       </div>
 
       <div class="field">
-        <label for="wd-amt">Amount</label>
+        <label for="wd-amt">Amount (USDC)</label>
         <div class="amt-row" style="margin:8px 0">
           <span class="amt-prefix">$</span>
-          <input type="text" value="86.00" id="wd-amt" inputmode="decimal">
+          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00">
           <button type="button" class="max-btn" id="maxBtn">MAX</button>
         </div>
-        <div class="pcts">
-          <button type="button">25%</button><button type="button">50%</button><button type="button" class="on">100%</button>
+        <div class="pcts" id="wdPcts">
+          <button type="button" data-pct="25">25%</button>
+          <button type="button" data-pct="50">50%</button>
+          <button type="button" data-pct="100" class="on">100%</button>
         </div>
       </div>
 
       <div class="fee">
-        <div class="fee-row"><span>Network fee</span><span id="netFee">~$0.01</span></div>
-        <div class="fee-row final"><span>You receive</span><span class="num" id="youGet">~$85.99</span></div>
+        <div class="fee-row"><span>Network fee</span><span id="netFee">gas (ETH)</span></div>
+        <div class="fee-row final"><span>You send</span><span class="num" id="youGet">—</span></div>
       </div>
       <button type="button" class="go" id="wdBtn">Withdraw $85.99</button>
       <div class="foot" style="margin-top:10px">Usually arrives in 1–5 minutes</div>
@@ -703,7 +701,8 @@ setInterval(()=>{
   const el2=$('tixTimer'); if(el2) el2.textContent=t;
 },1000);
 
-const bets=[{i:0,amt:5,auto:2,autoOn:true,state:'idle'},{i:1,amt:10,auto:5,autoOn:true,state:'idle'}];
+// autoOn defaults OFF — user must enable auto cash-out
+const bets=[{i:0,amt:5,auto:2,autoOn:false,state:'idle'},{i:1,amt:10,auto:5,autoOn:false,state:'idle'}];
 const PILLS=[1,5,10,25];
 $('bets').innerHTML=bets.map(b=>`
 <div class="bet" id="bet${b.i}">
@@ -1039,48 +1038,85 @@ function start(){
   timer=setInterval(tick,200);
 }
 
-/* withdraw */
-const FEES={sol:'~$0.01',eth:'~$1.20',base:'~$0.05',arb:'~$0.08',poly:'~$0.02',btc:'~$2.50'};
-const HINTS={
-  sol:'Solana addresses are 32–44 characters',
-  eth:'EVM addresses start with 0x',
-  base:'Base uses 0x addresses',
-  arb:'Arbitrum uses 0x addresses',
-  poly:'Polygon uses 0x addresses',
-  btc:'Bitcoin addresses start with bc1, 1, or 3'
-};
+/* withdraw — amounts from on-chain USDC only (no fake $86) */
+let wdAvailableUsd = 0;
+
 function updateWithdrawUI(){
-  const net=$('network').value;
-  const fee=FEES[net]||'~$0.50';
-  $('netFee').textContent=fee;
-  const amt=parseFloat($('wd-amt').value)||0;
-  const feeNum=parseFloat(fee.replace(/[^0-9.]/g,''))||0;
-  const get=Math.max(0,amt-feeNum);
-  $('youGet').textContent='~$'+get.toFixed(2);
+  const amt=parseFloat($('wd-amt')?.value)||0;
+  const you=$('youGet');
+  if(you) you.textContent = amt > 0 ? (amt.toFixed(2)+' USDC') : '—';
   const btn=$('wdBtn');
-  if(btn) btn.textContent='Withdraw $'+get.toFixed(2);
-  const hint=$('addrHint');
-  if(hint) hint.textContent=HINTS[net]||'Network must match your wallet';
+  if(btn){
+    btn.textContent = amt > 0 ? ('Send '+amt.toFixed(2)+' USDC') : 'Enter amount';
+    btn.disabled = !(amt > 0 && wdAvailableUsd > 0);
+  }
+  const avail=$('wdAvail');
+  if(avail){
+    avail.textContent = wdAvailableUsd > 0
+      ? ('$'+wdAvailableUsd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}))
+      : '—';
+  }
 }
+
+function setWinningsFromWallet(usdcRaw, address){
+  // usdcRaw: bigint (6 decimals) or null
+  if(usdcRaw != null && typeof usdcRaw === 'bigint'){
+    wdAvailableUsd = Number(usdcRaw) / 1e6;
+  }else if(typeof usdcRaw === 'number'){
+    wdAvailableUsd = usdcRaw;
+  }else{
+    wdAvailableUsd = 0;
+  }
+  const sub=$('wdSub');
+  const addrEl=$('addr');
+  if(address){
+    if(addrEl) addrEl.value = address;
+    if(sub) sub.textContent = 'On-chain Sepolia USDC in connected wallet';
+    const lbYou=$('lbYou');
+    if(lbYou) lbYou.textContent = address.slice(0,4)+'…'+address.slice(-3);
+  }else{
+    if(addrEl) addrEl.value = '';
+    if(sub) sub.textContent = 'Connect wallet to see on-chain balance';
+  }
+  const tix = (typeof ticketCount === 'number') ? ticketCount : 0;
+  const lbTix=$('lbTix');
+  if(lbTix) lbTix.textContent = String(tix);
+  updateWithdrawUI();
+}
+
 if($('network')) $('network').addEventListener('change',updateWithdrawUI);
 if($('wd-amt')) $('wd-amt').addEventListener('input',updateWithdrawUI);
-document.querySelectorAll('.pcts button').forEach(btn=>{
+document.querySelectorAll('#wdPcts button').forEach(btn=>{
   btn.addEventListener('click',()=>{
     btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
     btn.classList.add('on');
-    const p=parseInt(btn.textContent,10);
-    if(p&&$('wd-amt')){$('wd-amt').value=(86*p/100).toFixed(2);updateWithdrawUI()}
+    const p=parseInt(btn.dataset.pct||btn.textContent,10);
+    if(p && $('wd-amt')){
+      $('wd-amt').value = wdAvailableUsd > 0 ? ((wdAvailableUsd*p/100).toFixed(2)) : '';
+      updateWithdrawUI();
+    }
   });
 });
 const maxBtn=$('maxBtn');
-if(maxBtn) maxBtn.onclick=()=>{$('wd-amt').value='86.00';updateWithdrawUI()};
+if(maxBtn) maxBtn.onclick=()=>{
+  if($('wd-amt')) $('wd-amt').value = wdAvailableUsd > 0 ? wdAvailableUsd.toFixed(2) : '';
+  updateWithdrawUI();
+};
 if($('wdBtn')) $('wdBtn').onclick=()=>{
-  const addr=($('addr').value||'').trim();
-  if(addr.length<8){const h=$('addrHint'); if(h) h.textContent='Paste a valid wallet address'; return}
-  $('wdBtn').textContent='Submitted';
-  $('wdBtn').className='go wait';
+  if(!window.Megapot?.account){
+    alert('Connect wallet first');
+    return;
+  }
+  const amt=parseFloat($('wd-amt')?.value)||0;
+  if(amt <= 0 || amt > wdAvailableUsd + 1e-9){
+    alert('Enter an amount within your USDC balance');
+    return;
+  }
+  alert('USDC is already in your connected wallet. Use MetaMask / your wallet app to send it out.');
 };
 updateWithdrawUI();
+// expose for Megapot module
+window.setWinningsFromWallet = setWinningsFromWallet;
 
 /* modals */
 function storageGet(k){
@@ -1504,18 +1540,39 @@ function bindProviderListeners(provider){
 function setBalUi(raw){
   const el = $('bal');
   if(!el) return;
-  if(raw == null){ el.textContent = '— USDC'; return; }
+  if(raw == null){
+    el.textContent = '— USDC';
+    if(typeof window.setWinningsFromWallet === 'function'){
+      window.setWinningsFromWallet(null, account || null);
+    }
+    return;
+  }
   const n = Number(formatUnits(raw, 6));
   el.textContent = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC';
+  if(typeof window.setWinningsFromWallet === 'function'){
+    window.setWinningsFromWallet(raw, account || null);
+  }
 }
 
 async function refreshUsdcBalance(){
-  if(!account){ setBalUi(null); return null; }
+  if(!account){
+    setBalUi(null);
+    if(typeof window.setWinningsFromWallet === 'function'){
+      window.setWinningsFromWallet(null, null);
+    }
+    return null;
+  }
   try{
     const bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
     setBalUi(bal);
     return bal;
-  }catch(e){ console.warn('USDC balance', e); return null; }
+  }catch(e){
+    console.warn('USDC balance', e);
+    if(typeof window.setWinningsFromWallet === 'function'){
+      window.setWinningsFromWallet(null, account);
+    }
+    return null;
+  }
 }
 
 async function loadLivePot(){
