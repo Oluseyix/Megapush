@@ -1,57 +1,48 @@
 # MegaPush
 
-Crash game that cash-outs into **Megapot lottery tickets**.
-**Chain: Base Sepolia** (`84532`).
+Aviator-style crash game on **Base Sepolia**. Stakes are **real Sepolia USDC** from the player wallet. Cash-out pays **Megapot tickets** bought by a **house backend** (player is not charged again on cash-out).
 
-## Deliverable
+## Option A (current)
 
-| Path | What |
-|------|------|
-| `public/index.html` | **Landing** — Play CTA → game |
-| `public/game.html` | **Main game** — single-file HTML/CSS/JS + viem CDN |
-| `megapush.html` | Game file at project root (easy open / share) |
-| `src/` | Optional Vite + React shell |
+| Action | Who pays / signs |
+|--------|------------------|
+| Connect | Player wallet → Base Sepolia |
+| Stake / buy entry | Player signs **USDC transfer** → `HOUSE_TREASURY` |
+| Cancel queued | House backend **refunds** USDC to player |
+| Cash out | House backend buys Megapot tickets for player |
+| Claim lottery wins | Player signs `claimWinnings` |
 
-## Run
+**No paper balance. No fake tickets.**
+
+## Run frontend
 
 ```bash
-# Static (no install)
+cd MegaPush
 npx --yes serve public -p 5173
-# open http://localhost:5173/game.html
-
-# Or Vite shell
-npm install && npm run dev
-# http://localhost:5173        → shell
-# http://localhost:5173/game.html → game
+# http://localhost:5173/           landing
+# http://localhost:5173/game.html  game
 ```
 
-Wallet needs: **Base Sepolia**, funds to **stake from your wallet**, plus ETH for gas (claims). Cash-out does **not** charge the player USDC.
-
-## Config (top of Megapot module in `game.html`)
+## Config (`public/game.html` Megapot module)
 
 ```js
+const HOUSE_TREASURY = '0xYourHouseWallet';           // receives stakes
+const HOUSE_BUY_URL = 'http://localhost:8787/game/cashout';
 const REFERRER = '0x0000000000000000000000000000000000000001';
-const HOUSE_BUY_URL = ''; // production: your house buy backend
+const RPC = 'https://sepolia.base.org';
 ```
 
-- **`REFERRER`** — operator wallet (referral fees). Replace before prod.
-- **`HOUSE_BUY_URL`** — `POST { count, recipient, referrer, source, chainId }`.  
-  Backend holds house key + USDC and calls Megapot `buyTickets`.  
-  **Empty = demo house** (UI ticket credit only).  
-  **Never put a private key in the frontend.**
+## House backend
 
-Source tag: `keccak256('megapush')`.
+```bash
+cd house
+cp .env.example .env   # HOUSE_PRIVATE_KEY + HOUSE_ADDRESS
+npm install && npm start
+```
 
-## Economy
+Fund house with **Sepolia ETH + USDC**. See `house/README.md`.
 
-1. Stake from the **player wallet** (connected on Base Sepolia)
-2. Multiplier climbs
-3. Cash out → tickets ≈ `floor(stake × multiplier)`
-4. **House** buys those Megapot tickets for the player
-5. Frontend **never** pulls player USDC again on cash-out
-6. Draw wins claimed later via `claimWinnings` → USDC
-
-## Base Sepolia contracts
+## Contracts (Base Sepolia)
 
 | Contract | Address |
 |----------|---------|
@@ -61,22 +52,4 @@ Source tag: `keccak256('megapush')`.
 | Batch | `0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c` |
 | TicketNFT | `0x45084829ac63f9dC6a3D4981A46FA896f9180ECd` |
 
-RPC: `https://sepolia.base.org`
-
-## Product checklist
-
-- Dual entries, auto cash-out (locked after bet), cancel queued (refund, same button color)
-- Custom stake deselects pills unless exact match
-- Slim “Tonight’s Megapot” (amount only)
-- Mission FAB (side), not full-width bar
-- Pages: Play · Tickets · Board · Winnings
-- Past filters only under Past drawings
-- Withdraw: single page (no wizard)
-- `houseBuyTickets` on cash-out; `buyRandomTickets` tools-only
-
-## Docs
-
-- https://docs.megapot.io
-- https://llms.megapot.io/tasks/buy-random
-- https://llms.megapot.io/tasks/buy-bulk
-- https://llms.megapot.io/tasks/claim-winnings
+Source tag: `keccak256('megapush')`.

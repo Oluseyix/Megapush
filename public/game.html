@@ -381,7 +381,7 @@ button:focus:not(:focus-visible){outline:none}
   <div class="right">
     <button type="button" class="wallet-btn" id="walletBtn">Connect</button>
     <div class="tix-chip" id="tixChip" aria-live="polite"><b id="tixBal">42</b> tix</div>
-    <div class="bal" id="bal" aria-live="polite" aria-label="Wallet balance">$248.00</div>
+    <div class="bal" id="bal" aria-live="polite" aria-label="Sepolia USDC">— USDC</div>
   </div>
 </header>
 
@@ -431,8 +431,8 @@ button:focus:not(:focus-visible){outline:none}
   <div class="page" id="page-tickets">
     <div class="card">
       <div class="card-lab">Ready to claim</div>
-      <div class="card-val">$86.00</div>
-      <div class="card-sub">from 3 winning tickets · last draw</div>
+      <div class="card-val" id="claimVal">—</div>
+      <div class="card-sub" id="claimSub">Connect wallet · unclaimed wins</div>
       <button class="go" style="margin-top:10px" type="button" id="claimAll">Claim all</button>
     </div>
 
@@ -620,7 +620,7 @@ function rndNums(){
 }
 function pad(n){return n<10?'0'+n:''+n}
 
-let ticketCount=42;
+let ticketCount=0;
 let cashoutsToday=0;
 const MISSION_GOAL=3;
 function syncTixUI(){
@@ -638,13 +638,15 @@ function syncMission(){
 }
 syncTixUI(); syncMission();
 
-const ticketData=[];
-for(let i=1;i<=42;i++){
-  const {picks,bonus}=rndNums();
-  ticketData.push({id:i,picks,bonus,status:'live'});
-}
+const ticketData=[]; // filled only from on-chain getUserTickets
 function renderTickets(){
-  $('tixList').innerHTML=ticketData.map(t=>`
+  const list=$('tixList');
+  if(!list) return;
+  if(!ticketData.length){
+    list.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
+    return;
+  }
+  list.innerHTML=ticketData.map(t=>`
     <div class="tix-row">
       <div class="tix-id">#${pad(t.id)}</div>
       <div class="tix-nums">
@@ -657,26 +659,23 @@ function renderTickets(){
 }
 renderTickets();
 
-const pastDraws=[
-  {date:'Aug 8', result:'won', prize:'$42.00', tier:'3 matches', picks:[3,11,19,25,29], bonus:4},
-  {date:'Aug 7', result:'lost', prize:'—', tier:'No match', picks:[1,8,16,24,30], bonus:12},
-  {date:'Aug 6', result:'won', prize:'$18.50', tier:'2 + bonus', picks:[7,14,22,28,31], bonus:9},
-  {date:'Aug 5', result:'lost', prize:'—', tier:'No match', picks:[2,9,15,21,33], bonus:6},
-  {date:'Aug 4', result:'lost', prize:'—', tier:'1 match', picks:[5,12,18,27,34], bonus:1},
-  {date:'Aug 3', result:'won', prize:'$25.50', tier:'3 matches', picks:[4,10,17,23,32], bonus:14},
-  {date:'Aug 2', result:'lost', prize:'—', tier:'No match', picks:[6,13,20,26,35], bonus:8},
-  {date:'Aug 1', result:'lost', prize:'—', tier:'No match', picks:[1,9,14,22,28], bonus:3},
-];
+const pastDraws=[]; // filled from wins API when wallet connected
 
 let pastFilter='all';
 function renderPast(){
+  const el=$('pastList');
+  if(!el) return;
   const list=pastDraws.filter(d=>pastFilter==='all'||d.result===pastFilter);
-  $('pastList').innerHTML=list.map(d=>`
+  if(!list.length){
+    el.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No past draws yet</div>';
+    return;
+  }
+  el.innerHTML=list.map(d=>`
     <div class="tix-row">
       <div class="tix-id">${d.date}</div>
       <div class="tix-nums">
-        ${d.picks.map(n=>`<span>${pad(n)}</span>`).join('')}
-        <span class="bonus">${pad(d.bonus)}</span>
+        ${(d.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
+        ${d.bonus!=null?`<span class="bonus">${pad(d.bonus)}</span>`:''}
       </div>
       <div class="tix-meta ${d.result}">${d.result==='won'?d.prize:d.tier}</div>
     </div>
@@ -726,9 +725,11 @@ $('bets').innerHTML=bets.map(b=>`
   <div class="foot" id="ft${b.i}"></div>
 </div>`).join('');
 
-let m=1,running=false,cp=0,timer=null,band=0,balance=248;
+let m=1,running=false,cp=0,timer=null,band=0;
 let lastAutoMiss=null;
-$('bal').textContent='$'+balance.toFixed(2);
+// Balance is on-chain Sepolia USDC only (set by Megapot module)
+if($('bal')) $('bal').textContent='— USDC';
+if($('bal')) $('bal').setAttribute('aria-label','Sepolia USDC balance');
 const history=[];
 const HEAT=[['#14BE5C','#0B8B41'],['#F0A81E','#B87A00'],['#F2415F','#B31D38']];
 
@@ -756,7 +757,7 @@ function paintBet(b){
   }
   if(b.state==='idle'){
     st.textContent='Ready';go.className='go';go.textContent='Buy $'+b.amt.toFixed(0);
-    ft.innerHTML=b.autoOn?'Cash out → <b>'+Math.floor(b.amt*b.auto)+' tickets</b> at '+b.auto+'×':'Cash out manually for tickets';
+    ft.innerHTML=b.autoOn?'Stake USDC · auto cash-out → <b>'+Math.floor(b.amt*b.auto)+' tix</b> @ '+b.auto+'×':'Stake USDC · cash out for tickets';
   }
   if(b.state==='queued'){
     st.textContent='Queued';go.className='go';go.textContent='Cancel bet';
@@ -902,49 +903,55 @@ function maybeShare(at, tickets){
 async function cashOut(b){
   if(b.state!=='live')return;
   b.state='won';b.at=m;
-  const tickets=Math.floor(b.amt*m);
-  // Aviator-style: house buys Megapot tickets for the player (player is NOT charged again)
-  if(tickets>0 && window.Megapot && window.Megapot.houseBuyTickets){
-    $('status').textContent='House buying '+tickets+' Megapot ticket(s) for you…';
-    const recipient = (window.Megapot.account) || null;
-    const res = await window.Megapot.houseBuyTickets(tickets, recipient);
-    if(res.ok && res.onchain){
-      $('status').textContent='+'+tickets+' tickets · house paid on Base';
-    }else if(res.ok){
-      $('status').textContent='+'+tickets+' tickets · house credit (demo until operator backend)';
-    }else{
-      $('status').textContent='+'+tickets+' tickets credited · house buy pending ('+(res.error||'demo')+')';
-    }
-  }
-  ticketCount+=tickets;
-  syncTixUI();
-  for(let i=0;i<Math.min(tickets,12);i++){
-    const {picks,bonus}=rndNums();
-    ticketData.unshift({id:ticketData.length+1,picks,bonus,status:'live'});
-  }
-  renderTickets();
-  cashoutsToday++;
-  if(cashoutsToday===MISSION_GOAL){
-    ticketCount+=5;
-    syncTixUI();
-    $('status').textContent='Mission complete · +5 bonus tickets';
-  }
-  syncMission();
+  const tickets=Math.max(0, Math.floor(Number(b.amt)*m));
+  const entryId=b.entryId || ('local-'+b.i+'-'+Date.now());
   paintBet(b);
-  $('status').textContent='Entry '+(b.i+1)+' cashed at '+m.toFixed(2)+'× · +'+tickets+' tickets';
-  $('status').classList.add('won');
-  playCash();
-  const go=$('go'+b.i);
-  if(go){
-    const r=go.getBoundingClientRect();
-    confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
-    spawnTicketFlight(go, tickets);
+  if(tickets<=0){
+    $('status').textContent='Entry '+(b.i+1)+' cashed · 0 tickets';
+    $('status').classList.add('won');
+    playCash();
+    return;
   }
-  const chip=$('tixChip');
-  chip.style.transform='scale(1.1)';
-  setTimeout(()=>{chip.style.transform='';},350);
-  showTicketPreview(tickets, m);
-  maybeShare(m, tickets);
+  if(!window.Megapot || typeof window.Megapot.houseBuyTickets!=='function'){
+    $('status').textContent='House buy unavailable — configure HOUSE_BUY_URL';
+    $('status').classList.remove('won');
+    b.state='live'; // allow retry? better leave won but failed payout flag
+    b.payoutFailed=true;
+    paintBet(b);
+    return;
+  }
+  $('status').textContent='Requesting house tickets ×'+tickets+'…';
+  try{
+    const res=await window.Megapot.houseBuyTickets(tickets, window.Megapot.account, {
+      entryId, stake:b.amt, multiplier:m, recipient:window.Megapot.account
+    });
+    if(!res || !res.ok){
+      $('status').textContent='House buy failed: '+(res?.error||'unknown')+' — no tickets credited';
+      b.payoutFailed=true;
+      paintBet(b);
+      return;
+    }
+    // Refresh on-chain tickets only — never invent numbers
+    if(typeof window.Megapot.loadUserTickets==='function') await window.Megapot.loadUserTickets();
+    cashoutsToday++;
+    syncMission();
+    $('status').textContent='Entry '+(b.i+1)+' cashed at '+m.toFixed(2)+'× · house bought '+tickets+' tickets';
+    $('status').classList.add('won');
+    playCash();
+    const go=$('go'+b.i);
+    if(go){
+      const r=go.getBoundingClientRect();
+      confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
+      spawnTicketFlight(go, tickets);
+    }
+    showTicketPreview(tickets, m);
+    maybeShare(m, tickets);
+  }catch(err){
+    console.error(err);
+    $('status').textContent='House buy error — no tickets credited';
+    b.payoutFailed=true;
+    paintBet(b);
+  }
 }
 
 function crash(){
@@ -964,8 +971,8 @@ function crash(){
   });
   const stillIn=ticketCount;
   $('status').textContent=stillIn
-    ? `Still in tonight's draw with ${stillIn} tickets`
-    : '';
+    ? `Round over · ${stillIn} on-chain tickets this drawing`
+    : 'Round over';
   $('status').classList.remove('hot','won');
   $('mult').classList.remove('danger-pulse');
   $('pot').classList.remove('kick');
@@ -1082,7 +1089,7 @@ $('inviteBtn').onclick=()=>{
   $('inviteBtn').textContent='Link copied!';
   setTimeout(()=>$('inviteBtn').textContent='Copy invite link',1200);
 };
-$('claimAll').onclick=()=>{$('claimAll').textContent='Claimed';$('claimAll').className='go wait'};
+// claim wired by Megapot module
 
 function syncAutoFromInput(b){
   const inp=$('au'+b.i);
@@ -1110,21 +1117,58 @@ document.addEventListener('click',e=>{
   if(act==='go'){
     // Live → manual cash out
     if(b.state==='live') return cashOut(b);
-    // Queued → cancel bet and refund
+    // Queued → cancel + treasury refund via backend
     if(b.state==='queued'){
-      balance+=b.amt;
-      $('bal').textContent='$'+balance.toFixed(2);
-      b.state='idle';
-      paintBet(b);
-      $('status').textContent='Bet cancelled · $'+b.amt.toFixed(0)+' returned';
+      (async()=>{
+        if(!window.Megapot?.account){
+          b.state='idle'; b.entryId=null; paintBet(b); return;
+        }
+        $('status').textContent='Cancelling entry…';
+        const res = window.Megapot.refundStake
+          ? await window.Megapot.refundStake(b.entryId, b.amt)
+          : { ok:false, error:'Refund API not configured' };
+        if(res?.ok){
+          b.state='idle'; b.entryId=null; b.stakeTx=null;
+          paintBet(b);
+          $('status').textContent='Bet cancelled · USDC refund submitted';
+          if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+        }else{
+          $('status').textContent='Cancel/refund failed: '+(res?.error||'try again');
+        }
+      })();
       return;
     }
     if(b.state!=='idle') return;
-    b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
-    syncAutoFromInput(b);
-    if(b.amt>balance){$('status').textContent='Not enough wallet balance for that entry';return}
-    balance-=b.amt;$('bal').textContent='$'+balance.toFixed(2);
-    b.state='queued';paintBet(b);return;
+    // Stake: require wallet + real USDC transfer to HOUSE_TREASURY
+    (async()=>{
+      b.amt=Math.max(1,Math.floor(parseFloat($('in'+b.i).value)||1));
+      syncAutoFromInput(b);
+      if(!window.Megapot){
+        $('status').textContent='Wallet module loading…'; return;
+      }
+      if(!window.Megapot.account){
+        $('status').textContent='Connect wallet to stake USDC';
+        await window.Megapot.connectWallet?.();
+        if(!window.Megapot.account) return;
+      }
+      const go=$('go'+b.i);
+      if(go){ go.disabled=true; go.textContent='Confirm in wallet…'; }
+      $('status').textContent='Stake: sign USDC transfer of $'+b.amt.toFixed(0)+'…';
+      const res = await window.Megapot.stakeUsdc(b.amt, b.i);
+      if(go) go.disabled=false;
+      if(!res?.ok){
+        $('status').textContent=res?.error || 'Stake failed';
+        paintBet(b);
+        return;
+      }
+      b.entryId=res.entryId;
+      b.stakeTx=res.tx;
+      b.state='queued';
+      paintBet(b);
+      $('status').textContent='Entry queued · stake tx confirmed';
+      if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+    })();
+    return;
   }
 
   // Stake controls only when idle
@@ -1197,14 +1241,15 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
 
 <script type="module">
 /**
- * MegaPush × Megapot (Base Sepolia testnet)
- * - Live pot (API + RPC)
- * - Wallet connect
- * - Cash-out → random buy (1–10) or bulk batch (11+)
- * - Claim winnings (API unclaimed wins → claimWinnings)
- * - Wins/history from Data API
- * Referrer placeholder until you replace REFERRER.
+ * MegaPush × Megapot — Option A (Base Sepolia, real wallet txs)
+ *
+ * CONFIG
  */
+const HOUSE_TREASURY = '0x0000000000000000000000000000000000000001'; // receives player stake USDC — SET THIS
+const HOUSE_BUY_URL = ''; // e.g. 'https://your-api.com/game/cashout' — required for ticket payouts
+const REFERRER = '0x0000000000000000000000000000000000000001';
+const RPC = 'https://sepolia.base.org';
+
 import {
   createPublicClient,
   createWalletClient,
@@ -1212,7 +1257,7 @@ import {
   http,
   parseAbi,
   formatUnits,
-  decodeEventLog,
+  parseUnits,
   keccak256,
   toBytes,
 } from 'https://esm.sh/viem@2.21.54';
@@ -1223,84 +1268,37 @@ const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
 const BATCH = '0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c';
 const TICKET_NFT = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
-// PLACEHOLDER — replace with your operator wallet
-const REFERRER = '0x0000000000000000000000000000000000000001';
 const PRECISE_UNIT = 1000000000000000000n;
 const SOURCE = keccak256(toBytes('megapush'));
-const NETWORK = 'base-sepolia';
-const RPC = 'https://sepolia.base.org';
 const API = 'https://api.megapot.io/v1';
+const CHAIN = baseSepolia;
+const CHAIN_ID_HEX = '0x14a34';
 
 const abi = parseAbi([
   'function ticketPrice() view returns (uint256)',
   'function currentDrawingId() view returns (uint256)',
   'function getDrawingState(uint256 _drawingId) view returns ((uint256 prizePool, uint256 ticketPrice, uint256 edgePerTicket, uint256 referralWinShare, uint256 referralFee, uint256 globalTicketsBought, uint256 lpEarnings, uint256 drawingTime, uint256 winningTicket, uint8 ballMax, uint8 bonusballMax, address payoutCalculator, bool jackpotLock))',
-  'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
   'function claimWinnings(uint256[] _userTicketIds)',
-  'function getTicketTierIds(uint256[] _ticketIds) view returns (uint256[] tierIds)',
-  'function minimumTicketCount() view returns (uint256)',
-  'function hasActiveBatchOrder(address _recipient) view returns (bool)',
-  'function getBatchOrderInfo(address _recipient) view returns (((uint256 orderDrawingId, uint64 remainingUSDC, uint64 remainingTickets, uint64 totalTicketsOrdered, uint64 dynamicTicketCount, address[] referrers, uint256[] referralSplit) batchOrder, (uint8[] normals, uint8 bonusball)[] staticTickets))',
-  'function createBatchOrder(address _recipient, uint64 _dynamicTicketCount, (uint8[] normals, uint8 bonusball)[] _userStaticTickets, address[] _referrers, uint256[] _referralSplit, bytes32 _source)',
   'function balanceOf(address account) view returns (uint256)',
   'function allowance(address owner, address spender) view returns (uint256)',
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function transfer(address to, uint256 amount) returns (bool)',
   'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
-  'event RandomTicketsBought(address indexed recipient, uint256 indexed drawingId, uint256 count, uint256 cost, uint256[] ticketIds)',
-  'event TicketWinningsClaimed(address indexed userAddress, uint256 indexed drawingId, uint256 userTicketId, uint256 matchedNormals, bool bonusballMatch, uint256 winningsAmount)',
+  'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
+  'function createBatchOrder(address _recipient, uint64 _dynamicTicketCount, (uint8[] normals, uint8 bonusball)[] _userStaticTickets, address[] _referrers, uint256[] _referralSplit, bytes32 _source)',
+  'function hasActiveBatchOrder(address _recipient) view returns (bool)',
 ]);
 
-const publicClient = createPublicClient({ chain: baseSepolia, transport: http(RPC) });
+const publicClient = createPublicClient({ chain: CHAIN, transport: http(RPC) });
 
 let account = null;
 let walletClient = null;
-let ticketPrice = 1000000n;
-let drawingId = null;
-
-function $(id){ return document.getElementById(id); }
-function short(a){ return a ? a.slice(0,4)+'…'+a.slice(-3) : ''; }
-function fmtUsd(raw, dec=6){
-  const n = Number(formatUnits(typeof raw === 'bigint' ? raw : BigInt(raw), dec));
-  if (n >= 1e6) return '$'+(n/1e6).toFixed(2)+'M';
-  if (n >= 1000) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0});
-  return '$'+n.toFixed(2);
-}
-function pad(n){ n=Number(n); return n<10?'0'+n:''+n; }
-
-async function loadLivePot(){
-  try{
-    const r = await fetch(API + '/rounds/active');
-    if(r.ok){
-      const j = await r.json();
-      const amt = BigInt(j.prize_pool?.amount || '0');
-      const el = $('potFig');
-      if(el) el.textContent = fmtUsd(amt);
-      if(j.id) drawingId = BigInt(j.id);
-      return;
-    }
-  }catch(e){ console.warn('API pot', e); }
-  try{
-    const id = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
-    drawingId = id;
-    const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
-    ticketPrice = st.ticketPrice;
-    const el = $('potFig');
-    if(el) el.textContent = fmtUsd(st.prizePool);
-  }catch(e){ console.warn('RPC pot', e); }
-}
-
-async function refreshTicketPrice(){
-  try{
-    ticketPrice = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'ticketPrice' });
-  }catch(e){}
-}
-
-/** Injected EIP-1193 provider (MetaMask, Coinbase, Rabby, etc.) */
 let eip1193 = null;
 let providerListenersBound = false;
+let ticketPrice = 1000000n;
+let drawingId = null;
 const eip6963Providers = [];
 
-// EIP-6963 multi-wallet discovery
 if(typeof window !== 'undefined'){
   window.addEventListener('eip6963:announceProvider', (event) => {
     const detail = event?.detail;
@@ -1313,145 +1311,89 @@ if(typeof window !== 'undefined'){
   try{ window.dispatchEvent(new Event('eip6963:requestProvider')); }catch(_){}
 }
 
+function $(id){ return document.getElementById(id); }
+function short(a){ return a ? a.slice(0,4)+'…'+a.slice(-3) : ''; }
+function pad(n){ n=Number(n); return n<10?'0'+n:''+n; }
+function fmtUsd(raw, dec=6){
+  const n = Number(formatUnits(typeof raw === 'bigint' ? raw : BigInt(raw), dec));
+  if (n >= 1e6) return '$'+(n/1e6).toFixed(2)+'M';
+  if (n >= 1000) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0});
+  return '$'+n.toFixed(2);
+}
+function isMobile(){ return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || ''); }
+
 function pickFromProvidersList(list){
   if(!list?.length) return null;
-  // Prefer MetaMask, then Coinbase, then Base, then first
   const rank = (p) => {
-    const n = (p.isMetaMask && 'metamask')
-      || (p.isCoinbaseWallet && 'coinbase')
-      || (p.isBase && 'base')
-      || (p.isRabby && 'rabby')
-      || '';
-    if(n === 'metamask') return 0;
-    if(n === 'coinbase' || n === 'base') return 1;
-    if(n === 'rabby') return 2;
+    if(p.isMetaMask) return 0;
+    if(p.isCoinbaseWallet || p.isBase) return 1;
+    if(p.isRabby) return 2;
     return 9;
   };
   return [...list].sort((a,b) => rank(a) - rank(b))[0];
 }
 
 function getInjectedProviderSync(){
-  // EIP-6963 first
   if(eip6963Providers.length){
     const mm = eip6963Providers.find(p => /metamask/i.test(p.info?.name || p.info?.rdns || ''));
-    const cb = eip6963Providers.find(p => /coinbase/i.test(p.info?.name || p.info?.rdns || ''));
-    const pick = mm || cb || eip6963Providers[0];
-    if(pick?.provider) return pick.provider;
+    return (mm || eip6963Providers[0]).provider;
   }
   const eth = window.ethereum;
-  if(eth?.providers?.length){
-    return pickFromProvidersList(eth.providers) || eth.providers[0];
-  }
+  if(eth?.providers?.length) return pickFromProvidersList(eth.providers) || eth.providers[0];
   if(eth) return eth;
-  // Legacy / alternate injectors
   if(window.coinbaseWalletExtension) return window.coinbaseWalletExtension;
-  if(window.okxwallet) return window.okxwallet;
-  if(window.rabby) return window.rabby;
   return null;
 }
 
-/** Wait for wallets that inject after DOMContentLoaded */
 function waitForInjectedProvider(timeoutMs = 2500){
   const existing = getInjectedProviderSync();
   if(existing) return Promise.resolve(existing);
-
   return new Promise((resolve) => {
     let done = false;
-    const finish = (p) => {
-      if(done) return;
-      done = true;
-      cleanup();
-      resolve(p || getInjectedProviderSync());
-    };
+    const finish = (p) => { if(done) return; done = true; cleanup(); resolve(p || getInjectedProviderSync()); };
     const onEth = () => finish(getInjectedProviderSync());
-    const on6963 = () => finish(getInjectedProviderSync());
     const cleanup = () => {
       window.removeEventListener('ethereum#initialized', onEth);
-      window.removeEventListener('eip6963:announceProvider', on6963);
-      clearTimeout(timer);
-      clearInterval(poll);
+      window.removeEventListener('eip6963:announceProvider', onEth);
+      clearTimeout(timer); clearInterval(poll);
     };
     window.addEventListener('ethereum#initialized', onEth, { once: true });
-    window.addEventListener('eip6963:announceProvider', on6963);
+    window.addEventListener('eip6963:announceProvider', onEth);
     try{ window.dispatchEvent(new Event('eip6963:requestProvider')); }catch(_){}
-    const poll = setInterval(() => {
-      const p = getInjectedProviderSync();
-      if(p) finish(p);
-    }, 100);
+    const poll = setInterval(() => { const p = getInjectedProviderSync(); if(p) finish(p); }, 100);
     const timer = setTimeout(() => finish(getInjectedProviderSync()), timeoutMs);
   });
 }
 
-function isMobile(){
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-}
-
 function ensureTopLevelWindow(){
-  // Connections from iframes look suspicious to MetaMask
   try{
     if(window.top && window.top !== window.self){
-      const target = location.href;
-      try{ window.top.location.href = target; }catch(_){
-        window.open(target, '_blank', 'noopener,noreferrer');
-      }
+      try{ window.top.location.href = location.href; }catch(_){ window.open(location.href, '_blank', 'noopener,noreferrer'); }
       return false;
     }
   }catch(_){}
   return true;
 }
 
-function openWalletInstallHelp(){
-  if(isMobile()){
-    // Prefer opening the HTTPS origin (not a third-party deep-link wrapper when possible)
-    const go = confirm(
-      'No browser wallet detected.\n\n' +
-      'On phone: open MetaMask → Browser tab → paste this site URL.\n\n' +
-      'OK = copy site URL'
-    );
-    if(go){
-      navigator.clipboard?.writeText(location.href).catch(()=>{});
-      alert('URL copied. Open MetaMask → Browser → paste & go.');
-    }
-    return;
-  }
-  const go = confirm(
-    'No wallet extension detected in this browser.\n\n' +
-    'Install MetaMask for Chrome/Firefox/Brave, then refresh.\n\n' +
-    'OK = MetaMask download'
-  );
-  if(go) window.open('https://metamask.io/download/', '_blank', 'noopener,noreferrer');
-}
-
-async function getChainIdHex(provider){
-  try{
-    const id = await provider.request({ method: 'eth_chainId' });
-    return String(id).toLowerCase();
-  }catch(_){ return null; }
-}
-
 async function ensureBaseSepolia(provider, { interactive = true } = {}){
-  const want = '0x14a34';
-  const cur = await getChainIdHex(provider);
+  const want = CHAIN_ID_HEX;
+  let cur;
+  try{ cur = String(await provider.request({ method: 'eth_chainId' })).toLowerCase(); }catch(_){ cur = null; }
   if(cur === want) return true;
   if(!interactive) return false;
   try{
-    await provider.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: want }],
-    });
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] });
     return true;
   }catch(switchErr){
     const code = switchErr?.code ?? switchErr?.data?.originalError?.code;
     if(code === 4001) return false;
     if(code === 4902 || /unrecognized chain|unknown chain/i.test(String(switchErr?.message || ''))){
-      // Adding a network is a second, explicit wallet prompt — only when needed
       await provider.request({
         method: 'wallet_addEthereumChain',
         params: [{
-          chainId: want,
-          chainName: 'Base Sepolia',
+          chainId: want, chainName: 'Base Sepolia',
           nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-          rpcUrls: ['https://sepolia.base.org'],
+          rpcUrls: [RPC],
           blockExplorerUrls: ['https://sepolia.basescan.org'],
         }],
       });
@@ -1467,121 +1409,234 @@ function bindProviderListeners(provider){
   provider.on('accountsChanged', (accs) => {
     const b = $('walletBtn');
     if(!accs?.length){
-      account = null;
-      walletClient = null;
+      account = null; walletClient = null;
       if(b){ b.textContent = 'Connect'; b.classList.remove('on'); }
+      setBalUi(null);
       return;
     }
     account = accs[0];
-    walletClient = createWalletClient({
-      account: accs[0], chain: baseSepolia, transport: custom(provider),
-    });
+    walletClient = createWalletClient({ account: accs[0], chain: CHAIN, transport: custom(provider) });
     if(b){ b.textContent = short(accs[0]); b.classList.add('on'); }
-    loadUserTickets();
-    refreshUsdcBalance();
-    loadWins();
+    loadUserTickets(); refreshUsdcBalance(); loadWins();
   });
   provider.on('chainChanged', () => {
-    // Soft refresh of clients; do not force another add-chain popup
     if(account && eip1193){
-      walletClient = createWalletClient({
-        account, chain: baseSepolia, transport: custom(eip1193),
-      });
+      walletClient = createWalletClient({ account, chain: CHAIN, transport: custom(eip1193) });
     }
   });
 }
 
-/**
- * Connect wallet with a clean MetaMask permission flow:
- * 1) eth_accounts (silent) or eth_requestAccounts only — no deprecated enable()
- * 2) switch/add Base Sepolia only if needed (separate prompts)
- */
+function setBalUi(raw){
+  const el = $('bal');
+  if(!el) return;
+  if(raw == null){ el.textContent = '— USDC'; return; }
+  const n = Number(formatUnits(raw, 6));
+  el.textContent = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC';
+}
+
+async function refreshUsdcBalance(){
+  if(!account){ setBalUi(null); return null; }
+  try{
+    const bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
+    setBalUi(bal);
+    return bal;
+  }catch(e){ console.warn('USDC balance', e); return null; }
+}
+
+async function loadLivePot(){
+  try{
+    const r = await fetch(API + '/rounds/active');
+    if(r.ok){
+      const j = await r.json();
+      const amt = BigInt(j.prize_pool?.amount || '0');
+      if(amt > 0n){
+        const el = $('potFig');
+        if(el) el.textContent = fmtUsd(amt);
+        if(j.id) drawingId = BigInt(j.id);
+        return;
+      }
+    }
+  }catch(e){ console.warn('API pot', e); }
+  try{
+    const id = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
+    drawingId = id;
+    const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
+    ticketPrice = st.ticketPrice;
+    const el = $('potFig');
+    if(el) el.textContent = fmtUsd(st.prizePool);
+  }catch(e){
+    console.warn('RPC pot', e);
+    const el = $('potFig');
+    if(el) el.textContent = 'Sepolia';
+  }
+}
+
+async function refreshTicketPrice(){
+  try{
+    ticketPrice = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'ticketPrice' });
+  }catch(e){}
+}
+
 async function connectWallet(opts = {}){
   const { silent = false } = opts;
   const btn = $('walletBtn');
   try{
     if(!ensureTopLevelWindow()) return null;
     if(!silent && btn){ btn.disabled = true; btn.textContent = '…'; }
-
     eip1193 = getInjectedProviderSync() || await waitForInjectedProvider(silent ? 800 : 2800);
     if(!eip1193){
       if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
-      if(!silent) openWalletInstallHelp();
+      if(!silent){
+        alert(isMobile()
+          ? 'Open this site in MetaMask Browser (copy the URL).'
+          : 'Install MetaMask (or Base wallet) and refresh.');
+      }
       return null;
     }
-
     let accounts = [];
-    try{
-      accounts = await eip1193.request({ method: 'eth_accounts' }) || [];
-    }catch(_){ accounts = []; }
-
-    // Only open the MetaMask connect popup when the user clicked Connect
+    try{ accounts = await eip1193.request({ method: 'eth_accounts' }) || []; }catch(_){}
     if(!accounts.length){
-      if(silent){
-        if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
-        return null;
-      }
-      // Prefer permission request (clearer purpose) then accounts
+      if(silent){ if(btn){ btn.disabled = false; btn.textContent = 'Connect'; } return null; }
       try{
-        await eip1193.request({
-          method: 'wallet_requestPermissions',
-          params: [{ eth_accounts: {} }],
-        });
-      }catch(permErr){
-        // Older wallets may not support wallet_requestPermissions — fall through
-        if(permErr?.code === 4001) throw permErr;
-      }
+        await eip1193.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+      }catch(permErr){ if(permErr?.code === 4001) throw permErr; }
       accounts = await eip1193.request({ method: 'eth_requestAccounts' });
     }
-
     const addr = accounts?.[0];
-    if(!addr){
-      throw new Error('No account returned from wallet');
-    }
-
-    // Chain switch only after accounts are known; skip on silent reconnect if already ok
-    try{
-      await ensureBaseSepolia(eip1193, { interactive: !silent });
-    }catch(e){
-      console.warn('chain switch', e);
-      if($('status') && !silent){
-        $('status').textContent = 'Connected — switch MetaMask network to Base Sepolia to play on-chain';
-      }
-    }
-
+    if(!addr) throw new Error('No account');
+    try{ await ensureBaseSepolia(eip1193, { interactive: !silent }); }catch(e){ console.warn(e); }
     account = addr;
-    walletClient = createWalletClient({
-      account: addr,
-      chain: baseSepolia,
-      transport: custom(eip1193),
-    });
+    walletClient = createWalletClient({ account: addr, chain: CHAIN, transport: custom(eip1193) });
     bindProviderListeners(eip1193);
-
     if(btn){ btn.disabled = false; btn.textContent = short(addr); btn.classList.add('on'); }
     await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
     return addr;
   }catch(e){
     console.error('connectWallet', e);
-    const msg = e?.shortMessage || e?.message || String(e);
-    if(e?.code !== 4001 && $('status') && !silent){
-      $('status').textContent = 'Wallet: ' + msg.slice(0, 80);
-    }
     if(btn){ btn.disabled = false; btn.textContent = account ? short(account) : 'Connect'; }
     return null;
   }
 }
 
-async function refreshUsdcBalance(){
-  if(!account) return;
+/** Player signs USDC transfer to HOUSE_TREASURY for stake amount (human dollars → 6 dec). */
+async function stakeUsdc(amountUsd, entryIndex = 0){
+  if(!account || !walletClient){
+    return { ok: false, error: 'Connect wallet first' };
+  }
+  if(!HOUSE_TREASURY || !/^0x[a-fA-F0-9]{40}$/.test(HOUSE_TREASURY) || /^0x0{40}$/i.test(HOUSE_TREASURY)){
+    return { ok: false, error: 'Set HOUSE_TREASURY (house wallet address) in game config' };
+  }
+  if(HOUSE_TREASURY.toLowerCase() === '0x0000000000000000000000000000000000000001'){
+    return { ok: false, error: 'Set HOUSE_TREASURY to your funded house wallet (not placeholder)' };
+  }
+  const amt = Math.max(0, Number(amountUsd));
+  if(!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'Invalid stake' };
+
+  await ensureBaseSepolia(eip1193, { interactive: true });
+  const raw = parseUnits(String(amt), 6);
+  const bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
+  if(bal < raw){
+    return { ok: false, error: 'Insufficient Sepolia USDC (need '+amt+' USDC)' };
+  }
+
   try{
-    const bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
-    const el = $('bal');
-    if(el) el.textContent = '$' + Number(formatUnits(bal, 6)).toFixed(2);
-  }catch(e){}
+    const hash = await walletClient.writeContract({
+      address: USDC,
+      abi,
+      functionName: 'transfer',
+      args: [HOUSE_TREASURY, raw],
+      account,
+      chain: CHAIN,
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
+    // Optional notify backend of stake
+    if(HOUSE_BUY_URL){
+      const base = HOUSE_BUY_URL.replace(/\/game\/cashout\/?$/i, '');
+      try{
+        await fetch(base + '/game/stake', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entryId, stake: amt, tx: hash, player: account }),
+        });
+      }catch(_){}
+    }
+    await refreshUsdcBalance();
+    return { ok: true, tx: hash, entryId, amount: amt };
+  }catch(e){
+    return { ok: false, error: e?.shortMessage || e?.message || String(e) };
+  }
+}
+
+/** Cancel queued bet — backend refunds USDC from treasury (player does not pull). */
+async function refundStake(entryId, amountUsd){
+  if(!HOUSE_BUY_URL){
+    return { ok: false, error: 'No HOUSE_BUY_URL — cannot refund; set backend' };
+  }
+  if(!account) return { ok: false, error: 'Wallet not connected' };
+  const base = HOUSE_BUY_URL.replace(/\/game\/cashout\/?$/i, '');
+  try{
+    const r = await fetch(base + '/game/refund', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryId, stake: amountUsd, player: account }),
+    });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status) };
+    await refreshUsdcBalance();
+    return { ok: true, ...j };
+  }catch(e){
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/**
+ * House buys tickets for player. No player USDC.
+ * Requires HOUSE_BUY_URL backend. Never invents tickets on failure.
+ */
+async function houseBuyTickets(count, recipient, meta = {}){
+  count = Math.max(0, Math.floor(Number(count) || 0));
+  if(count <= 0) return { ok: true, count: 0 };
+  if(!HOUSE_BUY_URL){
+    return { ok: false, error: 'HOUSE_BUY_URL not set — house cannot buy tickets' };
+  }
+  const to = recipient || account;
+  if(!to) return { ok: false, error: 'No recipient address' };
+  try{
+    const r = await fetch(HOUSE_BUY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        count,
+        recipient: to,
+        referrer: REFERRER,
+        source: SOURCE,
+        chainId: 84532,
+        entryId: meta.entryId,
+        stake: meta.stake,
+        multiplier: meta.multiplier,
+      }),
+    });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status) };
+    await loadUserTickets();
+    return { ok: true, onchain: true, count, ...j };
+  }catch(e){
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 async function loadUserTickets(){
-  if(!account) return;
+  // Clear paper lists; fill from chain only
+  try{
+    if(typeof ticketData !== 'undefined') ticketData.length = 0;
+  }catch(_){}
+  if(!account){
+    if(typeof renderTickets === 'function') renderTickets();
+    if($('tixBal')) $('tixBal').textContent = '0';
+    if($('tixCount')) $('tixCount').textContent = '0';
+    return;
+  }
   try{
     if(drawingId == null){
       drawingId = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
@@ -1590,27 +1645,34 @@ async function loadUserTickets(){
       address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, drawingId],
     });
     if(!Array.isArray(tickets)) return;
-    const list = $('tixList');
-    if(list){
-      list.innerHTML = tickets.length ? tickets.map(t => {
-        const id = Number(t.ticketId);
-        const normals = (t.normals || []).map(Number);
-        const bonus = Number(t.bonusball);
-        return `<div class="tix-row">
-          <div class="tix-id">#${pad(id % 1000)}</div>
-          <div class="tix-nums">${normals.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(bonus)}</span></div>
-          <div class="tix-meta live">Live</div>
-        </div>`;
-      }).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets this drawing</div>';
+    const mapped = tickets.map(t => ({
+      id: Number(t.ticketId),
+      picks: (t.normals || []).map(Number),
+      bonus: Number(t.bonusball),
+      status: 'live',
+    }));
+    if(typeof ticketData !== 'undefined'){
+      ticketData.length = 0;
+      mapped.forEach(x => ticketData.push(x));
     }
-    const countEl = $('tixCount');
-    if(countEl) countEl.textContent = String(tickets.length);
-    const chip = $('tixBal');
-    if(chip) chip.textContent = String(tickets.length);
+    if(typeof ticketCount !== 'undefined') ticketCount = mapped.length;
+    if(typeof syncTixUI === 'function') syncTixUI();
+    if(typeof renderTickets === 'function') renderTickets();
+    else {
+      const list = $('tixList');
+      if(list){
+        list.innerHTML = mapped.length ? mapped.map(t =>
+          `<div class="tix-row"><div class="tix-id">#${pad(t.id % 1000)}</div>`+
+          `<div class="tix-nums">${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
+          `<div class="tix-meta live">Live</div></div>`
+        ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No on-chain tickets this drawing</div>';
+      }
+      if($('tixBal')) $('tixBal').textContent = String(mapped.length);
+      if($('tixCount')) $('tixCount').textContent = String(mapped.length);
+    }
   }catch(e){ console.warn('getUserTickets', e); }
 }
 
-/** Wins / history from Data API */
 async function loadWins(){
   if(!account) return;
   try{
@@ -1619,199 +1681,58 @@ async function loadWins(){
     const j = await r.json();
     const rows = j.data || j.wins || j || [];
     if(!Array.isArray(rows)) return;
-    const past = $('pastList');
-    if(past && rows.length){
-      past.innerHTML = rows.map(w => {
+    if(typeof pastDraws !== 'undefined'){
+      pastDraws.length = 0;
+      rows.forEach(w => {
         const amount = w.amount?.amount != null ? fmtUsd(BigInt(w.amount.amount), w.amount.decimals ?? 6) : (w.winnings_amount ? fmtUsd(BigInt(w.winnings_amount)) : '—');
         const claimed = w.claimed === true || w.claimed === 'true';
-        const nums = (w.numbers || w.normals || []).map(Number);
-        const bonus = w.bonusball != null ? Number(w.bonusball) : null;
-        const date = (w.round_id || w.drawing_id || w.date || '—');
-        return `<div class="tix-row">
-          <div class="tix-id">${date}</div>
-          <div class="tix-nums">${nums.length ? nums.map(n=>`<span>${pad(n)}</span>`).join('')+(bonus!=null?`<span class="bonus">${pad(bonus)}</span>`:'') : '<span style="font-size:12px;color:var(--mid)">ticket</span>'}</div>
-          <div class="tix-meta ${claimed?'lost':'won'}">${claimed ? 'Claimed' : amount}</div>
-        </div>`;
-      }).join('');
+        pastDraws.push({
+          date: String(w.round_id || w.drawing_id || w.date || '—'),
+          result: claimed ? 'lost' : 'won',
+          prize: amount,
+          tier: claimed ? 'Claimed' : 'Unclaimed',
+          picks: (w.numbers || w.normals || []).map(Number),
+          bonus: w.bonusball != null ? Number(w.bonusball) : null,
+        });
+      });
+      if(typeof renderPast === 'function') renderPast();
     }
-    // Unclaimed total for claim card
-    try{
-      const u = await fetch(`${API}/wallets/${account}/wins?claimed=false&limit=100`);
-      if(u.ok){
-        const uj = await u.json();
-        const list = uj.data || uj.wins || uj || [];
-        let total = 0n;
-        if(Array.isArray(list)){
-          for(const w of list){
-            if(w.amount?.amount) total += BigInt(w.amount.amount);
-            else if(w.winnings_amount) total += BigInt(w.winnings_amount);
-          }
+    const u = await fetch(`${API}/wallets/${account}/wins?claimed=false&limit=100`);
+    if(u.ok){
+      const uj = await u.json();
+      const list = uj.data || uj.wins || uj || [];
+      let total = 0n;
+      if(Array.isArray(list)){
+        for(const w of list){
+          if(w.amount?.amount) total += BigInt(w.amount.amount);
+          else if(w.winnings_amount) total += BigInt(w.winnings_amount);
         }
-        const val = document.querySelector('#page-tickets .card-val');
-        if(val && total > 0n) val.textContent = fmtUsd(total);
       }
-    }catch(_){}
+      const val = $('claimVal') || document.querySelector('#page-tickets .card-val');
+      if(val) val.textContent = total > 0n ? fmtUsd(total) : '—';
+      const sub = $('claimSub');
+      if(sub) sub.textContent = Array.isArray(list) ? `${list.length} unclaimed win(s)` : 'Unclaimed wins';
+    }
   }catch(e){ console.warn('loadWins', e); }
 }
 
-async function ensureApprove(spender, amount){
-  const allowance = await publicClient.readContract({
-    address: USDC, abi, functionName: 'allowance', args: [account, spender],
-  });
-  if(allowance >= amount) return null;
-  const hash = await walletClient.writeContract({
-    address: USDC, abi, functionName: 'approve', args: [spender, amount], account, chain: baseSepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash });
-  return hash;
-}
-
-/** 1–10 immediate random tickets */
-async function buyRandomChunk(n){
-  const cost = ticketPrice * BigInt(n);
-  const txs = [];
-  const approveTx = await ensureApprove(RANDOM_BUYER, cost);
-  if(approveTx) txs.push(approveTx);
-  const buyHash = await walletClient.writeContract({
-    address: RANDOM_BUYER, abi, functionName: 'buyTickets',
-    args: [BigInt(n), account, [REFERRER], [PRECISE_UNIT], SOURCE],
-    account, chain: baseSepolia,
-  });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: buyHash });
-  txs.push(buyHash);
-  const ids = [];
-  for(const log of receipt.logs){
-    try{
-      const ev = decodeEventLog({ abi, data: log.data, topics: log.topics });
-      if(ev.eventName === 'RandomTicketsBought' && ev.args?.ticketIds){
-        ids.push(...ev.args.ticketIds.map(String));
-      }
-    }catch(_){}
-  }
-  return { txs, ids };
-}
-
-/** 11+ all-random via BatchPurchaseFacilitator (keeper-executed) */
-async function buyBulkRandom(count){
-  const n = Math.max(10, Math.floor(count));
-  const cost = ticketPrice * BigInt(n);
-  const txs = [];
-  const approveTx = await ensureApprove(BATCH, cost);
-  if(approveTx) txs.push(approveTx);
-
-  // Cancel stuck order if any
-  try{
-    const active = await publicClient.readContract({
-      address: BATCH, abi, functionName: 'hasActiveBatchOrder', args: [account],
-    });
-    if(active){
-      return { ok: false, error: 'Active batch order exists — wait or cancel on-chain', txs };
-    }
-  }catch(_){}
-
-  const createHash = await walletClient.writeContract({
-    address: BATCH, abi, functionName: 'createBatchOrder',
-    args: [
-      account,
-      BigInt(n),           // all dynamic / random
-      [],                  // no static picks
-      [REFERRER],
-      [PRECISE_UNIT],
-      SOURCE,
-    ],
-    account, chain: baseSepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: createHash });
-  txs.push(createHash);
-
-  // Poll keeper execution (up to ~2 min)
-  const status = $('status');
-  for(let i=0;i<24;i++){
-    await new Promise(r => setTimeout(r, 5000));
-    let active = true;
-    try{
-      active = await publicClient.readContract({
-        address: BATCH, abi, functionName: 'hasActiveBatchOrder', args: [account],
-      });
-    }catch(_){ active = false; }
-    if(!active){
-      if(status) status.textContent = 'Bulk order filled · '+n+' tickets';
-      return { ok: true, txs, ticketIds: [], bulk: true, count: n };
-    }
-    try{
-      const info = await publicClient.readContract({
-        address: BATCH, abi, functionName: 'getBatchOrderInfo', args: [account],
-      });
-      const rem = info.batchOrder?.remainingTickets ?? info[0]?.remainingTickets;
-      const tot = info.batchOrder?.totalTicketsOrdered ?? info[0]?.totalTicketsOrdered;
-      if(status && tot != null) status.textContent = `Bulk filling… ${Number(tot)-Number(rem)}/${Number(tot)}`;
-      if(rem === 0n || rem === 0) {
-        return { ok: true, txs, ticketIds: [], bulk: true, count: n };
-      }
-    }catch(_){}
-  }
-  return { ok: true, txs, ticketIds: [], bulk: true, pending: true, count: n };
-}
-
-/**
- * Buy tickets: ≤10 random buyer; ≥11 bulk facilitator.
- */
-async function buyRandomTickets(count){
-  if(!account || !walletClient){
-    return { ok: false, error: 'Wallet not connected', simulated: true };
-  }
-  count = Math.max(1, Math.floor(count));
-  await refreshTicketPrice();
-  try{
-    if(count > 10){
-      const res = await buyBulkRandom(count);
-      await loadUserTickets();
-      await refreshUsdcBalance();
-      return res.ok === false ? res : { ok: true, ...res };
-    }
-    // 1–10: single or multi chunk
-    const allIds = [];
-    const txs = [];
-    let left = count;
-    while(left > 0){
-      const n = Math.min(10, left);
-      const { txs: t, ids } = await buyRandomChunk(n);
-      txs.push(...t);
-      allIds.push(...ids);
-      left -= n;
-    }
-    await loadUserTickets();
-    await refreshUsdcBalance();
-    return { ok: true, txs, ticketIds: allIds };
-  }catch(e){
-    console.error('buyRandomTickets', e);
-    return { ok: false, error: e?.shortMessage || e?.message || String(e) };
-  }
-}
-
-/** Claim unclaimed wins via Data API IDs + Jackpot.claimWinnings */
 async function claimWinnings(){
-  if(!account || !walletClient){
-    return { ok: false, error: 'Wallet not connected' };
-  }
+  if(!account || !walletClient) return { ok: false, error: 'Wallet not connected' };
   try{
+    await ensureBaseSepolia(eip1193, { interactive: true });
     const r = await fetch(`${API}/wallets/${account}/wins?claimed=false&limit=100`);
     if(!r.ok) throw new Error('Wins API '+r.status);
     const j = await r.json();
     const list = j.data || j.wins || j || [];
-    if(!Array.isArray(list) || !list.length){
-      return { ok: false, error: 'No unclaimed wins' };
-    }
+    if(!Array.isArray(list) || !list.length) return { ok: false, error: 'No unclaimed wins' };
     const ids = list.map(w => BigInt(w.user_ticket_id || w.ticket_id || w.ticketId)).filter(Boolean);
-    if(!ids.length) return { ok: false, error: 'No ticket ids in wins response' };
-
-    // Chunk 50
+    if(!ids.length) return { ok: false, error: 'No ticket ids' };
     const txs = [];
     for(let i=0;i<ids.length;i+=50){
       const chunk = ids.slice(i, i+50);
       const hash = await walletClient.writeContract({
         address: JACKPOT, abi, functionName: 'claimWinnings',
-        args: [chunk], account, chain: baseSepolia,
+        args: [chunk], account, chain: CHAIN,
       });
       await publicClient.waitForTransactionReceipt({ hash });
       txs.push(hash);
@@ -1820,85 +1741,45 @@ async function claimWinnings(){
     await loadWins();
     return { ok: true, txs, claimed: ids.length };
   }catch(e){
-    console.error('claimWinnings', e);
     return { ok: false, error: e?.shortMessage || e?.message || String(e) };
   }
 }
-
-
-/**
- * HOUSE buys tickets for the player (Aviator-style payout in tickets).
- * Player is never asked to approve/spend USDC on cash-out.
- *
- * Production: set HOUSE_BUY_URL to your backend. Backend holds the house key,
- * calls buyTickets(count, playerAddress, referrers, split, source), pays USDC.
- * Demo: credits tickets in UI only.
- */
-const HOUSE_BUY_URL = null; // e.g. 'https://your-api.com/megapot/house-buy'
-
-async function houseBuyTickets(count, recipient){
-  count = Math.max(1, Math.floor(count));
-  // Optional backend: operator treasury pays
-  if(HOUSE_BUY_URL){
-    try{
-      const r = await fetch(HOUSE_BUY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          count,
-          recipient: recipient || account,
-          referrer: REFERRER,
-          source: SOURCE,
-        }),
-      });
-      const j = await r.json().catch(()=>({}));
-      if(!r.ok) return { ok:false, error: j.error || ('HTTP '+r.status) };
-      await loadUserTickets();
-      return { ok:true, onchain:true, ...j };
-    }catch(e){
-      return { ok:false, error: e.message || String(e) };
-    }
-  }
-  // Demo / no backend yet — UI credit only (no player USDC)
-  return {
-    ok: true,
-    onchain: false,
-    demo: true,
-    count,
-    recipient: recipient || account,
-    note: 'Set HOUSE_BUY_URL + operator wallet backend to pay real tickets from house',
-  };
-}
-
 
 window.Megapot = {
   connectWallet,
   loadLivePot,
   loadUserTickets,
   loadWins,
-  buyRandomTickets,   // optional direct player buy (not used on cash-out)
-  houseBuyTickets,    // Aviator-style: house pays, player receives tickets
+  stakeUsdc,
+  refundStake,
+  houseBuyTickets,
   claimWinnings,
+  refreshUsdcBalance,
   get account(){ return account; },
+  HOUSE_TREASURY,
+  HOUSE_BUY_URL,
   REFERRER,
   SOURCE,
-  HOUSE_BUY_URL,
   addresses: { JACKPOT, USDC, RANDOM_BUYER, BATCH, TICKET_NFT },
+  chain: 'baseSepolia',
+  chainId: 84532,
 };
+
+const badge = $('netBadge');
+if(badge) badge.textContent = 'Base Sepolia';
 
 loadLivePot();
 refreshTicketPrice();
+setBalUi(null);
+
 const btn = $('walletBtn');
 if(btn) btn.addEventListener('click', () => connectWallet());
-
-// Silent reconnect only — never pop MetaMask until user clicks Connect
-waitForInjectedProvider(1500).then((provider) => {
-  if(!provider) return;
-  eip1193 = provider;
+waitForInjectedProvider(1500).then((p) => {
+  if(!p) return;
+  eip1193 = p;
   connectWallet({ silent: true });
 }).catch(()=>{});
 
-// Wire Claim all button
 const claimBtn = $('claimAll');
 if(claimBtn){
   claimBtn.addEventListener('click', async () => {
