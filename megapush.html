@@ -786,17 +786,17 @@ let ticketCount=0;
 let cashoutsToday=0;
 const MISSION_GOAL=3;
 function syncTixUI(){
-  $('tixBal').textContent=ticketCount;
-  $('tixCount').textContent=ticketCount;
+  if($('tixBal')) $('tixBal').textContent=ticketCount;
+  if($('tixCount')) $('tixCount').textContent=ticketCount;
   const lb=$('lbTix'); if(lb) lb.textContent=ticketCount;
 }
 function syncMission(){
   const pct=Math.min(100,(cashoutsToday/MISSION_GOAL)*100);
-  $('missionBar').style.width=pct+'%';
-  $('missionText').textContent=cashoutsToday>=MISSION_GOAL
+  if($('missionBar')) $('missionBar').style.width=pct+'%';
+  if($('missionText')) $('missionText').textContent=cashoutsToday>=MISSION_GOAL
     ? 'Mission complete · bonus tickets added'
     : `Cash out ${cashoutsToday}/${MISSION_GOAL} times today`;
-  if(cashoutsToday>=MISSION_GOAL) $('missionReward').textContent='Done';
+  if(cashoutsToday>=MISSION_GOAL && $('missionReward')) $('missionReward').textContent='Done';
 }
 syncTixUI(); syncMission();
 
@@ -805,7 +805,10 @@ function renderTickets(){
   const list=$('tixList');
   if(!list) return;
   if(!ticketData.length){
-    list.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
+    const connected = !!(window.Megapot && window.Megapot.account);
+    list.innerHTML = connected
+      ? '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets yet · cash out a climb to earn them</div>'
+      : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
     return;
   }
   list.innerHTML=ticketData.map(t=>`
@@ -819,6 +822,38 @@ function renderTickets(){
     </div>
   `).join('');
 }
+/** Bridge classic game UI ↔ module wallet code (separate JS scopes). */
+window.MegaPushUI = {
+  get ticketCount(){ return ticketCount; },
+  get ticketData(){ return ticketData; },
+  applyTickets(mapped){
+    const list = Array.isArray(mapped) ? mapped : [];
+    ticketData.length = 0;
+    list.forEach(x => ticketData.push(x));
+    ticketCount = list.length;
+    syncTixUI();
+    renderTickets();
+    return ticketCount;
+  },
+  clearTickets(){
+    ticketData.length = 0;
+    ticketCount = 0;
+    syncTixUI();
+    renderTickets();
+  },
+  bumpTickets(n){
+    // Optimistic chip only when chain lag; list still from chain
+    const add = Math.max(0, Math.floor(Number(n) || 0));
+    if(add <= 0) return ticketCount;
+    ticketCount = Math.max(ticketCount, ticketCount + add);
+    // Prefer absolute if we know current list length
+    if(ticketData.length) ticketCount = Math.max(ticketCount, ticketData.length);
+    syncTixUI();
+    return ticketCount;
+  },
+  syncTixUI,
+  renderTickets,
+};
 renderTickets();
 
 const pastDraws=[]; // filled from wins API when wallet connected
@@ -1184,18 +1219,26 @@ async function cashOut(b){
     b.ticketsBought = bought;
     b.payoutFailed = false;
     paintBet(b);
-    if(typeof window.Megapot.loadUserTickets === 'function'){
-      window.Megapot.loadUserTickets().catch(()=>{});
-    }
+    // Refresh on-chain tickets + balances (module is separate scope — await + poll)
+    // houseBuyTickets already polled chain; refresh UI + USDC once more for mobile lag
+    try{
+      if(typeof window.Megapot.loadUserTickets === 'function'){
+        await window.Megapot.loadUserTickets({ retries: 3, delayMs: 1500 });
+      }
+      if(window.Megapot.refreshUsdcBalance){
+        await window.Megapot.refreshUsdcBalance();
+        setTimeout(()=>{ window.Megapot.refreshUsdcBalance?.(); }, 2500);
+      }
+    }catch(e){ console.warn('post-cashout refresh', e); }
     cashoutsToday++;
     syncMission();
     const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
     $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+txNote;
-    // Refresh preview title if still open
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
       pt.textContent = '+'+bought+' tickets';
     }
+    if(window.MegaPushUI) window.MegaPushUI.syncTixUI();
   }catch(err){
     console.error(err);
     b.payoutPending = false;
@@ -1553,7 +1596,12 @@ document.addEventListener('click',e=>{
         b.stakeTx=res.tx;
         b.state='queued';
         paintBet(b);
-        if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+        if(window.Megapot.refreshUsdcBalance){
+          await window.Megapot.refreshUsdcBalance();
+          // Mobile RPCs lag — refresh again shortly so header USDC drops without full reload
+          setTimeout(()=>{ window.Megapot.refreshUsdcBalance?.(); }, 2000);
+          setTimeout(()=>{ window.Megapot.refreshUsdcBalance?.(); }, 5000);
+        }
       }catch(err){
         console.error('stake', err);
         b.state='idle';
@@ -1603,6 +1651,10 @@ document.querySelectorAll('#nav .tab').forEach(tab=>{
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
     const page=$('page-'+tab.dataset.page);
     if(page) page.classList.add('on');
+    // Re-pull on-chain tickets when opening Tickets (fixes stale empty list)
+    if(tab.dataset.page === 'tickets' && window.Megapot?.loadUserTickets){
+      window.Megapot.loadUserTickets({ retries: 2, delayMs: 800 }).catch(()=>{});
+    }
   });
 });
 document.querySelectorAll('.seg button').forEach(btn=>{
@@ -2086,13 +2138,15 @@ async function houseBuyTickets(count, recipient, meta = {}){
     });
     const j = await r.json().catch(()=>({}));
     if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
-    // On-chain only — never invent ticket rows client-side
-    await loadUserTickets();
+    const bought = j.tickets ?? count;
+    const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
+    // Poll until total on-chain tickets reaches pre-buy + new (RPC index lag)
+    await loadUserTickets({ expectAtLeast: before + bought, retries: 12, delayMs: 1200 });
     return {
       ok: true,
       onchain: true,
-      count: j.tickets ?? count,
-      tickets: j.tickets ?? count,
+      count: bought,
+      tickets: bought,
       txHash: j.txHash,
       ...j,
     };
@@ -2101,51 +2155,71 @@ async function houseBuyTickets(count, recipient, meta = {}){
   }
 }
 
-async function loadUserTickets(){
-  // Clear paper lists; fill from chain only
-  try{
-    if(typeof ticketData !== 'undefined') ticketData.length = 0;
-  }catch(_){}
-  if(!account){
-    if(typeof renderTickets === 'function') renderTickets();
-    if($('tixBal')) $('tixBal').textContent = '0';
-    if($('tixCount')) $('tixCount').textContent = '0';
+function applyTicketsToUi(mapped){
+  if(window.MegaPushUI && typeof window.MegaPushUI.applyTickets === 'function'){
+    return window.MegaPushUI.applyTickets(mapped);
+  }
+  // Fallback if bridge missing
+  const list = $('tixList');
+  if(list){
+    list.innerHTML = mapped.length ? mapped.map(t =>
+      `<div class="tix-row"><div class="tix-id">#${pad(t.id % 1000)}</div>`+
+      `<div class="tix-nums">${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
+      `<div class="tix-meta live">Live</div></div>`
+    ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No tickets yet · cash out a climb to earn them</div>';
+  }
+  if($('tixBal')) $('tixBal').textContent = String(mapped.length);
+  if($('tixCount')) $('tixCount').textContent = String(mapped.length);
+  return mapped.length;
+}
+
+function clearTicketsUi(){
+  if(window.MegaPushUI && typeof window.MegaPushUI.clearTickets === 'function'){
+    window.MegaPushUI.clearTickets();
     return;
   }
-  try{
-    if(drawingId == null){
+  if($('tixBal')) $('tixBal').textContent = '0';
+  if($('tixCount')) $('tixCount').textContent = '0';
+}
+
+/**
+ * Load on-chain tickets into classic UI via window.MegaPushUI bridge.
+ * opts.expectAtLeast — poll until count >= this or retries exhausted (RPC index lag).
+ */
+async function loadUserTickets(opts = {}){
+  const retries = Math.max(0, Number(opts.retries) || 0);
+  const delayMs = Math.max(200, Number(opts.delayMs) || 1000);
+  const expectAtLeast = opts.expectAtLeast != null ? Math.max(0, Math.floor(Number(opts.expectAtLeast))) : null;
+
+  if(!account){
+    clearTicketsUi();
+    return [];
+  }
+
+  let lastMapped = [];
+  for(let attempt = 0; attempt <= retries; attempt++){
+    try{
+      // Always re-read drawing id so we don't stick to a stale round
       drawingId = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
+      const tickets = await publicClient.readContract({
+        address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, drawingId],
+      });
+      const arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
+      lastMapped = arr.map(t => ({
+        id: Number(t.ticketId),
+        picks: (t.normals || []).map(Number),
+        bonus: Number(t.bonusball),
+        status: 'live',
+      }));
+      applyTicketsToUi(lastMapped);
+
+      if(expectAtLeast == null || lastMapped.length >= expectAtLeast) return lastMapped;
+    }catch(e){
+      console.warn('getUserTickets', e);
     }
-    const tickets = await publicClient.readContract({
-      address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, drawingId],
-    });
-    if(!Array.isArray(tickets)) return;
-    const mapped = tickets.map(t => ({
-      id: Number(t.ticketId),
-      picks: (t.normals || []).map(Number),
-      bonus: Number(t.bonusball),
-      status: 'live',
-    }));
-    if(typeof ticketData !== 'undefined'){
-      ticketData.length = 0;
-      mapped.forEach(x => ticketData.push(x));
-    }
-    if(typeof ticketCount !== 'undefined') ticketCount = mapped.length;
-    if(typeof syncTixUI === 'function') syncTixUI();
-    if(typeof renderTickets === 'function') renderTickets();
-    else {
-      const list = $('tixList');
-      if(list){
-        list.innerHTML = mapped.length ? mapped.map(t =>
-          `<div class="tix-row"><div class="tix-id">#${pad(t.id % 1000)}</div>`+
-          `<div class="tix-nums">${t.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="bonus">${pad(t.bonus)}</span></div>`+
-          `<div class="tix-meta live">Live</div></div>`
-        ).join('') : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No on-chain tickets this drawing</div>';
-      }
-      if($('tixBal')) $('tixBal').textContent = String(mapped.length);
-      if($('tixCount')) $('tixCount').textContent = String(mapped.length);
-    }
-  }catch(e){ console.warn('getUserTickets', e); }
+    if(attempt < retries) await new Promise(r => setTimeout(r, delayMs));
+  }
+  return lastMapped;
 }
 
 async function loadWins(){
@@ -2252,14 +2326,7 @@ function disconnectWallet(){
     window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
   }
   // Clear ticket UI to empty (no paper data)
-  try{
-    if(typeof ticketData !== 'undefined') ticketData.length = 0;
-    if(typeof ticketCount !== 'undefined') ticketCount = 0;
-    if(typeof syncTixUI === 'function') syncTixUI();
-    if(typeof renderTickets === 'function') renderTickets();
-  }catch(_){}
-  if($('tixBal')) $('tixBal').textContent = '0';
-  if($('tixCount')) $('tixCount').textContent = '0';
+  clearTicketsUi();
   if($('status')) $('status').textContent = 'Wallet disconnected';
   return true;
 }
