@@ -1649,30 +1649,39 @@ async function refreshUsdcBalance(){
   }
 }
 
+/**
+ * Jackpot display vs Sepolia gameplay:
+ * - UI "Tonight's Megapot" → Megapot Data API (mainnet jackpot, e.g. ~$1.1M)
+ * - ticketPrice + drawingId for stakes/tickets → Base Sepolia RPC (testnet contracts)
+ */
 async function loadLivePot(){
   const el = $('potFig');
-  // Prefer Base Sepolia on-chain pot (avoid wrong/stale mainnet API flash)
-  try{
-    const id = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
-    drawingId = id;
-    const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
-    ticketPrice = st.ticketPrice;
-    if(el && st.prizePool != null) el.textContent = fmtUsd(st.prizePool);
-    return;
-  }catch(e){
-    console.warn('RPC pot', e);
-  }
+
+  // 1) Display pot from Megapot API (do not use Sepolia prizePool for the big number)
   try{
     const r = await fetch(API + '/rounds/active');
     if(r.ok){
       const j = await r.json();
-      const amt = BigInt(j.prize_pool?.amount || '0');
-      if(amt > 0n && el) el.textContent = fmtUsd(amt);
-      if(j.id) drawingId = BigInt(j.id);
-      return;
+      const amt = BigInt(j.prize_pool?.amount || j.prizePool?.amount || '0');
+      const dec = Number(j.prize_pool?.decimals ?? j.prizePool?.decimals ?? 6);
+      if(amt > 0n && el) el.textContent = fmtUsd(amt, dec);
     }
   }catch(e){ console.warn('API pot', e); }
-  if(el && (!el.textContent || el.textContent === '—')) el.textContent = '—';
+
+  // 2) Sepolia on-chain: ticket price + drawing id for this app's contracts
+  try{
+    const id = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
+    drawingId = id;
+    const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
+    if(st.ticketPrice != null) ticketPrice = st.ticketPrice;
+    // Only fall back display to Sepolia pool if API failed and still "—"
+    if(el && (!el.textContent || el.textContent === '—') && st.prizePool != null){
+      el.textContent = fmtUsd(st.prizePool);
+    }
+  }catch(e){
+    console.warn('RPC pot/ticketPrice', e);
+    if(el && (!el.textContent || el.textContent === '—')) el.textContent = '—';
+  }
 }
 
 async function refreshTicketPrice(){
