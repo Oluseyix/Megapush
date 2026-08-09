@@ -1540,12 +1540,11 @@ document.addEventListener('click',e=>{
         }
         b.state='pending';
         paintBet(b);
-        $('status').textContent='Stake: sign USDC transfer of '+b.amt.toFixed(0)+' USDC…';
+        // Keep hero #status as round state only — stake UX lives on the bet card
         const res = await window.Megapot.stakeUsdc(b.amt, b.i);
         if(!res?.ok){
           b.state='idle';
           const err=res?.error || 'Stake failed';
-          $('status').textContent=err;
           alert(err);
           paintBet(b);
           return;
@@ -1554,13 +1553,11 @@ document.addEventListener('click',e=>{
         b.stakeTx=res.tx;
         b.state='queued';
         paintBet(b);
-        $('status').textContent='Entry queued · stake tx confirmed';
         if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
       }catch(err){
         console.error('stake', err);
         b.state='idle';
         const msg=err?.shortMessage||err?.message||String(err);
-        $('status').textContent='Stake error: '+msg;
         alert('Stake error: '+msg);
         paintBet(b);
       }
