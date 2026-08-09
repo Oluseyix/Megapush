@@ -25,7 +25,7 @@ npm install && npm run dev
 # http://localhost:5173/game.html → game
 ```
 
-Wallet needs: **Base Sepolia**, funds to **stake from your wallet**, plus ETH for gas (claims). Cash-out does **not** charge the player USDC again — the house buys tickets.
+Wallet needs: **Base Sepolia**, funds to **stake from your wallet**, plus ETH for gas (claims). Cash-out does **not** charge the player USDC.
 
 ## Config (top of Megapot module in `game.html`)
 
