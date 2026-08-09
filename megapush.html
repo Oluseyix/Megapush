@@ -1290,56 +1290,18 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
  *
  * CONFIG
  */
-// ═══ CONFIG ═══
-// House wallet that receives player USDC stakes (public address only — never a private key).
-// Priority: ?treasury=0x… → localStorage → hardcoded default below.
-const PLACEHOLDER_TREASURY = '0x0000000000000000000000000000000000000001';
-function isAddr(a){ return typeof a === 'string' && /^0x[a-fA-F0-9]{40}$/.test(a); }
-function isPlaceholderTreasury(addr){
-  return !isAddr(addr)
-    || addr.toLowerCase() === PLACEHOLDER_TREASURY.toLowerCase()
-    || /^0x0{40}$/i.test(addr);
-}
-function readConfigAddress(key, fallback){
-  try{
-    const q = new URLSearchParams(location.search).get(key);
-    if(isAddr(q) && !isPlaceholderTreasury(q)) return q;
-  }catch(_){}
-  try{
-    const s = localStorage.getItem(key);
-    if(isAddr(s) && !isPlaceholderTreasury(s)) return s;
-  }catch(_){}
-  return fallback;
-}
-// House wallet (receives stake USDC)
-const DEFAULT_HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-let HOUSE_TREASURY = readConfigAddress('mp_house_treasury', DEFAULT_HOUSE_TREASURY);
-// Backend cashout URL. Example: 'http://localhost:8787/game/cashout'
-let HOUSE_BUY_URL = (typeof localStorage !== 'undefined' && localStorage.getItem('mp_house_buy_url')) || '';
-const REFERRER = '0x0000000000000000000000000000000000000001';
+// ═══ CONFIG (Option A — Base Sepolia) ═══
+const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+const HOUSE_BUY_URL = '/api/cashout';
+const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 const RPC = 'https://sepolia.base.org';
 
 /** Ask once for house address if still placeholder (solo testing often uses your own wallet). */
 function ensureTreasuryConfigured(){
-  if(!isPlaceholderTreasury(HOUSE_TREASURY)) return { ok: true, address: HOUSE_TREASURY };
-  const hint = account || '';
-  const entered = prompt(
-    'HOUSE_TREASURY is not set.\n\n'+
-    'Paste the Base Sepolia address that should RECEIVE stake USDC.\n'+
-    'For solo testing you can paste your own wallet address:\n'+
-    (hint ? '('+hint+')\n' : '')+
-    '\nThis is a public address only — never paste a private key.',
-    hint || ''
-  );
-  if(entered == null) return { ok: false, error: 'Stake cancelled — no treasury address' };
-  const addr = entered.trim();
-  if(!/^0x[a-fA-F0-9]{40}$/.test(addr) || isPlaceholderTreasury(addr)){
-    return { ok: false, error: 'Invalid treasury address' };
+  if(!HOUSE_TREASURY || !/^0x[a-fA-F0-9]{40}$/.test(HOUSE_TREASURY)){
+    return { ok: false, error: 'HOUSE_TREASURY not configured' };
   }
-  HOUSE_TREASURY = addr;
-  try{ localStorage.setItem('mp_house_treasury', addr); }catch(_){}
-  if(window.Megapot) window.Megapot.HOUSE_TREASURY = addr;
-  return { ok: true, address: addr };
+  return { ok: true, address: HOUSE_TREASURY };
 }
 
 import {
@@ -1650,16 +1612,14 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
     });
     await publicClient.waitForTransactionReceipt({ hash });
     const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
-    if(HOUSE_BUY_URL){
-      const base = HOUSE_BUY_URL.replace(/\/game\/cashout\/?$/i, '');
-      try{
-        await fetch(base + '/game/stake', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entryId, stake: amt, tx: hash, player: account }),
-        });
-      }catch(_){}
-    }
+    // Optional bookkeeping endpoint (ignore if missing)
+    try{
+      await fetch('/api/stake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId, stake: amt, tx: hash, player: account }),
+      });
+    }catch(_){}
     await refreshUsdcBalance();
     return { ok: true, tx: hash, entryId, amount: amt, treasury };
   }catch(e){
@@ -1670,19 +1630,16 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
 
 /** Cancel queued bet — backend refunds USDC from treasury (player does not pull). */
 async function refundStake(entryId, amountUsd){
-  if(!HOUSE_BUY_URL){
-    return { ok: false, error: 'No HOUSE_BUY_URL — cannot refund; set backend' };
-  }
   if(!account) return { ok: false, error: 'Wallet not connected' };
-  const base = HOUSE_BUY_URL.replace(/\/game\/cashout\/?$/i, '');
   try{
-    const r = await fetch(base + '/game/refund', {
+    // Optional — only if you deploy /api/refund later
+    const r = await fetch('/api/refund', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entryId, stake: amountUsd, player: account }),
     });
     const j = await r.json().catch(()=>({}));
-    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status) };
+    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status+' — refund API not deployed') };
     await refreshUsdcBalance();
     return { ok: true, ...j };
   }catch(e){
@@ -1698,27 +1655,27 @@ async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
   if(count <= 0) return { ok: true, count: 0 };
   if(!HOUSE_BUY_URL){
-    return { ok: false, error: 'HOUSE_BUY_URL not set — house cannot buy tickets' };
+    return { ok: false, error: 'HOUSE_BUY_URL not set' };
   }
   const to = recipient || account;
-  if(!to) return { ok: false, error: 'No recipient address' };
+  if(!to) return { ok: false, error: 'Connect wallet — recipient required for house tickets' };
   try{
     const r = await fetch(HOUSE_BUY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        count,
-        recipient: to,
-        referrer: REFERRER,
-        source: SOURCE,
-        chainId: 84532,
         entryId: meta.entryId,
         stake: meta.stake,
         multiplier: meta.multiplier,
+        recipient: to,
+        count,
+        referrer: REFERRER,
+        chainId: 84532,
       }),
     });
     const j = await r.json().catch(()=>({}));
-    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status) };
+    if(!r.ok) return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
+    // On-chain only — never invent ticket rows
     await loadUserTickets();
     return { ok: true, onchain: true, count, ...j };
   }catch(e){
@@ -1857,10 +1814,8 @@ window.Megapot = {
   refreshUsdcBalance,
   ensureTreasuryConfigured,
   get account(){ return account; },
-  get HOUSE_TREASURY(){ return HOUSE_TREASURY; },
-  set HOUSE_TREASURY(v){ HOUSE_TREASURY = v; },
-  get HOUSE_BUY_URL(){ return HOUSE_BUY_URL; },
-  set HOUSE_BUY_URL(v){ HOUSE_BUY_URL = v; },
+  HOUSE_TREASURY,
+  HOUSE_BUY_URL,
   REFERRER,
   SOURCE,
   addresses: { JACKPOT, USDC, RANDOM_BUYER, BATCH, TICKET_NFT },

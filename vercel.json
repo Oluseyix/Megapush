@@ -13,5 +13,9 @@
       ]
     }
   ],
-  "rewrites": []
+  "functions": {
+    "api/cashout.js": {
+      "maxDuration": 60
+    }
+  }
 }

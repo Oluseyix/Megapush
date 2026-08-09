@@ -27,7 +27,8 @@ npx --yes serve public -p 5173
 
 ```js
 const HOUSE_TREASURY = '0xYourHouseWallet';           // receives stakes
-const HOUSE_BUY_URL = 'http://localhost:8787/game/cashout';
+const HOUSE_BUY_URL = '/api/cashout';  // Vercel serverless
+const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 const REFERRER = '0x0000000000000000000000000000000000000001';
 const RPC = 'https://sepolia.base.org';
 ```
@@ -53,3 +54,16 @@ Fund house with **Sepolia ETH + USDC**. See `house/README.md`.
 | TicketNFT | `0x45084829ac63f9dC6a3D4981A46FA896f9180ECd` |
 
 Source tag: `keccak256('megapush')`.
+
+
+## Vercel
+
+Set env **HOUSE_PRIVATE_KEY** in the Vercel project (never commit it).
+
+Serverless route: `POST /api/cashout` — house buys tickets for the player.
+
+```js
+const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+const HOUSE_BUY_URL = '/api/cashout';
+const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+```

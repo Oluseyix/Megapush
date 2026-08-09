@@ -6,13 +6,14 @@
   "description": "MegaPush — crash-style climb that cash-outs into Megapot lottery tickets on Base",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node -e \"console.log('static + api — no frontend bundle required')\"",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "viem": "^2.21.54"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
