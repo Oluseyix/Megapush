@@ -1289,23 +1289,8 @@ bets.forEach(paintBet);paint();setTimeout(start,1600);
 <script type="module">
 /**
  * MegaPush × Megapot — Option A (Base Sepolia, real wallet txs)
- *
- * CONFIG
+ * Staking uses player wallet only — no private key in frontend.
  */
-// ═══ CONFIG (Option A — Base Sepolia) ═══
-const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const HOUSE_BUY_URL = '/api/cashout';
-const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const RPC = 'https://sepolia.base.org';
-
-/** Ask once for house address if still placeholder (solo testing often uses your own wallet). */
-function ensureTreasuryConfigured(){
-  if(!HOUSE_TREASURY || !/^0x[a-fA-F0-9]{40}$/.test(HOUSE_TREASURY)){
-    return { ok: false, error: 'HOUSE_TREASURY not configured' };
-  }
-  return { ok: true, address: HOUSE_TREASURY };
-}
-
 import {
   createPublicClient,
   createWalletClient,
@@ -1318,6 +1303,40 @@ import {
   toBytes,
 } from 'https://esm.sh/viem@2.21.54';
 import { baseSepolia } from 'https://esm.sh/viem@2.21.54/chains';
+
+// ═══ CONFIG ═══
+const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+const HOUSE_BUY_URL = '/api/cashout';
+const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
+const RPC = 'https://sepolia.base.org';
+
+/** Only reject missing / zero / 0x…0001 — real house address is always allowed. */
+function isBlockedTreasury(addr) {
+  if (!addr || typeof addr !== 'string') return true;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return true;
+  const a = addr.toLowerCase();
+  if (a === '0x0000000000000000000000000000000000000000') return true;
+  if (a === '0x0000000000000000000000000000000000000001') return true;
+  return false;
+}
+
+function ensureTreasuryConfigured() {
+  // Clear stale localStorage if it held a blocked address
+  try {
+    const s = localStorage.getItem('mp_house_treasury');
+    if (s && isBlockedTreasury(s)) localStorage.removeItem('mp_house_treasury');
+  } catch (_) {}
+
+  if (isBlockedTreasury(HOUSE_TREASURY)) {
+    return {
+      ok: false,
+      error: 'HOUSE_TREASURY invalid (missing, zero, or 0x…0001)',
+    };
+  }
+  return { ok: true, address: HOUSE_TREASURY };
+}
+
+
 
 const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
 const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
