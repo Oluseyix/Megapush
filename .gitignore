@@ -5,3 +5,5 @@ dist
 .env
 .env.*
 !.env.example
+house/node_modules
+house/.env
