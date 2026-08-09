@@ -296,19 +296,42 @@ nav::-webkit-scrollbar{display:none}
 .fee-row.final{color:var(--ink);font-weight:700;margin-top:6px}
 .fee-row.final span:last-child{font-family:'Archivo Black',sans-serif;font-size:15px;flex:none}
 #page-winnings .field{margin-top:16px;width:100%;max-width:100%;box-sizing:border-box}
-#page-winnings .field input[type=text]{width:100%;max-width:100%;box-sizing:border-box}
+#page-winnings .field > input[type=text]{width:100%;max-width:100%;box-sizing:border-box}
 #page-winnings .card{overflow:hidden}
-/* Unclaimed total — compact amount box, not full width */
+/* Unclaimed total: one compact box ($ + value), not nested double borders */
 #page-winnings #wdAmtRow{
-  width:min(148px, 55%);
-  max-width:148px;
+  display:inline-flex;
+  width:auto;
+  max-width:160px;
+  min-width:120px;
   margin:0;
+  border:1.5px solid var(--line);
+  border-radius:12px;
+  background:var(--wash);
+  overflow:hidden;
+  align-items:center;
 }
-#page-winnings #wdAmtRow .amt-prefix{padding-left:12px;font-size:15px}
-#page-winnings #wdAmtRow input{
-  padding:10px 12px 10px 4px;
-  font-size:16px;
-  min-height:44px;
+#page-winnings #wdAmtRow .amt-prefix{
+  padding:0 2px 0 12px;
+  font-size:15px;
+  color:var(--soft);
+  background:transparent;
+  border:none;
+}
+/* Kill .field input styles that create a second rounded box inside */
+#page-winnings #wdAmtRow input,
+#page-winnings .amt-row input[type=text]{
+  border:none !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+  background:transparent !important;
+  min-height:44px !important;
+  width:auto !important;
+  max-width:100px !important;
+  flex:1 1 auto;
+  padding:10px 12px 10px 4px !important;
+  font-size:16px !important;
+  font-family:'Archivo Black',sans-serif !important;
 }
 .review-box{background:var(--wash);border-radius:12px;padding:14px;margin:12px 0}
 .review-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;color:var(--mid)}
@@ -569,9 +592,9 @@ button:focus:not(:focus-visible){outline:none}
 
       <div class="field">
         <label for="wd-amt">Unclaimed total</label>
-        <div class="amt-row" id="wdAmtRow">
-          <span class="amt-prefix">$</span>
-          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00" readonly aria-label="Unclaimed total">
+        <div class="amt-row" id="wdAmtRow" aria-label="Unclaimed total">
+          <span class="amt-prefix" aria-hidden="true">$</span>
+          <input type="text" value="0.00" id="wd-amt" inputmode="decimal" placeholder="0.00" readonly>
         </div>
       </div>
 
