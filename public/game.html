@@ -560,7 +560,7 @@ button:focus:not(:focus-visible){outline:none}
     <div class="hero" id="hero">
       <div class="lab">This round</div>
       <div class="mult num" id="mult" aria-live="polite" aria-atomic="true">1.00×</div>
-      <div class="status" id="status" role="status" aria-live="polite">Buy tickets below to join the next climb</div>
+      <div class="status" id="status" role="status" aria-live="polite">Global round · stake below to join the next climb</div>
       <div class="prev-mults" id="prev"></div>
 
       <div class="fly-overlay" id="flyOverlay">
@@ -944,6 +944,51 @@ if($('bal')) $('bal').setAttribute('aria-label','Sepolia USDC balance');
 const history=[];
 const HEAT=[['#14BE5C','#0B8B41'],['#F0A81E','#B87A00'],['#F2415F','#B31D38']];
 
+/* ── Global synchronized multiplier (same everywhere) ── */
+let globalRound=null;
+let clockOffset=0; // serverNow - Date.now()
+let lastPhase=null;
+let lastRoundId=null;
+let globalRaf=null;
+let globalPollTimer=null;
+let crashHandledForRound=null;
+
+function serverNow(){ return Date.now() + clockOffset; }
+
+async function fetchGlobalRound(){
+  try{
+    const r=await fetch('/api/round',{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j && j.serverNow){
+      // blend offset so one slow response does not jump the mult
+      const sample=j.serverNow - Date.now();
+      clockOffset = clockOffset ? (clockOffset*0.7 + sample*0.3) : sample;
+    }
+    globalRound=j;
+    return j;
+  }catch(e){
+    console.warn('global round', e);
+    return null;
+  }
+}
+
+function phaseAt(g, now){
+  if(!g) return 'betting';
+  if(now < g.bettingEndsAt) return 'betting';
+  if(now < g.crashAt) return 'flying';
+  return 'crashed';
+}
+
+function multAt(g, now){
+  if(!g) return 1;
+  const growth=Number(g.growthPerMs)||0.000072;
+  if(now < g.flyStart) return 1;
+  const end=Math.min(now, g.crashAt);
+  const raw=Math.exp(growth * Math.max(0, end - g.flyStart));
+  return Math.round(raw*100)/100;
+}
+
 function paintBet(b){
   const el=$('bet'+b.i),go=$('go'+b.i),st=$('st'+b.i),ft=$('ft'+b.i);
   const wrap=$('auwrap'+b.i),inp=$('au'+b.i),tog=wrap&&wrap.querySelector('.toggle');
@@ -1097,15 +1142,8 @@ function paint(){
   bets.forEach(b=>{if(b.state==='live')paintBet(b)});
 }
 
-function tick(){
-  m+=(0.065+m*0.028)*(0.35+Math.random()*1.55);
-  if(m>=cp){m=cp;paint();return crash()}
-  paint();
-  if(running&&Math.random()<0.18) playTick();
-  bets.forEach(b=>{
-    if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
-  });
-}
+/* Local random tick removed — multiplier is global via /api/round */
+function tick(){ /* no-op: globalFrame drives mult */ }
 
 function confettiBurst(x,y,count=12){
   const colors=['#14BE5C','#17A18B','#FFD86B','#FF9BD2','#8FB7FF','#fff'];
@@ -1285,14 +1323,14 @@ async function cashOut(b){
 }
 
 function crash(){
+  // Global crash handler — called once per round when phase → crashed
   clearInterval(timer);running=false;
   $('hero').classList.add('crashed');
   document.body.classList.remove('intense','danger');
   document.body.classList.add('crashed-bg');
   const label=m<1.5?'BUSTED':m<3?'FLEW AWAY':'GONE';
   $('bustMain').textContent=label;
-  $('bustSub').textContent='Ended at '+m.toFixed(2)+'×';
-  // near-miss for auto users
+  $('bustSub').textContent='Ended at '+m.toFixed(2)+'× · global round';
   lastAutoMiss=null;
   bets.forEach(b=>{
     if(b.state==='live'&&b.autoOn&&m-b.auto<0.35&&m>b.auto){
@@ -1301,8 +1339,8 @@ function crash(){
   });
   const stillIn=ticketCount;
   $('status').textContent=stillIn
-    ? `Round over · ${stillIn} on-chain tickets this drawing`
-    : 'Round over';
+    ? `Round over · ${stillIn} on-chain tickets`
+    : 'Round over · same crash worldwide';
   $('status').classList.remove('hot','won');
   $('mult').classList.remove('danger-pulse');
   $('pot').classList.remove('kick');
@@ -1317,11 +1355,12 @@ function crash(){
   }).join('');
   bets.forEach(b=>{if(b.state==='live'){b.state='lost';paintBet(b)}});
   const host=$('particles');if(host) host.innerHTML='';
-  setTimeout(reset,2800);
+  // Next round is driven by global clock — no local setTimeout(start)
 }
 
 function reset(){
-  m=1;band=0;lastAutoMiss=null;
+  // Soft UI reset when global phase returns to betting
+  m=1;band=0;lastAutoMiss=null;running=false;cp=0;
   $('hero').classList.remove('crashed');
   document.body.classList.remove('crashed-bg','intense','danger');
   $('pot').classList.remove('launch');
@@ -1329,24 +1368,92 @@ function reset(){
   $('mult').classList.remove('danger-pulse');
   paint();
   bets.forEach(b=>{if(b.state==='won'||b.state==='lost'){b.state='idle';paintBet(b)}});
-  $('status').textContent='Buy tickets below to join the next climb';
+  $('status').textContent='Global round · stake to join the next climb';
   $('status').classList.remove('hot','won');
-  setTimeout(start,1300);
 }
 
 function start(){
-  if(running)return;
+  // Promote queued entries into the live global flight (same for everyone)
+  if(running) return;
   const joined=bets.filter(b=>b.state==='queued');
   m=1;
-  const r=Math.random();
-  cp=r<0.55?(1.01+Math.random()*3.5):r<0.85?(4+Math.random()*8):Math.min(80,8+Math.random()*40);
   running=true;
   joined.forEach(b=>{b.state='live';paintBet(b)});
-  $('status').textContent=joined.length?'Climbing · cash out before it flies':'Round in progress · buy to join the next one';
+  $('hero').classList.remove('crashed');
+  document.body.classList.remove('crashed-bg');
+  $('status').textContent=joined.length?'Climbing · cash out before it flies':'Global climb in progress';
   $('status').classList.remove('won');
   playStart();
   paint();
-  timer=setInterval(tick,200);
+}
+
+function onGlobalPhase(phase, g){
+  const rid=g && g.roundId;
+  if(phase==='flying' && lastPhase!=='flying'){
+    crashHandledForRound=null;
+    start();
+  }
+  if(phase==='crashed' && crashHandledForRound!==rid){
+    crashHandledForRound=rid;
+    m=multAt(g, Math.min(serverNow(), g.crashAt));
+    if(g.crashMult!=null) m=Number(g.crashMult)||m;
+    paint();
+    crash();
+  }
+  if(phase==='betting' && (lastPhase==='crashed' || lastPhase==='flying')){
+    reset();
+  }
+  if(phase==='betting' && lastPhase===null){
+    $('status').textContent='Global round · stake to join the next climb';
+    paint();
+  }
+  lastPhase=phase;
+  if(rid!=null) lastRoundId=rid;
+}
+
+function globalFrame(){
+  const g=globalRound;
+  const now=serverNow();
+  if(g && g.cycleEnd!=null && now>=g.cycleEnd){
+    // Pull next round params as soon as the cycle rolls
+    if(!globalRound._fetching){
+      globalRound._fetching=true;
+      fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
+    }
+  }
+  if(g && g.flyStart!=null && g.crashAt!=null){
+    const phase=phaseAt(g, now);
+    if(phase!==lastPhase || (g.roundId!=null && g.roundId!==lastRoundId)){
+      onGlobalPhase(phase, g);
+    }
+    if(phase==='flying'){
+      running=true;
+      m=multAt(g, now);
+      paint();
+      if(Math.random()<0.08) playTick();
+      bets.forEach(b=>{
+        if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
+      });
+    }else if(phase==='betting'){
+      running=false;
+      m=1;
+      paint();
+    }else{
+      running=false;
+      m=multAt(g, g.crashAt);
+      if(g.crashMult!=null) m=Number(g.crashMult)||m;
+      paint();
+    }
+  }
+  globalRaf=requestAnimationFrame(globalFrame);
+}
+
+function startGlobalSync(){
+  if(globalPollTimer) clearInterval(globalPollTimer);
+  fetchGlobalRound().then(()=>{
+    if(!globalRaf) globalRaf=requestAnimationFrame(globalFrame);
+  });
+  globalPollTimer=setInterval(fetchGlobalRound, 2000);
 }
 
 /* Winnings = lottery unclaimed wins (NOT wallet USDC balance) */
@@ -1732,7 +1839,7 @@ document.addEventListener('input',e=>{
   paintBet(b);
 });
 
-bets.forEach(paintBet);paint();setTimeout(start,1600);
+bets.forEach(paintBet);paint();startGlobalSync();
 })();
 </script>
 
