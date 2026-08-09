@@ -297,8 +297,19 @@ nav::-webkit-scrollbar{display:none}
 .fee-row.final span:last-child{font-family:'Archivo Black',sans-serif;font-size:15px;flex:none}
 #page-winnings .field{margin-top:16px;width:100%;max-width:100%;box-sizing:border-box}
 #page-winnings .field input[type=text]{width:100%;max-width:100%;box-sizing:border-box}
-#page-winnings .amt-row{margin-top:0}
 #page-winnings .card{overflow:hidden}
+/* Unclaimed total — compact amount box, not full width */
+#page-winnings #wdAmtRow{
+  width:min(148px, 55%);
+  max-width:148px;
+  margin:0;
+}
+#page-winnings #wdAmtRow .amt-prefix{padding-left:12px;font-size:15px}
+#page-winnings #wdAmtRow input{
+  padding:10px 12px 10px 4px;
+  font-size:16px;
+  min-height:44px;
+}
 .review-box{background:var(--wash);border-radius:12px;padding:14px;margin:12px 0}
 .review-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;color:var(--mid)}
 .review-row b{color:var(--ink);font-weight:700;word-break:break-all;text-align:right;max-width:60%}
