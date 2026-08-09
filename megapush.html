@@ -299,15 +299,15 @@ nav::-webkit-scrollbar{display:none}
 #page-winnings .field > input[type=text]{width:100%;max-width:100%;box-sizing:border-box}
 #page-winnings .card{overflow:hidden}
 
-/* Amount field — copy of crypto-style Amount + Max control */
+/* Amount field — layout like Amount + Max (MegaPush light palette only) */
 .amount-field{margin-top:16px;width:100%;box-sizing:border-box}
 .amount-head{
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   margin-bottom:8px;
 }
 .amount-head label{
-  margin:0;font-size:13px;font-weight:700;letter-spacing:.2px;
-  text-transform:none;color:var(--ink);
+  margin:0;font-size:11px;font-weight:800;letter-spacing:.8px;
+  text-transform:uppercase;color:var(--soft);
 }
 .amount-head label .req{color:var(--red);margin-left:2px}
 .amount-avail{
@@ -316,8 +316,8 @@ nav::-webkit-scrollbar{display:none}
 .amount-bar{
   display:flex;align-items:stretch;width:100%;max-width:100%;
   box-sizing:border-box;border-radius:12px;overflow:hidden;
-  background:#1C2438;border:1px solid #2A334C;
-  min-height:52px;
+  background:#fff;border:1.5px solid var(--line);
+  min-height:52px;box-shadow:0 2px 8px rgba(30,38,87,.04);
 }
 .amount-bar input{
   flex:1 1 auto;min-width:0;width:auto !important;max-width:none !important;
@@ -325,25 +325,26 @@ nav::-webkit-scrollbar{display:none}
   background:transparent !important;outline:none;
   padding:14px 10px 14px 16px !important;min-height:52px !important;
   font-family:'Archivo Black',sans-serif !important;font-size:16px !important;
-  font-weight:400 !important;color:#E8EAF2 !important;
+  font-weight:400 !important;color:var(--ink) !important;
   letter-spacing:.2px;
 }
-.amount-bar input::placeholder{color:#6B7280}
+.amount-bar input::placeholder{color:var(--mid)}
 .amount-token{
   display:flex;align-items:center;justify-content:center;flex:none;
-  width:36px;align-self:center;margin-right:4px;
-  height:28px;border-radius:50%;
-  background:rgba(37,99,235,.18);color:#5B8CFF;
+  width:28px;height:28px;align-self:center;margin-right:6px;
+  border-radius:50%;
+  background:var(--wash);color:var(--teal);
+  border:1px solid var(--line);
   font-family:'Archivo Black',sans-serif;font-size:13px;line-height:1;
 }
 .amount-max{
   flex:none;padding:0 18px;min-width:72px;
-  background:#2A334C;border:none;border-left:1px solid #3A4563;
-  color:#E8EAF2;font-family:inherit;font-size:14px;font-weight:700;
-  cursor:pointer;min-height:52px;
+  background:var(--wash);border:none;border-left:1.5px solid var(--line);
+  color:var(--ink);font-family:inherit;font-size:13px;font-weight:800;
+  cursor:pointer;min-height:52px;letter-spacing:.3px;
 }
-.amount-max:hover{background:#343F5C}
-.amount-max:active{background:#1E2657}
+.amount-max:hover{background:var(--line);color:var(--ink)}
+.amount-max:active{background:#E0E3EE}
 .review-box{background:var(--wash);border-radius:12px;padding:14px;margin:12px 0}
 .review-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;color:var(--mid)}
 .review-row b{color:var(--ink);font-weight:700;word-break:break-all;text-align:right;max-width:60%}
