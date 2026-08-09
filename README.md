@@ -1,6 +1,6 @@
 # MegaPush
 
-Crash game that cash-outs into **Megapot lottery tickets** (not USDC).  
+Crash game that cash-outs into **Megapot lottery tickets**.
 **Chain: Base Sepolia** (`84532`).
 
 ## Deliverable
