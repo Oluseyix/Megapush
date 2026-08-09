@@ -379,9 +379,9 @@ button:focus:not(:focus-visible){outline:none}
     </nav>
   </div>
   <div class="right">
-    <button type="button" class="wallet-btn" id="walletBtn">Connect</button>
-    <div class="tix-chip" id="tixChip" aria-live="polite"><b id="tixBal">42</b> tix</div>
     <div class="bal" id="bal" aria-live="polite" aria-label="Sepolia USDC">— USDC</div>
+    <div class="tix-chip" id="tixChip" aria-live="polite"><b id="tixBal">0</b> tix</div>
+    <button type="button" class="wallet-btn" id="walletBtn" aria-label="Connect or disconnect wallet">Connect</button>
   </div>
 </header>
 
@@ -1527,7 +1527,11 @@ function bindProviderListeners(provider){
     }
     account = accs[0];
     walletClient = createWalletClient({ account: accs[0], chain: CHAIN, transport: custom(provider) });
-    if(b){ b.textContent = short(accs[0]); b.classList.add('on'); }
+    if(b){
+      b.textContent = short(accs[0]);
+      b.classList.add('on');
+      b.title = 'Tap to disconnect';
+    }
     loadUserTickets(); refreshUsdcBalance(); loadWins();
   });
   provider.on('chainChanged', () => {
@@ -1640,12 +1644,21 @@ async function connectWallet(opts = {}){
     account = addr;
     walletClient = createWalletClient({ account: addr, chain: CHAIN, transport: custom(eip1193) });
     bindProviderListeners(eip1193);
-    if(btn){ btn.disabled = false; btn.textContent = short(addr); btn.classList.add('on'); }
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = short(addr);
+      btn.classList.add('on');
+      btn.title = 'Tap to disconnect';
+    }
     await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
     return addr;
   }catch(e){
     console.error('connectWallet', e);
-    if(btn){ btn.disabled = false; btn.textContent = account ? short(account) : 'Connect'; }
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = account ? short(account) : 'Connect';
+      if(!account) btn.title = 'Connect wallet';
+    }
     return null;
   }
 }
@@ -1887,8 +1900,50 @@ async function claimWinnings(){
   }
 }
 
+function disconnectWallet(){
+  account = null;
+  walletClient = null;
+  // Do not clear eip1193 — keep provider for reconnect
+  const btn = $('walletBtn');
+  if(btn){
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+    btn.classList.remove('on');
+    btn.title = 'Connect wallet';
+  }
+  setBalUi(null);
+  if(typeof window.setWinningsFromWallet === 'function'){
+    window.setWinningsFromWallet(null, null);
+  }
+  // Clear ticket UI to empty (no paper data)
+  try{
+    if(typeof ticketData !== 'undefined') ticketData.length = 0;
+    if(typeof ticketCount !== 'undefined') ticketCount = 0;
+    if(typeof syncTixUI === 'function') syncTixUI();
+    if(typeof renderTickets === 'function') renderTickets();
+  }catch(_){}
+  if($('tixBal')) $('tixBal').textContent = '0';
+  if($('tixCount')) $('tixCount').textContent = '0';
+  if($('status')) $('status').textContent = 'Wallet disconnected';
+  if($('claimVal')) $('claimVal').textContent = '—';
+  if($('claimSub')) $('claimSub').textContent = 'Connect wallet · unclaimed wins';
+  return true;
+}
+
+function onWalletBtnClick(){
+  if(account){
+    // Connected → offer disconnect
+    const shortAddr = short(account);
+    const ok = confirm('Disconnect wallet '+shortAddr+'?\n\nYou can reconnect anytime.');
+    if(ok) disconnectWallet();
+    return;
+  }
+  connectWallet();
+}
+
 window.Megapot = {
   connectWallet,
+  disconnectWallet,
   loadLivePot,
   loadUserTickets,
   loadWins,
@@ -1916,7 +1971,7 @@ refreshTicketPrice();
 setBalUi(null);
 
 const btn = $('walletBtn');
-if(btn) btn.addEventListener('click', () => connectWallet());
+if(btn) btn.addEventListener('click', () => onWalletBtnClick());
 waitForInjectedProvider(1500).then((p) => {
   if(!p) return;
   eip1193 = p;
