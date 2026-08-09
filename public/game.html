@@ -391,7 +391,7 @@ button:focus:not(:focus-visible){outline:none}
   <div class="page on" id="page-play">
     <div class="mega">
       <div class="lab">Tonight's Megapot</div>
-      <div class="fig" id="potFig">$41,208</div>
+      <div class="fig" id="potFig">—</div>
       <div class="stub">
         <div class="c">LAST DRAW</div>
         <div class="n"><span>18</span><span>21</span><span>23</span><span>25</span><span>28</span></div>
@@ -429,18 +429,18 @@ button:focus:not(:focus-visible){outline:none}
 
   <!-- TICKETS -->
   <div class="page" id="page-tickets">
-    <div class="card">
-      <div class="card-lab">Ready to claim</div>
+    <div class="card" id="claimCard">
+      <div class="card-lab" id="claimLab">Unclaimed wins</div>
       <div class="card-val" id="claimVal">—</div>
-      <div class="card-sub" id="claimSub">Connect wallet · unclaimed wins</div>
-      <button class="go" style="margin-top:10px" type="button" id="claimAll">Claim all</button>
+      <div class="card-sub" id="claimSub">Connect wallet to load wins</div>
+      <button class="go" style="margin-top:10px;display:none" type="button" id="claimAll">Claim all</button>
     </div>
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <div>
           <div class="card-lab">Today's drawing</div>
-          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">42</span> live tickets · 5 + bonus</div>
+          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> live tickets · 5 + bonus</div>
         </div>
         <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink)" id="tixTimer">4h 12m</div>
       </div>
@@ -495,48 +495,34 @@ button:focus:not(:focus-visible){outline:none}
   <!-- WINNINGS -->
   <div class="page" id="page-winnings">
     <div class="card">
-      <div class="card-lab">Wallet USDC (Base Sepolia)</div>
+      <div class="card-lab">Your lottery winnings</div>
       <div class="card-val" id="wdAvail">—</div>
-      <div class="card-sub" id="wdSub">Connect wallet to see on-chain balance</div>
+      <div class="card-sub" id="wdSub">Unclaimed Megapot wins · connect wallet to load</div>
+      <button class="go" style="margin-top:12px;display:none" type="button" id="wdClaimBtn">Claim on Tickets tab</button>
       <div class="seg" style="margin-top:12px">
-        <button type="button" class="on">Withdraw</button>
-        <button type="button">History</button>
+        <button type="button" class="on">Summary</button>
+        <button type="button" id="wdHistoryBtn">History</button>
       </div>
 
-      <div class="field">
-        <label for="network">Network</label>
-        <select id="network" aria-label="Crypto network">
-          <option value="base" selected>Base Sepolia</option>
-          <option value="base-main">Base</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="addr">Wallet address</label>
+      <div class="field" style="margin-top:14px">
+        <label>Wallet</label>
         <input type="text" id="addr" placeholder="Connect wallet" autocomplete="off" spellcheck="false" readonly>
-        <div class="field-hint" id="addrHint">Withdrawals go to your connected wallet</div>
+        <div class="field-hint" id="addrHint">Claimed wins pay USDC to this address on Base Sepolia</div>
       </div>
 
       <div class="field">
-        <label for="wd-amt">Amount (USDC)</label>
+        <label>Unclaimed total</label>
         <div class="amt-row" style="margin:8px 0">
           <span class="amt-prefix">$</span>
-          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00">
-          <button type="button" class="max-btn" id="maxBtn">MAX</button>
-        </div>
-        <div class="pcts" id="wdPcts">
-          <button type="button" data-pct="25">25%</button>
-          <button type="button" data-pct="50">50%</button>
-          <button type="button" data-pct="100" class="on">100%</button>
+          <input type="text" value="" id="wd-amt" inputmode="decimal" placeholder="0.00" readonly>
         </div>
       </div>
 
       <div class="fee">
-        <div class="fee-row"><span>Network fee</span><span id="netFee">gas (ETH)</span></div>
-        <div class="fee-row final"><span>You send</span><span class="num" id="youGet">—</span></div>
+        <div class="fee-row"><span>Status</span><span id="netFee">—</span></div>
+        <div class="fee-row final"><span>To claim</span><span class="num" id="youGet">—</span></div>
       </div>
-      <button type="button" class="go" id="wdBtn">Withdraw $85.99</button>
-      <div class="foot" style="margin-top:10px">Usually arrives in 1–5 minutes</div>
+      <div class="foot" style="margin-top:10px">Claim pays lottery USDC to your wallet on Base Sepolia</div>
     </div>
   </div>
 </div>
@@ -1064,85 +1050,87 @@ function start(){
   timer=setInterval(tick,200);
 }
 
-/* withdraw — amounts from on-chain USDC only (no fake $86) */
-let wdAvailableUsd = 0;
+/* Winnings = lottery unclaimed wins (NOT wallet USDC balance) */
+let unclaimedWinsUsd = 0;
+let unclaimedWinsCount = 0;
 
-function updateWithdrawUI(){
-  const amt=parseFloat($('wd-amt')?.value)||0;
-  const you=$('youGet');
-  if(you) you.textContent = amt > 0 ? (amt.toFixed(2)+' USDC') : '—';
-  const btn=$('wdBtn');
-  if(btn){
-    btn.textContent = amt > 0 ? ('Send '+amt.toFixed(2)+' USDC') : 'Enter amount';
-    btn.disabled = !(amt > 0 && wdAvailableUsd > 0);
-  }
-  const avail=$('wdAvail');
-  if(avail){
-    avail.textContent = wdAvailableUsd > 0
-      ? ('$'+wdAvailableUsd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}))
-      : '—';
-  }
+function fmtMoney(n){
+  if(!(n > 0)) return '—';
+  return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 
-function setWinningsFromWallet(usdcRaw, address){
-  // usdcRaw: bigint (6 decimals) or null
-  if(usdcRaw != null && typeof usdcRaw === 'bigint'){
-    wdAvailableUsd = Number(usdcRaw) / 1e6;
-  }else if(typeof usdcRaw === 'number'){
-    wdAvailableUsd = usdcRaw;
-  }else{
-    wdAvailableUsd = 0;
+/** Update Tickets claim card + Winnings tab from unclaimed lottery wins only */
+function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null } = {}){
+  unclaimedWinsUsd = Number(totalUsd) || 0;
+  unclaimedWinsCount = Math.max(0, Math.floor(Number(count) || 0));
+
+  const money = fmtMoney(unclaimedWinsUsd);
+  const has = unclaimedWinsUsd > 0 && unclaimedWinsCount > 0;
+
+  // Tickets tab — claim card
+  const claimVal = $('claimVal');
+  const claimSub = $('claimSub');
+  const claimLab = $('claimLab');
+  const claimAll = $('claimAll');
+  if(claimLab) claimLab.textContent = has ? 'Ready to claim' : 'Unclaimed wins';
+  if(claimVal) claimVal.textContent = has ? money : '—';
+  if(claimSub){
+    if(!address) claimSub.textContent = 'Connect wallet to load wins';
+    else if(has) claimSub.textContent = unclaimedWinsCount+' winning ticket'+(unclaimedWinsCount===1?'':'s')+' · claim to wallet';
+    else claimSub.textContent = 'No unclaimed wins right now';
   }
-  const sub=$('wdSub');
-  const addrEl=$('addr');
-  if(address){
-    if(addrEl) addrEl.value = address;
-    if(sub) sub.textContent = 'On-chain Sepolia USDC in connected wallet';
-    const lbYou=$('lbYou');
-    if(lbYou) lbYou.textContent = address.slice(0,4)+'…'+address.slice(-3);
-  }else{
-    if(addrEl) addrEl.value = '';
-    if(sub) sub.textContent = 'Connect wallet to see on-chain balance';
+  if(claimAll){
+    claimAll.style.display = has ? 'block' : 'none';
+    claimAll.disabled = !has;
+    claimAll.textContent = 'Claim all';
   }
-  const tix = (typeof ticketCount === 'number') ? ticketCount : 0;
-  const lbTix=$('lbTix');
-  if(lbTix) lbTix.textContent = String(tix);
-  updateWithdrawUI();
+
+  // Winnings tab — lottery winnings (not USDC wallet balance)
+  const wdAvail = $('wdAvail');
+  const wdSub = $('wdSub');
+  const wdAmt = $('wd-amt');
+  const youGet = $('youGet');
+  const netFee = $('netFee');
+  const addrEl = $('addr');
+  const wdClaim = $('wdClaimBtn');
+  if(wdAvail) wdAvail.textContent = has ? money : '—';
+  if(wdAmt) wdAmt.value = has ? unclaimedWinsUsd.toFixed(2) : '';
+  if(youGet) youGet.textContent = has ? money : '—';
+  if(netFee) netFee.textContent = has ? 'Claim on-chain (gas)' : '—';
+  if(addrEl) addrEl.value = address || '';
+  if(wdSub){
+    if(!address) wdSub.textContent = 'Unclaimed Megapot wins · connect wallet to load';
+    else if(has) wdSub.textContent = unclaimedWinsCount+' unclaimed win'+(unclaimedWinsCount===1?'':'s')+' from lottery draws';
+    else wdSub.textContent = 'No unclaimed lottery winnings';
+  }
+  if(wdClaim){
+    wdClaim.style.display = has ? 'block' : 'none';
+    wdClaim.textContent = has ? 'Go to Tickets to claim' : '';
+  }
+
+  const lbYou = $('lbYou');
+  if(lbYou && address) lbYou.textContent = address.slice(0,4)+'…'+address.slice(-3);
+  const lbTix = $('lbTix');
+  if(lbTix) lbTix.textContent = String(typeof ticketCount === 'number' ? ticketCount : 0);
 }
 
-if($('network')) $('network').addEventListener('change',updateWithdrawUI);
-if($('wd-amt')) $('wd-amt').addEventListener('input',updateWithdrawUI);
-document.querySelectorAll('#wdPcts button').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
-    btn.classList.add('on');
-    const p=parseInt(btn.dataset.pct||btn.textContent,10);
-    if(p && $('wd-amt')){
-      $('wd-amt').value = wdAvailableUsd > 0 ? ((wdAvailableUsd*p/100).toFixed(2)) : '';
-      updateWithdrawUI();
-    }
-  });
-});
-const maxBtn=$('maxBtn');
-if(maxBtn) maxBtn.onclick=()=>{
-  if($('wd-amt')) $('wd-amt').value = wdAvailableUsd > 0 ? wdAvailableUsd.toFixed(2) : '';
-  updateWithdrawUI();
+if($('wdClaimBtn')){
+  $('wdClaimBtn').onclick = ()=>{
+    const tab = document.querySelector('#nav .tab[data-page="tickets"]');
+    if(tab) tab.click();
+  };
+}
+
+// Back-compat no-op: wallet USDC must NOT drive Winnings tab
+window.setWinningsFromWallet = function(_usdcRaw, address){
+  // Keep address display only; amounts come from setUnclaimedWinnings / loadWins
+  const addrEl = $('addr');
+  if(addrEl) addrEl.value = address || '';
+  const lbYou = $('lbYou');
+  if(lbYou) lbYou.textContent = address ? (address.slice(0,4)+'…'+address.slice(-3)) : '—';
 };
-if($('wdBtn')) $('wdBtn').onclick=()=>{
-  if(!window.Megapot?.account){
-    alert('Connect wallet first');
-    return;
-  }
-  const amt=parseFloat($('wd-amt')?.value)||0;
-  if(amt <= 0 || amt > wdAvailableUsd + 1e-9){
-    alert('Enter an amount within your USDC balance');
-    return;
-  }
-  alert('USDC is already in your connected wallet. Use MetaMask / your wallet app to send it out.');
-};
-updateWithdrawUI();
-// expose for Megapot module
-window.setWinningsFromWallet = setWinningsFromWallet;
+window.setUnclaimedWinnings = setUnclaimedWinnings;
+setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
 
 /* modals */
 function storageGet(k){
@@ -1609,26 +1597,18 @@ function bindProviderListeners(provider){
 function setBalUi(raw){
   const el = $('bal');
   if(!el) return;
+  // Header only — wallet USDC (not lottery winnings)
   if(raw == null){
     el.textContent = '— USDC';
-    if(typeof window.setWinningsFromWallet === 'function'){
-      window.setWinningsFromWallet(null, account || null);
-    }
     return;
   }
   const n = Number(formatUnits(raw, 6));
   el.textContent = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USDC';
-  if(typeof window.setWinningsFromWallet === 'function'){
-    window.setWinningsFromWallet(raw, account || null);
-  }
 }
 
 async function refreshUsdcBalance(){
   if(!account){
     setBalUi(null);
-    if(typeof window.setWinningsFromWallet === 'function'){
-      window.setWinningsFromWallet(null, null);
-    }
     return null;
   }
   try{
@@ -1637,39 +1617,34 @@ async function refreshUsdcBalance(){
     return bal;
   }catch(e){
     console.warn('USDC balance', e);
-    if(typeof window.setWinningsFromWallet === 'function'){
-      window.setWinningsFromWallet(null, account);
-    }
     return null;
   }
 }
 
 async function loadLivePot(){
-  try{
-    const r = await fetch(API + '/rounds/active');
-    if(r.ok){
-      const j = await r.json();
-      const amt = BigInt(j.prize_pool?.amount || '0');
-      if(amt > 0n){
-        const el = $('potFig');
-        if(el) el.textContent = fmtUsd(amt);
-        if(j.id) drawingId = BigInt(j.id);
-        return;
-      }
-    }
-  }catch(e){ console.warn('API pot', e); }
+  const el = $('potFig');
+  // Prefer Base Sepolia on-chain pot (avoid wrong/stale mainnet API flash)
   try{
     const id = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
     drawingId = id;
     const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
     ticketPrice = st.ticketPrice;
-    const el = $('potFig');
-    if(el) el.textContent = fmtUsd(st.prizePool);
+    if(el && st.prizePool != null) el.textContent = fmtUsd(st.prizePool);
+    return;
   }catch(e){
     console.warn('RPC pot', e);
-    const el = $('potFig');
-    if(el) el.textContent = 'Sepolia';
   }
+  try{
+    const r = await fetch(API + '/rounds/active');
+    if(r.ok){
+      const j = await r.json();
+      const amt = BigInt(j.prize_pool?.amount || '0');
+      if(amt > 0n && el) el.textContent = fmtUsd(amt);
+      if(j.id) drawingId = BigInt(j.id);
+      return;
+    }
+  }catch(e){ console.warn('API pot', e); }
+  if(el && (!el.textContent || el.textContent === '—')) el.textContent = '—';
 }
 
 async function refreshTicketPrice(){
@@ -1894,46 +1869,62 @@ async function loadUserTickets(){
 }
 
 async function loadWins(){
-  if(!account) return;
+  if(!account){
+    if(typeof window.setUnclaimedWinnings === 'function'){
+      window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
+    }
+    return;
+  }
   try{
     const r = await fetch(`${API}/wallets/${account}/wins?limit=50`);
-    if(!r.ok) return;
-    const j = await r.json();
-    const rows = j.data || j.wins || j || [];
-    if(!Array.isArray(rows)) return;
-    if(typeof pastDraws !== 'undefined'){
-      pastDraws.length = 0;
-      rows.forEach(w => {
-        const amount = w.amount?.amount != null ? fmtUsd(BigInt(w.amount.amount), w.amount.decimals ?? 6) : (w.winnings_amount ? fmtUsd(BigInt(w.winnings_amount)) : '—');
-        const claimed = w.claimed === true || w.claimed === 'true';
-        pastDraws.push({
-          date: String(w.round_id || w.drawing_id || w.date || '—'),
-          result: claimed ? 'lost' : 'won',
-          prize: amount,
-          tier: claimed ? 'Claimed' : 'Unclaimed',
-          picks: (w.numbers || w.normals || []).map(Number),
-          bonus: w.bonusball != null ? Number(w.bonusball) : null,
+    if(r.ok){
+      const j = await r.json();
+      const rows = j.data || j.wins || j || [];
+      if(Array.isArray(rows) && typeof pastDraws !== 'undefined'){
+        pastDraws.length = 0;
+        rows.forEach(w => {
+          const amount = w.amount?.amount != null ? fmtUsd(BigInt(w.amount.amount), w.amount.decimals ?? 6) : (w.winnings_amount ? fmtUsd(BigInt(w.winnings_amount)) : '—');
+          const claimed = w.claimed === true || w.claimed === 'true';
+          pastDraws.push({
+            date: String(w.round_id || w.drawing_id || w.date || '—'),
+            result: claimed ? 'lost' : 'won',
+            prize: amount,
+            tier: claimed ? 'Claimed' : 'Unclaimed',
+            picks: (w.numbers || w.normals || []).map(Number),
+            bonus: w.bonusball != null ? Number(w.bonusball) : null,
+          });
         });
-      });
-      if(typeof renderPast === 'function') renderPast();
+        if(typeof renderPast === 'function') renderPast();
+      }
     }
+
+    // Unclaimed lottery wins only — drives Tickets claim card + Winnings tab
+    let total = 0n;
+    let list = [];
     const u = await fetch(`${API}/wallets/${account}/wins?claimed=false&limit=100`);
     if(u.ok){
       const uj = await u.json();
-      const list = uj.data || uj.wins || uj || [];
-      let total = 0n;
-      if(Array.isArray(list)){
-        for(const w of list){
-          if(w.amount?.amount) total += BigInt(w.amount.amount);
-          else if(w.winnings_amount) total += BigInt(w.winnings_amount);
-        }
+      list = uj.data || uj.wins || uj || [];
+      if(!Array.isArray(list)) list = [];
+      for(const w of list){
+        if(w.amount?.amount) total += BigInt(w.amount.amount);
+        else if(w.winnings_amount) total += BigInt(w.winnings_amount);
       }
-      const val = $('claimVal') || document.querySelector('#page-tickets .card-val');
-      if(val) val.textContent = total > 0n ? fmtUsd(total) : '—';
-      const sub = $('claimSub');
-      if(sub) sub.textContent = Array.isArray(list) ? `${list.length} unclaimed win(s)` : 'Unclaimed wins';
     }
-  }catch(e){ console.warn('loadWins', e); }
+    const totalUsd = Number(formatUnits(total, 6));
+    if(typeof window.setUnclaimedWinnings === 'function'){
+      window.setUnclaimedWinnings({
+        totalUsd,
+        count: list.length,
+        address: account,
+      });
+    }
+  }catch(e){
+    console.warn('loadWins', e);
+    if(typeof window.setUnclaimedWinnings === 'function'){
+      window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+    }
+  }
 }
 
 async function claimWinnings(){
@@ -1977,8 +1968,8 @@ function disconnectWallet(){
     btn.title = 'Connect wallet';
   }
   setBalUi(null);
-  if(typeof window.setWinningsFromWallet === 'function'){
-    window.setWinningsFromWallet(null, null);
+  if(typeof window.setUnclaimedWinnings === 'function'){
+    window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
   }
   // Clear ticket UI to empty (no paper data)
   try{
@@ -1990,8 +1981,6 @@ function disconnectWallet(){
   if($('tixBal')) $('tixBal').textContent = '0';
   if($('tixCount')) $('tixCount').textContent = '0';
   if($('status')) $('status').textContent = 'Wallet disconnected';
-  if($('claimVal')) $('claimVal').textContent = '—';
-  if($('claimSub')) $('claimSub').textContent = 'Connect wallet · unclaimed wins';
   return true;
 }
 
