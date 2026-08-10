@@ -1047,6 +1047,8 @@ let lastRoundId=null;
 let globalRaf=null;
 let globalPollTimer=null;
 let crashHandledForRound=null;
+let crashUiUntil=0; // wall-clock: force-clear Flew Away after crash
+let crashShownAt=0;
 
 function serverNow(){ return Date.now() + clockOffset; }
 
@@ -1093,6 +1095,7 @@ function phaseAt(g, now){
 
 function multAt(g, now){
   if(!g) return 1;
+  if(g.phase==='intermission' || g.phase==='betting') return 1;
   if(g.phase==='crashed' && g.crashMult!=null) return Number(g.crashMult);
   const growth=Number(g.growthPerMs)||0.00018;
   if(g.flyStart==null || now < g.flyStart) return 1;
@@ -1539,6 +1542,8 @@ async function cashOut(b){
 function crash(){
   // Global crash handler — called once per round when phase → crashed
   clearInterval(timer);running=false;
+  crashShownAt = Date.now();
+  crashUiUntil = crashShownAt + 3200; // ALWAYS leave Flew Away after 3.2s (wall clock)
   $('hero').classList.add('crashed');
   document.body.classList.remove('intense','danger');
   document.body.classList.add('crashed-bg');
@@ -1550,6 +1555,9 @@ function crash(){
     $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · commit '+short;
     // async verify in background
     verifyFairRound(globalRound).then(v=>{
+      // Do not fight the post-crash timer — only update if still on crash screen
+      if(!$('hero') || !$('hero').classList.contains('crashed')) return;
+      if(Date.now() >= crashUiUntil) return;
       if(v && v.ok){
         $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · fair ✓ verified';
       }else if(v && !v.ok){
@@ -1662,63 +1670,94 @@ function onGlobalPhase(phase, g){
   if(rid!=null) lastRoundId=rid;
 }
 
-function globalFrame(){
-  let g=globalRound;
-  const now=serverNow();
+function clearCrashUI(reason){
+  crashUiUntil = 0;
+  if($('hero') && $('hero').classList.contains('crashed')){
+    reset();
+  }else{
+    // still force mult idle
+    running=false;
+    m=1;
+    if($('pot')){
+      const potEl=$('pot');
+      potEl.classList.remove('launch','kick','flying','climbing');
+      potEl.style.transform=''; potEl.style.opacity=''; potEl.style.transition='';
+      potFlyingOn=false;
+    }
+    $('hero')?.classList.remove('crashed');
+    document.body.classList.remove('crashed-bg','intense','danger');
+  }
+  lastPhase = 'intermission';
+  $('status').textContent = reason || 'Stake for next climb';
+  paint();
+}
 
-  // Always keep server state fresh near boundaries
-  if(g && g.cycleEnd!=null && now>=g.cycleEnd-200){
-    if(!g._fetching){
+function globalFrame(){
+  const nowWall = Date.now();
+  const now = serverNow();
+  let g = globalRound;
+
+  // ═══ HARD GUARANTEE: leave Flew Away after crashUiUntil ═══
+  if(crashUiUntil > 0 && nowWall >= crashUiUntil){
+    clearCrashUI('Stake for next climb · next round loading…');
+    fetchGlobalRound();
+  }
+
+  // Keep polling server
+  if(g && !g._fetching){
+    const needFast = g.phase==='flying' || g.phase==='crashed' || (g.cycleEnd!=null && now>=g.cycleEnd-500);
+    // fetch handled by intervals; also pull if past cycle
+    if(g.cycleEnd!=null && now>=g.cycleEnd && (g.roundId===lastRoundId || lastRoundId==null)){
       g._fetching=true;
       fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
     }
   }
 
-  // CRITICAL: do not require crashAt (hidden during flying for fairness)
-  if(g && g.flyStart!=null){
-    const phase=phaseAt(g, now);
-    if(phase!==lastPhase || (g.roundId!=null && g.roundId!==lastRoundId)){
-      onGlobalPhase(phase, g);
-    }
-    if(phase==='flying'){
-      running=true;
-      m=multAt(g, now);
-      // Prefer live server mult sample when present
-      if(g.mult!=null && g.phase==='flying'){
-        const sm=Number(g.mult);
-        if(sm>=1) m=Math.max(m, sm); // don't go below server
-        if(m>sm*1.25) m=sm; // snap if we overshot before crash poll
-      }
-      paint();
-      if(Math.random()<0.08) playTick();
-      bets.forEach(b=>{
-        if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
-      });
-    }else if(phase==='betting' || phase==='intermission'){
-      running=false;
-      m=1;
-      // Ensure flew-away overlay is gone
-      if($('hero') && $('hero').classList.contains('crashed')){
-        reset();
-      }
-      paint();
-    }else{
-      // crashed — brief result window only
-      running=false;
-      if(g.crashMult!=null) m=Number(g.crashMult);
-      paint();
-      // Safety: if result window elapsed, force leave flew-away
-      const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt!=null ? g.crashAt+(Number(g.resultMs)||3200) : null);
-      if(re!=null && now>=re && $('hero') && $('hero').classList.contains('crashed')){
-        reset();
-        lastPhase='intermission';
-        $('status').textContent='Stake for next climb · fair seed revealed';
-      }
-    }
-  }else if(!g){
-    // No round yet
-    fetchGlobalRound();
+  if(!g || g.flyStart==null){
+    if(!g) fetchGlobalRound();
+    globalRaf=requestAnimationFrame(globalFrame);
+    return;
   }
+
+  const phase = phaseAt(g, now);
+
+  // Phase / round transitions
+  if(phase!==lastPhase || (g.roundId!=null && g.roundId!==lastRoundId)){
+    onGlobalPhase(phase, g);
+  }
+
+  if(phase==='flying'){
+    running=true;
+    m=multAt(g, now);
+    if(g.mult!=null && g.phase==='flying'){
+      const sm=Number(g.mult);
+      if(sm>=1 && m>sm*1.25) m=sm;
+    }
+    paint();
+    if(Math.random()<0.08) playTick();
+    bets.forEach(b=>{
+      if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
+    });
+  }else if(phase==='betting' || phase==='intermission'){
+    running=false;
+    m=1;
+    if($('hero') && $('hero').classList.contains('crashed')){
+      clearCrashUI(phase==='intermission' ? 'Stake for next climb · fair seed revealed' : 'Global round · stake to join the next climb');
+    }else{
+      paint();
+    }
+  }else{
+    // crashed
+    running=false;
+    if(g.crashMult!=null) m=Number(g.crashMult);
+    paint();
+    // Double safety with server resultEnd
+    const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt!=null ? g.crashAt+(Number(g.resultMs)||3200) : null);
+    if(re!=null && now>=re){
+      clearCrashUI('Stake for next climb · fair seed revealed');
+    }
+  }
+
   globalRaf=requestAnimationFrame(globalFrame);
 }
 
@@ -1729,19 +1768,13 @@ function startGlobalSync(){
   });
   // Poll often enough to never sit on one crash mult across rounds
   // Fast polls while flying so crash is detected quickly without leaking crashAt
-  globalPollTimer=setInterval(()=>{
-    const ph = globalRound && globalRound.phase;
-    fetchGlobalRound();
-    // tighter loop while climbing
-    if(ph==='flying' && globalPollTimer){
-      /* interval stays 400ms via separate timer */
-    }
-  }, 1000);
-  // High-frequency poll during flight
+  globalPollTimer=setInterval(fetchGlobalRound, 800);
   setInterval(()=>{
-    if(globalRound && globalRound.phase==='flying') fetchGlobalRound();
-  }, 280);
+    const ph = globalRound && globalRound.phase;
+    if(ph==='flying' || ph==='crashed') fetchGlobalRound();
+  }, 250);
 }
+
 
 /* Winnings = lottery unclaimed wins (NOT wallet USDC balance) */
 let unclaimedWinsUsd = 0;
