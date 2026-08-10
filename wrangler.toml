@@ -8,16 +8,16 @@
 #   ROUND_SECRET       (optional)
 #   RPC_URL            (optional, default Base Sepolia public RPC)
 #
-# Optional but recommended — Settings → Functions → KV namespace bindings:
-#   MEGAPUSH_KV  → any KV namespace (Storage & Databases → KV → Create)
-#   Backs the play-bank balances and the leaderboard with durable, globally
-#   consistent storage. Without it, both features still work but fall back
-#   to the Worker Cache API (best-effort, scoped per edge location) and the
-#   leaderboard stays empty. Not declared as [[kv_namespaces]] here because
-#   Pages bindings are configured per-project in the dashboard, not in this
-#   file, and a placeholder id here would break the build.
+# MEGAPUSH_KV backs the play-bank balances and the leaderboard with
+# durable, globally consistent storage. Without it, both features still
+# work but fall back to the Worker Cache API (best-effort, scoped per
+# edge location) and the leaderboard stays empty.
 
 name = "megapush"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "public"
+
+[[kv_namespaces]]
+binding = "MEGAPUSH_KV"
+id = "98039eb0b6574e8e98fe154b69e4b9a4"
