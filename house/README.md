@@ -1,8 +1,6 @@
 # MegaPush house backend
 
-Pays Megapot tickets on Base Sepolia when players cash out. Holds `HOUSE_PRIVATE_KEY` — **never** put that key in the frontend.
-
-## Setup
+Pays Megapot tickets on Base Sepolia when players cash out.
 
 ```bash
 cd house
@@ -15,12 +13,12 @@ npm start
 
 ## Endpoints
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/game/cashout` | Buy tickets for player (`count`, `recipient`, `entryId`) |
-| POST | `/game/refund` | Refund stake USDC on cancel |
-| POST | `/game/stake` | Optional stake bookkeeping |
-| GET | `/health` | Liveness |
+| Method | Path            | Purpose                                                  |
+| ------ | --------------- | -------------------------------------------------------- |
+| POST   | `/game/cashout` | Buy tickets for player (`count`, `recipient`, `entryId`) |
+| POST   | `/game/refund`  | Refund stake USDC on cancel                              |
+| POST   | `/game/stake`   | Optional stake bookkeeping                               |
+| GET    | `/health`       | Liveness                                                 |
 
 ## Frontend config (`public/game.html`)
 
