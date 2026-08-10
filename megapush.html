@@ -1178,6 +1178,25 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
+<!-- Free daily explain + confirm card -->
+<div class="modal-bg" id="freeDailyBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="freeDailyTitle">
+    <h2 id="freeDailyTitle">Free daily $1</h2>
+    <p id="freeDailyCardSub">Once every 24 hours you can claim <b>$1 free play balance</b> to stake on a climb.</p>
+    <div class="steps" style="margin:14px 0 16px">
+      <div class="step"><n>1</n><div>Claim +$1 play balance<small>Not a free lottery ticket</small></div></div>
+      <div class="step"><n>2</n><div>Stake it on a round<small>Bank before it flies for whole tickets</small></div></div>
+      <div class="step"><n>3</n><div>Come back tomorrow<small>One claim per wallet every 24 hours</small></div></div>
+    </div>
+    <p style="font-size:12px;color:var(--mid);line-height:1.4;margin-bottom:14px">
+      Free $1 is for <b>staking only</b> — you cannot withdraw it as USDC. Limit: 1 per wallet per day (server-enforced).
+    </p>
+    <div id="freeDailyCardStatus" class="bank-status" role="status" style="margin-bottom:10px"></div>
+    <button type="button" class="go" id="freeDailyClaimBtn">Claim $1 play balance</button>
+    <button type="button" class="go secondary" id="freeDailyCardClose" style="margin-top:8px">Not now</button>
+  </div>
+</div>
+
 <!-- Re-open how-it-works anytime -->
 <button type="button" class="help-fab" id="helpFab" aria-label="How MegaPush works · drag to move" title="How it works · drag to move">?</button>
 
@@ -3145,7 +3164,7 @@ if($('helpFab')){
   };
 }
 
-/* Free daily ticket — 1× per 24h */
+/* Free daily $1 — explain card first, then confirm claim (1× / 24h server-side) */
 function paintFreeDailyFromGlobal(){
   try{
     const fn = window.updateFreeDailyUi || window.Megapot?.updateFreeDailyUi || window.Megapot?.refreshFreeDailyUi;
@@ -3156,10 +3175,35 @@ function paintFreeDailyFromGlobal(){
     });
   }catch(_){}
 }
+function openFreeDailyCard(){
+  const bg = $('freeDailyBg');
+  if(!bg) return;
+  const st = $('freeDailyCardStatus');
+  if(st){ st.textContent = ''; st.className = 'bank-status'; }
+  const claim = $('freeDailyClaimBtn');
+  if(claim){
+    claim.disabled = false;
+    claim.textContent = 'Claim $1 play balance';
+  }
+  // Prefill cooldown messaging if already claimed
+  const nextAt = window.__mpFreeDailyNextAt;
+  const eligible = window.__mpFreeDailyEligible !== false && !(nextAt && nextAt > Date.now());
+  if(!eligible && nextAt && nextAt > Date.now() && st){
+    const left = nextAt - Date.now();
+    const h = Math.floor(left / 3600000);
+    const m = Math.floor((left % 3600000) / 60000);
+    st.textContent = 'Already claimed. Next free daily in ' + (h > 0 ? h + 'h ' : '') + Math.max(1, m) + 'm.';
+    st.className = 'bank-status err';
+    if(claim){ claim.disabled = true; claim.textContent = 'Come back later'; }
+  }
+  bg.classList.add('show');
+}
+function closeFreeDailyCard(){
+  $('freeDailyBg')?.classList.remove('show');
+}
 if($('freeDailyBtn')){
+  // Open info card — do not claim until user confirms
   $('freeDailyBtn').onclick = async ()=>{
-    const btn = $('freeDailyBtn');
-    const lab = $('freeDailyLab');
     if(!window.Megapot){
       alert('Still loading — try again in a second');
       return;
@@ -3168,32 +3212,61 @@ if($('freeDailyBtn')){
       await window.Megapot.connectWallet?.();
       if(!window.Megapot.account){ alert('Connect wallet to claim'); return; }
     }
-    btn.disabled = true;
-    if(lab) lab.textContent = 'Claiming…';
+    openFreeDailyCard();
+  };
+  setInterval(paintFreeDailyFromGlobal, 30000);
+}
+if($('freeDailyCardClose')){
+  $('freeDailyCardClose').onclick = ()=> closeFreeDailyCard();
+}
+$('freeDailyBg')?.addEventListener('click', (e)=>{
+  if(e.target === $('freeDailyBg')) closeFreeDailyCard();
+});
+if($('freeDailyClaimBtn')){
+  $('freeDailyClaimBtn').onclick = async ()=>{
+    const claim = $('freeDailyClaimBtn');
+    const st = $('freeDailyCardStatus');
+    const lab = $('freeDailyLab');
+    if(!window.Megapot?.account){
+      await window.Megapot?.connectWallet?.();
+      if(!window.Megapot?.account){
+        if(st){ st.textContent = 'Connect your wallet first'; st.className = 'bank-status err'; }
+        return;
+      }
+    }
+    claim.disabled = true;
+    claim.textContent = 'Claiming…';
+    if(st){ st.textContent = 'Adding $1 to your play balance…'; st.className = 'bank-status'; }
     try{
       const res = await window.Megapot.claimFreeDailyTicket();
       if(res?.ok){
+        if(st){ st.textContent = 'Done — $1 play balance added. Stake it on a climb!'; st.className = 'bank-status ok'; }
         if(lab) lab.textContent = '+$1';
-        $('status') && ($('status').textContent = 'Free daily: +$1 play balance · stake it to play');
-        try{ await window.Megapot.loadUserTickets?.({ silent:true }); }catch(_){}
-        setTimeout(()=>{ try{ window.Megapot.refreshFreeDailyUi?.(); }catch(_){ paintFreeDailyFromGlobal(); } }, 800);
+        if($('status')) $('status').textContent = 'Free daily: +$1 play balance · stake it to play';
+        claim.textContent = 'Claimed';
+        setTimeout(()=>{
+          closeFreeDailyCard();
+          try{ window.Megapot.refreshFreeDailyUi?.(res); }catch(_){ paintFreeDailyFromGlobal(); }
+        }, 1400);
       }else{
         const err = res?.error || 'Could not claim';
-        if(lab) lab.textContent = 'Free daily';
+        if(st){ st.textContent = err; st.className = 'bank-status err'; }
         if(res?.freeDailyMsLeft > 0 || res?.freeDailyNextAt){
           try{ window.Megapot.refreshFreeDailyUi?.(res); }catch(_){}
+          claim.textContent = 'Come back later';
         }else{
-          btn.disabled = false;
+          claim.disabled = false;
+          claim.textContent = 'Claim $1 play balance';
         }
-        if(!/already claimed/i.test(err)) alert(err);
+        if(lab) lab.textContent = 'Free daily';
       }
     }catch(e){
-      btn.disabled = false;
+      claim.disabled = false;
+      claim.textContent = 'Claim $1 play balance';
+      if(st){ st.textContent = e?.message || String(e); st.className = 'bank-status err'; }
       if(lab) lab.textContent = 'Free daily';
-      alert(e?.message || String(e));
     }
   };
-  setInterval(paintFreeDailyFromGlobal, 30000);
 }
 
 $('previewOk').onclick=()=>$('previewBg').classList.remove('show');

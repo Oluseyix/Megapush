@@ -743,89 +743,187 @@ export function bankPublicView(bank) {
   };
 }
 
+/** Rate-limit free-daily attempts (bruteforce / spam). Uses BANK_KV when bound. */
+async function freeDailyRateLimit(env, player, ip) {
+  const kv = env?.BANK_KV;
+  if (!kv || typeof kv.get !== 'function') return { ok: true };
+  const p = String(player).toLowerCase();
+  const now = Date.now();
+  const WINDOW_MS = 60 * 60 * 1000; // 1 hour
+  const MAX_PLAYER = 8; // attempts / hour / wallet
+  const MAX_IP = 30; // attempts / hour / IP
+
+  const bump = async (key, max) => {
+    let row = null;
+    try {
+      row = await kv.get(key, { type: 'json' });
+    } catch (_) {}
+    if (!row || !row.start || now - Number(row.start) > WINDOW_MS) {
+      row = { start: now, n: 0 };
+    }
+    row.n = (Number(row.n) || 0) + 1;
+    try {
+      await kv.put(key, JSON.stringify(row), { expirationTtl: 3600 });
+    } catch (_) {}
+    if (row.n > max) {
+      return {
+        ok: false,
+        error: 'Too many free daily attempts — try again later',
+        status: 429,
+        retryAfterMs: WINDOW_MS - (now - Number(row.start)),
+      };
+    }
+    return { ok: true };
+  };
+
+  const pLim = await bump(`rl:fd:p:${p}`, MAX_PLAYER);
+  if (!pLim.ok) return pLim;
+  if (ip && String(ip).length > 3) {
+    const iLim = await bump(`rl:fd:ip:${String(ip).slice(0, 64)}`, MAX_IP);
+    if (!iLim.ok) return iLim;
+  }
+  return { ok: true };
+}
+
+/** Short exclusive lock so concurrent claims can't double-credit. */
+async function freeDailyAcquireLock(env, player) {
+  const kv = env?.BANK_KV;
+  if (!kv || typeof kv.put !== 'function') return { ok: true, release: async () => {} };
+  const key = `lock:fd:${String(player).toLowerCase()}`;
+  try {
+    const existing = await kv.get(key);
+    if (existing) {
+      return { ok: false, error: 'Claim already in progress', status: 429 };
+    }
+    await kv.put(key, String(Date.now()), { expirationTtl: 20 });
+  } catch (_) {
+    return { ok: true, release: async () => {} };
+  }
+  return {
+    ok: true,
+    release: async () => {
+      try {
+        await kv.delete(key);
+      } catch (_) {}
+    },
+  };
+}
+
 /**
  * Free daily: +$1 to play balance for staking only (once per 24h).
  * Goes to bonusUsdc — counted in play balance, never withdrawable as USDC.
  * Does NOT mint a free Megapot ticket.
+ * Hard-capped: 1 success / 24h / wallet + attempt rate limits + lock.
  */
-export async function claimFreeDailyTicket(player, env) {
+export async function claimFreeDailyTicket(player, env, opts = {}) {
   if (!isAddr(player)) return { ok: false, error: 'Valid player required', status: 400 };
   const now = Date.now();
-  const bank = await loadBank(player, env);
-  const info = freeDailyInfo(bank, now);
+  const ip = opts.ip ? String(opts.ip) : '';
 
-  // One-time: anyone who already "claimed" under the old ticket model gets $1 stake credit
-  if (!info.freeDailyEligible && money2(bank.bonusUsdc) === 0 && !bank.freeDailyMigrated) {
-    bank.bonusUsdc = 1;
+  const rl = await freeDailyRateLimit(env, player, ip);
+  if (!rl.ok) {
+    return { ...rl, ...bankPublicView(await loadBank(player, env)) };
+  }
+
+  const lock = await freeDailyAcquireLock(env, player);
+  if (!lock.ok) {
+    return { ...lock, ...bankPublicView(await loadBank(player, env)) };
+  }
+
+  try {
+    // Re-load under lock
+    const bank = await loadBank(player, env);
+    const info = freeDailyInfo(bank, now);
+
+    // Any successful free_daily entry in the last 24h blocks another credit
+    const recentCredit = Object.values(bank.entries || {}).some((e) => {
+      if (!e || e.status !== 'free_daily') return false;
+      if (!(Number(e.bonusUsdc) > 0) && e.bonusUsdc !== 1) return false;
+      const at = Number(e.at) || 0;
+      return at > 0 && now - at < FREE_DAILY_MS;
+    });
+    if (recentCredit || !info.freeDailyEligible) {
+      // One-time restore for old ticket-path claimers (no bonus ever granted)
+      if (
+        money2(bank.bonusUsdc) === 0 &&
+        !bank.freeDailyMigrated &&
+        bank.lastFreeAt &&
+        Object.values(bank.entries || {}).some(
+          (e) => e && (e.status === 'free_daily' || e.status === 'free_daily_pending') && e.bonusUsdc == null,
+        )
+      ) {
+        bank.bonusUsdc = 1;
+        bank.freeDailyMigrated = true;
+        syncDeposited(bank);
+        pushHistory(bank, {
+          type: 'free_daily',
+          amount: 1,
+          entryId: 'free-daily-migrate',
+          at: now,
+        });
+        const saved = await saveBank(player, bank, env);
+        return {
+          ok: true,
+          playCreditUsdc: 1,
+          migrated: true,
+          entryId: 'free-daily-migrate',
+          ...bankPublicView(saved),
+          freeDailyEligible: false,
+          freeDailyNextAt: info.freeDailyNextAt || now + FREE_DAILY_MS,
+          freeDailyMsLeft: info.freeDailyMsLeft || FREE_DAILY_MS,
+          history: saved.history,
+          note: '+$1 play balance for staking (not withdrawable)',
+        };
+      }
+      return {
+        ok: false,
+        error: 'Free daily already claimed — come back in 24 hours',
+        status: 429,
+        ...bankPublicView(bank),
+        freeDailyNextAt: info.freeDailyNextAt,
+        freeDailyMsLeft: info.freeDailyMsLeft,
+      };
+    }
+
+    // Stable id per wallet per 24h window (rolling epoch)
+    const entryId = `free-daily:${player.toLowerCase()}:${Math.floor(now / FREE_DAILY_MS)}`;
+    if (bank.entries[entryId]?.status === 'free_daily') {
+      return {
+        ok: false,
+        error: 'Free daily already claimed — come back in 24 hours',
+        status: 429,
+        already: true,
+        ...bankPublicView(bank),
+      };
+    }
+
+    // Exactly +$1 once — never stack multiple free dailies
+    bank.lastFreeAt = now;
+    bank.bonusUsdc = money2(bank.bonusUsdc + 1);
     bank.freeDailyMigrated = true;
+    bank.entries[entryId] = { status: 'free_daily', at: now, bonusUsdc: 1 };
     syncDeposited(bank);
     pushHistory(bank, {
       type: 'free_daily',
       amount: 1,
-      entryId: 'free-daily-migrate',
+      entryId,
       at: now,
     });
     const saved = await saveBank(player, bank, env);
     return {
       ok: true,
       playCreditUsdc: 1,
-      migrated: true,
-      entryId: 'free-daily-migrate',
+      entryId,
       ...bankPublicView(saved),
       freeDailyEligible: false,
-      freeDailyNextAt: info.freeDailyNextAt,
-      freeDailyMsLeft: info.freeDailyMsLeft,
+      freeDailyNextAt: now + FREE_DAILY_MS,
+      freeDailyMsLeft: FREE_DAILY_MS,
       history: saved.history,
-      note: '+$1 play balance for staking (not withdrawable)',
+      note: '+$1 play balance for staking (not withdrawable). Cash out for tickets.',
     };
+  } finally {
+    if (lock.release) await lock.release();
   }
-
-  if (!info.freeDailyEligible) {
-    return {
-      ok: false,
-      error: 'Free daily already claimed — come back in 24 hours',
-      status: 429,
-      ...bankPublicView(bank),
-      freeDailyNextAt: info.freeDailyNextAt,
-      freeDailyMsLeft: info.freeDailyMsLeft,
-    };
-  }
-
-  const entryId = `free-daily:${player.toLowerCase()}:${Math.floor(now / FREE_DAILY_MS)}`;
-  if (bank.entries[entryId]?.status === 'free_daily' && bank.entries[entryId]?.bonusUsdc === 1) {
-    return {
-      ok: false,
-      error: 'Free daily already claimed — come back in 24 hours',
-      status: 429,
-      already: true,
-      ...bankPublicView(bank),
-    };
-  }
-
-  // +$1 stakeable play balance (bonus pool — not withdrawable)
-  bank.lastFreeAt = now;
-  bank.bonusUsdc = money2(bank.bonusUsdc + 1);
-  bank.freeDailyMigrated = true;
-  bank.entries[entryId] = { status: 'free_daily', at: now, bonusUsdc: 1 };
-  syncDeposited(bank);
-  pushHistory(bank, {
-    type: 'free_daily',
-    amount: 1,
-    entryId,
-    at: now,
-  });
-  const saved = await saveBank(player, bank, env);
-  return {
-    ok: true,
-    playCreditUsdc: 1,
-    entryId,
-    ...bankPublicView(saved),
-    freeDailyEligible: false,
-    freeDailyNextAt: now + FREE_DAILY_MS,
-    freeDailyMsLeft: FREE_DAILY_MS,
-    history: saved.history,
-    note: '+$1 play balance for staking (not withdrawable). Cash out for tickets.',
-  };
 }
 
 /** Mark entry status after settle/lost (stake not returned to deposited). */
@@ -889,7 +987,12 @@ export async function handleBank(request, env) {
   }
 
   if (action === 'free_daily' || action === 'daily_free' || action === 'claim_free') {
-    const result = await claimFreeDailyTicket(player, env);
+    // Optional confirm flag from UI card — still enforced server-side either way
+    const ip =
+      request.headers.get('cf-connecting-ip') ||
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      '';
+    const result = await claimFreeDailyTicket(player, env, { ip });
     if (!result.ok) {
       return json(
         {
@@ -902,6 +1005,7 @@ export async function handleBank(request, env) {
           deposited: result.deposited,
           progressUsdc: result.progressUsdc,
           balance: result.balance,
+          bonusUsdc: result.bonusUsdc,
         },
         result.status || 400,
       );
