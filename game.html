@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-flow2">
+<meta name="megapush-build" content="20260810-receipt">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -86,8 +86,51 @@ nav::-webkit-scrollbar{display:none}
 .right{display:flex;align-items:center;gap:6px;flex:none}
 .bal{background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-family:'Archivo Black',sans-serif;font-size:12.5px;transition:transform .25s,box-shadow .25s;white-space:nowrap}
 .bal.bump{transform:scale(1.08);box-shadow:0 0 0 3px rgba(20,190,92,.25)}
-.tix-chip{background:var(--wash);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:11px;font-weight:800;color:var(--ink);white-space:nowrap;transition:transform .25s}
+.tix-chip{
+  background:var(--wash);border:1px solid var(--line);border-radius:10px;padding:6px 9px;
+  font-size:11px;font-weight:800;color:var(--ink);white-space:nowrap;transition:transform .15s,background .15s,border-color .15s;
+  cursor:pointer;font-family:inherit;line-height:1.2;-webkit-tap-highlight-color:transparent;
+}
+.tix-chip:hover,.tix-chip:focus-visible{background:#fff;border-color:var(--teal-2);outline:none}
+.tix-chip:active{transform:scale(.97)}
 .tix-chip b{font-family:'Archivo Black',sans-serif;color:var(--teal)}
+.cashout-receipt{
+  display:none;margin:10px 4px 0;padding:12px 14px;border-radius:14px;
+  background:#fff;border:1px solid var(--line);box-shadow:0 6px 18px rgba(30,38,87,.08);
+}
+.cashout-receipt.show{display:block;animation:prevIn .35s cubic-bezier(.2,1.4,.4,1) both}
+.cashout-receipt .cr-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
+.cashout-receipt .cr-title{font-size:14px;font-weight:800;color:var(--ink);line-height:1.25}
+.cashout-receipt .cr-title b{color:var(--teal)}
+.cashout-receipt .cr-sub{font-size:12px;font-weight:600;color:var(--mid);margin-top:2px}
+.cashout-receipt .cr-x{
+  width:28px;height:28px;border-radius:8px;background:var(--wash);border:0;
+  color:var(--mid);font-size:16px;line-height:1;flex:none;cursor:pointer
+}
+.cashout-receipt .cr-meta{
+  display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
+  font-size:12px;font-weight:700;color:var(--ink);margin-bottom:10px
+}
+.cashout-receipt .cr-meta span{color:var(--mid);font-weight:600}
+.cashout-receipt .cr-actions{display:flex;gap:8px;flex-wrap:wrap}
+.cashout-receipt .cr-actions a,
+.cashout-receipt .cr-actions button{
+  flex:1;min-width:120px;text-align:center;padding:10px 12px;border-radius:10px;
+  font-size:12.5px;font-weight:800;text-decoration:none;cursor:pointer;border:0;
+  font-family:inherit;line-height:1.2
+}
+.cashout-receipt .cr-actions a{background:var(--ink);color:#fff}
+.cashout-receipt .cr-actions button{background:var(--wash);color:var(--ink);border:1px solid var(--line)}
+.receipt-bits{display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
+.receipt-bits .rb-row{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  background:var(--wash);border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  font-size:12.5px;font-weight:700;color:var(--ink)
+}
+.receipt-bits .rb-row span{color:var(--mid);font-weight:600}
+.receipt-bits .rb-row a{color:var(--teal);font-weight:800;text-decoration:none}
+.receipt-bits .rb-row a:hover{text-decoration:underline}
+.modal .go.secondary{background:var(--wash);color:var(--ink);border:1px solid var(--line);margin-top:8px}
 
 .wrap{max-width:720px;width:100%;margin:0 auto;padding:10px 14px calc(48px + var(--safe-b));overflow-x:hidden;box-sizing:border-box}
 
@@ -636,7 +679,7 @@ button:focus:not(:focus-visible){outline:none}
   </div>
   <div class="right">
     <div class="bal" id="bal" aria-live="polite" aria-label="Sepolia USDC">— USDC</div>
-    <div class="tix-chip" id="tixChip" aria-live="polite"><b id="tixBal">0</b> tix</div>
+    <button type="button" class="tix-chip" id="tixChip" aria-live="polite" aria-label="Open my tickets"><b id="tixBal">0</b> tix</button>
     <button type="button" class="wallet-btn" id="walletBtn" aria-label="Connect or disconnect wallet">Connect</button>
   </div>
 </header>
@@ -680,6 +723,23 @@ button:focus:not(:focus-visible){outline:none}
 
     <div class="shell">
       <div class="bets" id="bets"></div>
+      <div class="cashout-receipt" id="cashoutReceipt" hidden>
+        <div class="cr-top">
+          <div>
+            <div class="cr-title" id="crTitle"><b>+0 tickets</b> locked in</div>
+            <div class="cr-sub" id="crSub">Cashed out successfully</div>
+          </div>
+          <button type="button" class="cr-x" id="crClose" aria-label="Dismiss">×</button>
+        </div>
+        <div class="cr-meta">
+          <div>Draw in <b id="crDraw">—</b></div>
+          <div><span id="crMultLabel"></span></div>
+        </div>
+        <div class="cr-actions">
+          <a id="crTx" href="#" target="_blank" rel="noopener noreferrer">View transaction</a>
+          <button type="button" id="crTixBtn">My tickets</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -698,7 +758,10 @@ button:focus:not(:focus-visible){outline:none}
           <div class="card-lab">Today's drawing</div>
           <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets (today + recent draws) · 5 + bonus</div>
         </div>
-        <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink)" id="tixTimer">4h 12m</div>
+        <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink);text-align:right">
+          <div style="font-size:10px;font-weight:700;color:var(--mid);letter-spacing:.3px;text-transform:uppercase;margin-bottom:2px">Draw in</div>
+          <div id="tixTimer">—</div>
+        </div>
       </div>
       <div class="tix-scroll"><div class="tix-list" id="tixList"></div></div>
     </div>
@@ -822,7 +885,12 @@ button:focus:not(:focus-visible){outline:none}
     <h2 id="previewTitle">+12 tickets</h2>
     <p id="previewSub">Cashed at 2.40× · entering tonight's draw</p>
     <div class="preview-tix" id="previewTix"></div>
+    <div class="receipt-bits" id="previewReceipt">
+      <div class="rb-row"><span>Draw in</span><b id="previewDrawTime">—</b></div>
+      <div class="rb-row" id="previewTxRow" hidden><span>Transaction</span><a id="previewTx" href="#" target="_blank" rel="noopener noreferrer">View on Basescan ↗</a></div>
+    </div>
     <button type="button" class="go" id="previewOk">Nice</button>
+    <button type="button" class="go secondary" id="previewViewTix">View my tickets</button>
   </div>
 </div>
 
@@ -998,14 +1066,39 @@ document.querySelectorAll('#pastFilter button').forEach(btn=>{
   });
 });
 
-/* countdown */
-let drawLeft=4*3600+12*60;
-setInterval(()=>{
-  if(drawLeft>0) drawLeft--;
-  const h=Math.floor(drawLeft/3600), m=Math.floor((drawLeft%3600)/60);
-  const t=`${h}h ${m}m`;
-  const el2=$('tixTimer'); if(el2) el2.textContent=t;
-},1000);
+/* Live draw countdown (Megapot API ended_at, fallback on-chain drawingTime) */
+let drawEndsAt=null; // ms epoch
+function formatDrawCountdown(msLeft){
+  if(msLeft==null || !Number.isFinite(msLeft)) return '—';
+  if(msLeft<=0) return 'Drawing soon';
+  const s=Math.floor(msLeft/1000);
+  const d=Math.floor(s/86400);
+  const h=Math.floor((s%86400)/3600);
+  const m=Math.floor((s%3600)/60);
+  const sec=s%60;
+  if(d>0) return d+'d '+h+'h';
+  if(h>0) return h+'h '+m+'m';
+  if(m>0) return m+'m '+sec+'s';
+  return sec+'s';
+}
+function tickDrawTimers(){
+  const left = drawEndsAt!=null ? (drawEndsAt - Date.now()) : null;
+  const t = formatDrawCountdown(left);
+  ['tixTimer','previewDrawTime','crDraw'].forEach(id=>{
+    const el=$(id); if(el) el.textContent=t;
+  });
+}
+function setDrawEndsAt(ms){
+  const n=Number(ms);
+  if(!Number.isFinite(n) || n<=0) return;
+  // Prefer the soonest future end; allow refresh of current target
+  if(drawEndsAt==null || n>=Date.now()-60_000){
+    if(drawEndsAt==null || Math.abs(drawEndsAt-n)>1000) drawEndsAt=n;
+  }
+  tickDrawTimers();
+}
+setInterval(tickDrawTimers, 1000);
+tickDrawTimers();
 
 // No preselected stake or auto cash-out — user chooses everything
 const bets=[
@@ -1384,7 +1477,60 @@ function spawnTicketFlight(fromEl, tickets){
   setTimeout(()=>pop.remove(),1150);
 }
 
-function showTicketPreview(tickets, at){
+const BASESCAN_TX = 'https://sepolia.basescan.org/tx/';
+
+function goToTicketsPage(){
+  const tab = document.querySelector('#nav .tab[data-page="tickets"]');
+  if(tab) tab.click();
+  else {
+    document.querySelectorAll('#nav .tab').forEach(t=>t.classList.remove('on'));
+    const t2=document.querySelector('#nav .tab[data-page="tickets"]');
+    if(t2) t2.classList.add('on');
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+    $('page-tickets')?.classList.add('on');
+  }
+  try{ window.scrollTo({ top: 0, behavior: 'smooth' }); }catch(_){}
+}
+
+function showCashoutReceipt({ tickets, at, txHash }){
+  const box=$('cashoutReceipt');
+  if(!box) return;
+  const tix = Math.max(0, Number(tickets)||0);
+  if($('crTitle')) $('crTitle').innerHTML = '<b>+'+tix+' ticket'+(tix===1?'':'s')+'</b> locked in';
+  if($('crSub')) $('crSub').textContent = 'Cashed at '+(Number(at)||0).toFixed(2)+'× · in tonight\'s draw';
+  if($('crMultLabel')) $('crMultLabel').textContent = '';
+  tickDrawTimers();
+  const a=$('crTx');
+  if(a){
+    if(txHash){
+      a.href = BASESCAN_TX + String(txHash);
+      a.style.display = '';
+      a.textContent = 'View transaction';
+    }else{
+      a.removeAttribute('href');
+      a.style.display = 'none';
+    }
+  }
+  box.hidden = false;
+  box.classList.add('show');
+}
+
+function hideCashoutReceipt(){
+  const box=$('cashoutReceipt');
+  if(!box) return;
+  box.classList.remove('show');
+  box.hidden = true;
+}
+
+// Expose for module + external
+window.setDrawEndsAt = setDrawEndsAt;
+window.tickDrawTimers = tickDrawTimers;
+window.goToTicketsPage = goToTicketsPage;
+window.showCashoutReceipt = showCashoutReceipt;
+window.hideCashoutReceipt = hideCashoutReceipt;
+
+function showTicketPreview(tickets, at, opts){
+  opts = opts || {};
   const samples=[];
   const show=Math.min(6,tickets);
   for(let i=0;i<show;i++) samples.push(rndNums());
@@ -1393,7 +1539,17 @@ function showTicketPreview(tickets, at){
   $('previewTix').innerHTML=samples.map(s=>`
     <div class="pt">${s.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="b">${pad(s.bonus)}</span></div>
   `).join('')+(tickets>show?`<div class="pt">+${tickets-show} more</div>`:'');
+  tickDrawTimers();
+  const txRow=$('previewTxRow');
+  const txA=$('previewTx');
+  if(opts.txHash && txA){
+    txA.href = BASESCAN_TX + String(opts.txHash);
+    if(txRow) txRow.hidden = false;
+  }else if(txRow){
+    txRow.hidden = true;
+  }
   $('previewBg').classList.add('show');
+  showCashoutReceipt({ tickets, at, txHash: opts.txHash });
 }
 
 function maybeShare(at, tickets){
@@ -1426,7 +1582,7 @@ async function cashOut(b){
   if(tickets <= 0){
     b.payoutPending = false;
     paintBet(b);
-    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · 0 tickets';
+    $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · no tickets this round';
     return;
   }
 
@@ -1434,7 +1590,7 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Ticket buy failed · house module unavailable';
+    $('status').textContent = 'Ticket buy failed · try again';
     return;
   }
 
@@ -1443,18 +1599,18 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Please connect your wallet to receive tickets';
+    $('status').textContent = 'Connect wallet to receive tickets';
     return;
   }
   if(window.Megapot.HOUSE_TREASURY && player.toLowerCase() === String(window.Megapot.HOUSE_TREASURY).toLowerCase()){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Ticket buy failed · invalid recipient';
+    $('status').textContent = 'Ticket buy failed · check wallet';
     return;
   }
 
-  $('status').textContent = 'Entry '+(b.i+1)+' cashed · buying '+tickets+' tickets for '+player.slice(0,6)+'…';
+  $('status').textContent = 'Buying your tickets…';
   $('status').classList.remove('won');
 
   try{
@@ -1473,20 +1629,20 @@ async function cashOut(b){
       paintBet(b);
       const err = res?.error || 'House buy failed';
       if(res?.refundTxHash){
-        $('status').textContent = 'Ticket buy failed · stake refunded · '+err;
+        $('status').textContent = 'Tickets failed · stake refunded';
         if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
       }else{
         // API should refund; frontend backup refund if stake was taken
         if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
           const rf = await window.Megapot.refundStake(entryId, stakeAmt);
           if(rf?.ok){
-            $('status').textContent = 'Ticket buy failed · stake refunded · '+err;
+            $('status').textContent = 'Tickets failed · stake refunded';
             if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
           }else{
-            $('status').textContent = 'Ticket buy failed · '+err+(rf?.error?(' · refund: '+rf.error):'');
+            $('status').textContent = 'Tickets failed · check refund';
           }
         }else{
-          $('status').textContent = 'Ticket buy failed · '+err;
+          $('status').textContent = 'Tickets failed · try again';
         }
       }
       return;
@@ -1518,13 +1674,11 @@ async function cashOut(b){
       confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
       spawnTicketFlight(go, bought);
     }
-    showTicketPreview(bought, at);
+    showTicketPreview(bought, at, { txHash: res.txHash });
     maybeShare(at, bought);
     cashoutsToday++;
     syncMission();
-    const txNote = ' · tx '+String(res.txHash).slice(0,10)+'…';
-    const who = res.recipient ? (' → '+String(res.recipient).slice(0,6)+'…') : '';
-    $('status').textContent = 'Entry '+(b.i+1)+' cashed · +'+bought+' tickets'+who+txNote;
+    $('status').textContent = '+'+bought+' ticket'+(bought===1?'':'s')+' locked in';
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
       pt.textContent = '+'+bought+' tickets';
@@ -1541,13 +1695,13 @@ async function cashOut(b){
       try{
         const rf = await window.Megapot.refundStake(entryId, stakeAmt);
         if(rf?.ok){
-          $('status').textContent = 'Ticket buy failed · stake refunded · '+msg;
+          $('status').textContent = 'Tickets failed · stake refunded';
           if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
           return;
         }
       }catch(_){}
     }
-    $('status').textContent = 'Ticket buy failed · '+msg;
+    $('status').textContent = 'Tickets failed · try again';
   }
 }
 
@@ -1947,6 +2101,22 @@ if($('helpFab')){
   };
 }
 $('previewOk').onclick=()=>$('previewBg').classList.remove('show');
+if($('previewViewTix')){
+  $('previewViewTix').onclick=()=>{
+    $('previewBg').classList.remove('show');
+    goToTicketsPage();
+  };
+}
+if($('tixChip')){
+  $('tixChip').onclick=()=>goToTicketsPage();
+}
+if($('crClose')) $('crClose').onclick=()=>hideCashoutReceipt();
+if($('crTixBtn')){
+  $('crTixBtn').onclick=()=>{
+    hideCashoutReceipt();
+    goToTicketsPage();
+  };
+}
 $('shareClose').onclick=()=>$('shareBg').classList.remove('show');
 $('shareCopy').onclick=()=>{
   const t=`Just cashed out at ${$('shareMult').textContent} on MegaPush ${$('shareSub').textContent} 🎟️`;
@@ -2448,6 +2618,12 @@ async function loadLivePot(){
       const amt = BigInt(j.prize_pool?.amount || j.prizePool?.amount || '0');
       const dec = Number(j.prize_pool?.decimals ?? j.prizePool?.decimals ?? 6);
       if(amt > 0n && el) el.textContent = fmtUsd(amt, dec);
+      // Real draw countdown from active round end
+      const ended = j.ended_at || j.endedAt || j.drawing_time || j.drawingTime;
+      if(ended){
+        const ms = typeof ended === 'number' ? (ended < 1e12 ? ended*1000 : ended) : Date.parse(ended);
+        if(Number.isFinite(ms)) window.setDrawEndsAt?.(ms);
+      }
     }
   }catch(e){ console.warn('API pot', e); }
 
@@ -2457,6 +2633,13 @@ async function loadLivePot(){
     drawingId = id;
     const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
     if(st.ticketPrice != null) ticketPrice = st.ticketPrice;
+    // On-chain draw time (seconds) — use if API did not set a future end
+    if(st.drawingTime != null){
+      const ms = Number(st.drawingTime) * 1000;
+      if(Number.isFinite(ms) && ms > Date.now() - 60_000){
+        if(window.setDrawEndsAt) window.setDrawEndsAt(ms);
+      }
+    }
     // Only fall back display to Sepolia pool if API failed and still "—"
     if(el && (!el.textContent || el.textContent === '—') && st.prizePool != null){
       el.textContent = fmtUsd(st.prizePool);
