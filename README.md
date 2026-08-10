@@ -28,15 +28,14 @@ Set secrets in the Cloudflare dashboard or via `wrangler secret put`. **Never co
 | `HOUSE_PRIVATE_KEY` | **Required for cashouts.** Signs Megapot ticket buys and house USDC outflows. |
 | `ADMIN_TOKEN` | **Required to enable admin DO routes** (`/kill`, `/reset-exposure`, `/close-window`, sequencer `/clear`). If unset, those routes **404** (they do not exist). If set, wrong bearer → 403. |
 
-## Free daily play credit
+## Free daily $1 play balance
 
-Once every **24 hours**, a connected wallet can claim **$1 free stake credit**.
+Once every **24 hours**, a connected wallet claims **$1 free play balance** to **stake** (not a free lottery ticket).
 
-- Added to **bonus** balance — **spendable to stake only**, **not withdrawable** as USDC  
-- Stake $1 → bank for whole Megapot tickets as usual  
-- Rolling 24h cooldown from last claim  
-- UI: **Free daily** in the header  
-- API: `POST /api/bank` `{ "action": "free_daily", "player": "0x…" }`  
+- Shows in the **Play** chip as +$1  
+- **Stake only** — cannot withdraw free $1 as USDC  
+- Stake → bank for Megapot tickets as usual  
+- UI: **Free daily** · API: `POST /api/bank` `{ "action": "free_daily", "player": "0x…" }`  
 
 ## Money model
 

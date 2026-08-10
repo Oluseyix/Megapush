@@ -744,48 +744,43 @@ export function bankPublicView(bank) {
 }
 
 /**
- * Free daily: +$1 stake credit (bonus) once per 24h.
- * Spendable on stakes only — never withdrawable as USDC.
- * Cash out after staking still pays Megapot tickets (not cash).
+ * Free daily: +$1 to play balance for staking only (once per 24h).
+ * Goes to bonusUsdc — counted in play balance, never withdrawable as USDC.
+ * Does NOT mint a free Megapot ticket.
  */
 export async function claimFreeDailyTicket(player, env) {
   if (!isAddr(player)) return { ok: false, error: 'Valid player required', status: 400 };
   const now = Date.now();
   const bank = await loadBank(player, env);
   const info = freeDailyInfo(bank, now);
+
+  // One-time: anyone who already "claimed" under the old ticket model gets $1 stake credit
+  if (!info.freeDailyEligible && money2(bank.bonusUsdc) === 0 && !bank.freeDailyMigrated) {
+    bank.bonusUsdc = 1;
+    bank.freeDailyMigrated = true;
+    syncDeposited(bank);
+    pushHistory(bank, {
+      type: 'free_daily',
+      amount: 1,
+      entryId: 'free-daily-migrate',
+      at: now,
+    });
+    const saved = await saveBank(player, bank, env);
+    return {
+      ok: true,
+      playCreditUsdc: 1,
+      migrated: true,
+      entryId: 'free-daily-migrate',
+      ...bankPublicView(saved),
+      freeDailyEligible: false,
+      freeDailyNextAt: info.freeDailyNextAt,
+      freeDailyMsLeft: info.freeDailyMsLeft,
+      history: saved.history,
+      note: '+$1 play balance for staking (not withdrawable)',
+    };
+  }
+
   if (!info.freeDailyEligible) {
-    // One-time migrate: old free-daily bought a ticket / reserved claim but never gave stake credit
-    const oldTicketClaim = Object.values(bank.entries || {}).some(
-      (e) =>
-        e &&
-        (e.status === 'free_daily' || e.status === 'free_daily_pending') &&
-        e.bonusUsdc == null &&
-        (e.tickets != null || e.txHash),
-    );
-    if (oldTicketClaim && money2(bank.bonusUsdc) === 0 && !bank.freeDailyMigrated) {
-      bank.bonusUsdc = money2(bank.bonusUsdc + 1);
-      bank.freeDailyMigrated = true;
-      syncDeposited(bank);
-      pushHistory(bank, {
-        type: 'free_daily',
-        amount: 1,
-        entryId: 'free-daily-migrate',
-        at: now,
-      });
-      const saved = await saveBank(player, bank, env);
-      return {
-        ok: true,
-        creditedBonus: 1,
-        migrated: true,
-        entryId: 'free-daily-migrate',
-        ...bankPublicView(saved),
-        freeDailyEligible: false,
-        freeDailyNextAt: info.freeDailyNextAt,
-        freeDailyMsLeft: info.freeDailyMsLeft,
-        history: saved.history,
-        note: 'Free $1 stake credit restored — stake to play; not withdrawable.',
-      };
-    }
     return {
       ok: false,
       error: 'Free daily already claimed — come back in 24 hours',
@@ -797,7 +792,7 @@ export async function claimFreeDailyTicket(player, env) {
   }
 
   const entryId = `free-daily:${player.toLowerCase()}:${Math.floor(now / FREE_DAILY_MS)}`;
-  if (bank.entries[entryId]?.status === 'free_daily') {
+  if (bank.entries[entryId]?.status === 'free_daily' && bank.entries[entryId]?.bonusUsdc === 1) {
     return {
       ok: false,
       error: 'Free daily already claimed — come back in 24 hours',
@@ -807,6 +802,7 @@ export async function claimFreeDailyTicket(player, env) {
     };
   }
 
+  // +$1 stakeable play balance (bonus pool — not withdrawable)
   bank.lastFreeAt = now;
   bank.bonusUsdc = money2(bank.bonusUsdc + 1);
   bank.freeDailyMigrated = true;
@@ -821,14 +817,14 @@ export async function claimFreeDailyTicket(player, env) {
   const saved = await saveBank(player, bank, env);
   return {
     ok: true,
-    creditedBonus: 1,
+    playCreditUsdc: 1,
     entryId,
     ...bankPublicView(saved),
     freeDailyEligible: false,
     freeDailyNextAt: now + FREE_DAILY_MS,
     freeDailyMsLeft: FREE_DAILY_MS,
     history: saved.history,
-    note: 'Free $1 stake credit — use it to play; not withdrawable. Cash out for tickets.',
+    note: '+$1 play balance for staking (not withdrawable). Cash out for tickets.',
   };
 }
 
@@ -913,12 +909,15 @@ export async function handleBank(request, env) {
     return json({
       ok: true,
       player: player.toLowerCase(),
-      creditedBonus: result.creditedBonus,
+      playCreditUsdc: result.playCreditUsdc ?? 1,
       entryId: result.entryId,
       freeDailyEligible: false,
       freeDailyNextAt: result.freeDailyNextAt,
       freeDailyMsLeft: result.freeDailyMsLeft,
-      ...bankPublicView(result),
+      balance: result.balance,
+      deposited: result.deposited,
+      bonusUsdc: result.bonusUsdc,
+      withdrawable: result.withdrawable,
       note: result.note,
       history: result.history,
     });
