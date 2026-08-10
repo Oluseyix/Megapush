@@ -7,3 +7,7 @@ dist
 !.env.example
 house/node_modules
 house/.env
+
+# Cloudflare Pages advanced worker (generated)
+public/_worker.js
+public/_worker_build.json

@@ -1,60 +1,43 @@
-# Cloudflare Pages — MegaPush
+# Cloudflare Pages — MegaPush (Advanced Worker)
 
-## Why `/api/health` showed the landing page
+APIs are served by **`public/_worker.js`** (bundled from `cf-worker/`), not only static HTML.
 
-That HTML is `index.html`. It means **Functions did not run** — only static files were deployed.
+## Dashboard settings
 
-Usual causes:
-
-1. **Root directory = `public`** → `functions/` is ignored  
-2. **Deployed only the `public` folder** (drag-drop / wrong path) without `functions/`  
-3. **No redeploy** after adding secrets / code  
-
-## Correct dashboard settings
-
-**Workers & Pages → megapush → Settings → Builds and deployments:**
-
-| Field | Value |
+| Setting | Value |
 |--------|--------|
-| Production branch | `main` |
-| **Root directory** | *(leave blank)* = **repo root** |
-| **Build command** | `npm install` |
+| Root directory | **blank** (repo root) |
+| **Build command** | `npm install && npm run build` |
 | **Build output directory** | `public` |
+| Compatibility flags | `nodejs_compat` |
 
-**Settings → Functions:**
+## Secrets
 
-- Compatibility flags: **`nodejs_compat`**
-
-**Settings → Environment variables** (Production):
+**Settings → Variables and Secrets** (Production):
 
 | Name | Type |
 |------|------|
-| `HOUSE_PRIVATE_KEY` | **Encrypt / Secret** |
+| `HOUSE_PRIVATE_KEY` | Encrypt / Secret |
 
-Then **Deployments → ⋯ → Retry deployment**.
+Redeploy after adding.
 
-## Correct CLI deploy (from repo root)
+## CLI deploy (from repo root)
 
 ```bash
-cd MegaPush   # must contain both public/ AND functions/
+cd MegaPush
 npm install
+npm run build          # creates public/_worker.js
 npx wrangler pages deploy public --project-name megapush
 ```
 
-Do **not** `cd public` before deploy.
-
-## Verify (must be JSON, not HTML)
+## Verify (must be JSON)
 
 ```bash
 curl -sS https://megapush.pages.dev/api/ping
-# {"ok":true,"platform":"cloudflare-pages","route":"/api/ping",...}
+# {"ok":true,"platform":"cloudflare-pages-worker",...}
 
 curl -sS https://megapush.pages.dev/api/health
-# {"ok":true,"hasHousePrivateKey":true,"platform":"cloudflare-pages",...}
+# {"ok":true,"hasHousePrivateKey":true,...}
 ```
 
-If `curl` still returns `<!DOCTYPE html>`, Functions are still not deployed — fix Root directory and redeploy.
-
-## Game URL
-
-https://megapush.pages.dev/game.html
+If you still see `<!DOCTYPE html>`, the deploy did not include `_worker.js` — run `npm run build` and check `public/_worker.js` exists before deploy.
