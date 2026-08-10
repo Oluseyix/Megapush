@@ -1679,6 +1679,8 @@ if($('bal')) $('bal').textContent='— USDC';
 if($('bal')) $('bal').setAttribute('aria-label','Sepolia USDC balance');
 const history=[]; // recent crash mults for the chip strip
 let roundHistoryCache=[]; // last 20 from server
+let roundHistoryPollTimer=null;
+let roundHistoryFingerprint='';
 const HEAT=[['#14BE5C','#0B8B41'],['#F0A81E','#B87A00'],['#F2415F','#B31D38']];
 
 function multColor(v){
@@ -1695,10 +1697,26 @@ function fmtRoundTime(ts){
     return new Date(n).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }catch(_){ return '—'; }
 }
+function roundHistoryKey(rounds){
+  const list=Array.isArray(rounds)?rounds:[];
+  if(!list.length) return 'empty';
+  // Fingerprint newest + count so new crashes replace the list while open
+  const top=list[0]||{};
+  return String(list.length)+':'+String(top.roundId)+':'+String(top.crashAt||'')+':'+String(top.crashMult||'');
+}
+function isRoundHistoryOpen(){
+  return !!($('roundHistBg') && $('roundHistBg').classList.contains('show'));
+}
 function renderRoundHistoryList(rounds){
   const el=$('roundHistList');
   if(!el) return;
   const list=Array.isArray(rounds)?rounds:[];
+  const fp=roundHistoryKey(list);
+  // Skip DOM rewrite if nothing changed (avoids flicker while polling)
+  if(fp===roundHistoryFingerprint && el.children.length && !el.querySelector('.bh-empty')){
+    return;
+  }
+  roundHistoryFingerprint=fp;
   if(!list.length){
     el.innerHTML='<div class="bh-empty">No completed rounds yet</div>';
     return;
@@ -1718,7 +1736,8 @@ function renderRoundHistoryList(rounds){
     );
   }).join('');
 }
-async function fetchRoundHistory(){
+async function fetchRoundHistory(opts){
+  const silent=!!(opts&&opts.silent);
   try{
     const r=await fetch(apiUrl('/api/round')+'?history=20&t='+Date.now(),{cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -1736,20 +1755,50 @@ async function fetchRoundHistory(){
           }).join('');
         }
       }
+      // Live-update modal if user still has History open
+      if(isRoundHistoryOpen()){
+        renderRoundHistoryList(j.rounds);
+      }
       return j.rounds;
     }
-  }catch(e){ console.warn('round history', e); }
+  }catch(e){ if(!silent) console.warn('round history', e); }
   return roundHistoryCache;
+}
+function startRoundHistoryPoll(){
+  stopRoundHistoryPoll();
+  // Poll while open so new crashes appear without closing/reopening
+  roundHistoryPollTimer=setInterval(()=>{
+    if(!isRoundHistoryOpen()){
+      stopRoundHistoryPoll();
+      return;
+    }
+    fetchRoundHistory({ silent:true }).then(rounds=>{
+      if(isRoundHistoryOpen()) renderRoundHistoryList(rounds);
+    }).catch(()=>{});
+  }, 2000);
+}
+function stopRoundHistoryPoll(){
+  if(roundHistoryPollTimer){
+    clearInterval(roundHistoryPollTimer);
+    roundHistoryPollTimer=null;
+  }
 }
 function openRoundHistory(){
   const bg=$('roundHistBg');
   if(!bg) return;
   bg.classList.add('show');
   const list=$('roundHistList');
-  if(list) list.innerHTML='<div class="bh-empty">Loading rounds…</div>';
+  if(list && !roundHistoryCache.length){
+    list.innerHTML='<div class="bh-empty">Loading rounds…</div>';
+  }else if(list && roundHistoryCache.length){
+    // Show last known list immediately, then refresh
+    renderRoundHistoryList(roundHistoryCache);
+  }
   fetchRoundHistory().then(rounds=>renderRoundHistoryList(rounds));
+  startRoundHistoryPoll();
 }
 function closeRoundHistory(){
+  stopRoundHistoryPoll();
   $('roundHistBg')?.classList.remove('show');
 }
 $('roundHistBtn')?.addEventListener('click', ()=> openRoundHistory());
@@ -2418,8 +2467,8 @@ function crash(){
       return `<span style="color:${multColor(v)};animation-delay:${idx*35}ms">${v.toFixed(2)}×</span>`;
     }).join('');
   }
-  // Refresh cached history strip (best-effort)
-  try{ fetchRoundHistory(); }catch(_){}
+  // Refresh history strip + open History panel if visible
+  try{ fetchRoundHistory({ silent:true }); }catch(_){}
   bets.forEach(b=>{if(b.state==='live'){b.state='lost';paintBet(b)}});
   const host=$('particles');if(host) host.innerHTML='';
   // HARD: always leave Flew Away after 3s even if global sync stalls
