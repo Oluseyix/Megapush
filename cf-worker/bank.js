@@ -66,6 +66,8 @@ function bankKvKey(player) {
   return 'bank:v2:' + String(player).toLowerCase();
 }
 
+const FREE_DAILY_MS = 24 * 60 * 60 * 1000;
+
 function emptyBank() {
   return {
     /** Withdrawable: deposits never staked (or stake returned before tickets). */
@@ -74,6 +76,8 @@ function emptyBank() {
     balance: 0,
     /** Fractional ticket dollars; never withdrawable as USDC */
     progressUsdc: 0,
+    /** Last free daily ticket claim (ms) */
+    lastFreeAt: null,
     usedTx: [],
     entries: {},
     history: [],
@@ -107,10 +111,12 @@ function normalizeBank(j) {
   const legacy = Number(j.balance) || 0;
   const deposited = j.deposited != null ? Number(j.deposited) : legacy;
   const d = money2(deposited);
+  const lastFreeAt = j.lastFreeAt != null ? Number(j.lastFreeAt) : null;
   return {
     deposited: d,
     balance: d,
     progressUsdc: money2(j.progressUsdc),
+    lastFreeAt: Number.isFinite(lastFreeAt) && lastFreeAt > 0 ? lastFreeAt : null,
     usedTx: Array.isArray(j.usedTx) ? j.usedTx.map((t) => String(t).toLowerCase()) : [],
     entries: j.entries && typeof j.entries === 'object' ? j.entries : {},
     history: normalizeHistory(j.history),
@@ -188,10 +194,13 @@ async function loadBank(player, env) {
 async function saveBank(player, data, env) {
   const p = String(player).toLowerCase();
   const deposited = money2(data.deposited != null ? data.deposited : data.balance);
+  const lastFreeAt =
+    data.lastFreeAt != null && Number(data.lastFreeAt) > 0 ? Number(data.lastFreeAt) : null;
   const body = {
     deposited,
     balance: deposited,
     progressUsdc: money2(data.progressUsdc),
+    lastFreeAt,
     usedTx: (data.usedTx || []).map((t) => String(t).toLowerCase()).slice(-500),
     entries: data.entries || {},
     history: normalizeHistory(data.history),
@@ -664,6 +673,20 @@ export async function consumeProgressTickets(player, freeTickets, env) {
   return { ok: true, progressUsdc: saved.progressUsdc, consumed: take };
 }
 
+function freeDailyInfo(bank, nowMs = Date.now()) {
+  const last = bank.lastFreeAt != null ? Number(bank.lastFreeAt) : 0;
+  if (!(last > 0)) {
+    return { freeDailyEligible: true, freeDailyNextAt: null, freeDailyMsLeft: 0 };
+  }
+  const nextAt = last + FREE_DAILY_MS;
+  const msLeft = Math.max(0, nextAt - nowMs);
+  return {
+    freeDailyEligible: msLeft <= 0,
+    freeDailyNextAt: msLeft > 0 ? nextAt : null,
+    freeDailyMsLeft: msLeft,
+  };
+}
+
 /** Public bank snapshot for API responses */
 export function bankPublicView(bank) {
   const deposited = money2(bank.deposited != null ? bank.deposited : bank.balance);
@@ -673,7 +696,107 @@ export function bankPublicView(bank) {
     withdrawable: deposited,
     progressUsdc: money2(bank.progressUsdc),
     progressTowardTicket: money2(bank.progressUsdc),
+    lastFreeAt: bank.lastFreeAt || null,
+    ...freeDailyInfo(bank),
   };
+}
+
+/**
+ * Claim 1 free Megapot ticket once per 24h (house-funded, recipient = player).
+ */
+export async function claimFreeDailyTicket(player, env) {
+  if (!isAddr(player)) return { ok: false, error: 'Valid player required', status: 400 };
+  const now = Date.now();
+  const bank = await loadBank(player, env);
+  const info = freeDailyInfo(bank, now);
+  if (!info.freeDailyEligible) {
+    return {
+      ok: false,
+      error: 'Free daily ticket already claimed — come back in 24 hours',
+      status: 429,
+      ...bankPublicView(bank),
+      freeDailyNextAt: info.freeDailyNextAt,
+      freeDailyMsLeft: info.freeDailyMsLeft,
+    };
+  }
+
+  const entryId = `free-daily:${player.toLowerCase()}:${Math.floor(now / FREE_DAILY_MS)}`;
+  if (bank.entries[entryId]?.status === 'free_daily') {
+    return {
+      ok: false,
+      error: 'Free daily ticket already claimed — come back in 24 hours',
+      status: 429,
+      already: true,
+      ...bankPublicView(bank),
+    };
+  }
+
+  // Reserve claim before buy (prevent double-spend); revert on failure
+  const prevFree = bank.lastFreeAt;
+  bank.lastFreeAt = now;
+  bank.entries[entryId] = { status: 'free_daily_pending', at: now, tickets: 1 };
+  await saveBank(player, bank, env);
+
+  try {
+    const { executeHouseJob } = await import('./dos/client.js');
+    const { withHouseLock, buyTicketsForPlayer } = await import('./house-tx.js');
+    let buy;
+    if (env?.TX_SEQUENCER_DO) {
+      const out = await executeHouseJob(env, {
+        type: 'cashout',
+        id: entryId,
+        payload: { recipient: player, tickets: 1, entryId, stake: 0 },
+      });
+      if (!out?.ok || !out?.result?.ok) {
+        throw new Error(out?.error || out?.result?.error || 'Ticket buy failed');
+      }
+      buy = out.result;
+    } else {
+      buy = await withHouseLock(() => buyTicketsForPlayer(env, { recipient: player, tickets: 1 }));
+    }
+
+    const bank2 = await loadBank(player, env);
+    bank2.lastFreeAt = now;
+    bank2.entries[entryId] = {
+      status: 'free_daily',
+      at: now,
+      tickets: 1,
+      txHash: buy.txHash || null,
+    };
+    pushHistory(bank2, {
+      type: 'free_daily',
+      amount: 1,
+      txHash: buy.txHash || null,
+      entryId,
+      at: now,
+    });
+    const saved = await saveBank(player, bank2, env);
+    return {
+      ok: true,
+      tickets: 1,
+      txHash: buy.txHash,
+      entryId,
+      ...bankPublicView(saved),
+      freeDailyEligible: false,
+      freeDailyNextAt: now + FREE_DAILY_MS,
+      freeDailyMsLeft: FREE_DAILY_MS,
+      history: saved.history,
+    };
+  } catch (e) {
+    // Roll back reservation
+    try {
+      const bank3 = await loadBank(player, env);
+      bank3.lastFreeAt = prevFree;
+      delete bank3.entries[entryId];
+      await saveBank(player, bank3, env);
+    } catch (_) {}
+    return {
+      ok: false,
+      error: e?.shortMessage || e?.message || 'Free ticket unavailable',
+      status: e?.statusCode || 500,
+      ...bankPublicView(await loadBank(player, env).catch(() => emptyBank())),
+    };
+  }
 }
 
 /** Mark entry status after settle/lost (stake not returned to deposited). */
@@ -733,6 +856,40 @@ export async function handleBank(request, env) {
       ...bankPublicView(bank),
       durable: !!(env?.BANK_KV),
       history: bank.history || [],
+    });
+  }
+
+  if (action === 'free_daily' || action === 'daily_free' || action === 'claim_free') {
+    const result = await claimFreeDailyTicket(player, env);
+    if (!result.ok) {
+      return json(
+        {
+          ok: false,
+          error: result.error,
+          player: player.toLowerCase(),
+          freeDailyEligible: result.freeDailyEligible,
+          freeDailyNextAt: result.freeDailyNextAt,
+          freeDailyMsLeft: result.freeDailyMsLeft,
+          deposited: result.deposited,
+          progressUsdc: result.progressUsdc,
+          balance: result.balance,
+        },
+        result.status || 400,
+      );
+    }
+    return json({
+      ok: true,
+      player: player.toLowerCase(),
+      tickets: result.tickets,
+      txHash: result.txHash,
+      entryId: result.entryId,
+      freeDailyEligible: false,
+      freeDailyNextAt: result.freeDailyNextAt,
+      freeDailyMsLeft: result.freeDailyMsLeft,
+      deposited: result.deposited,
+      progressUsdc: result.progressUsdc,
+      balance: result.balance,
+      history: result.history,
     });
   }
 
@@ -1013,5 +1170,11 @@ export async function handleBank(request, env) {
     }
   }
 
-  return json({ ok: false, error: 'Unknown action (deposit|stake|credit|withdraw|balance|history|reconcile)' }, 400);
+  return json(
+    {
+      ok: false,
+      error: 'Unknown action (deposit|stake|credit|withdraw|balance|history|reconcile|free_daily)',
+    },
+    400,
+  );
 }

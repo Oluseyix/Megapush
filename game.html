@@ -845,6 +845,21 @@ nav::-webkit-scrollbar{display:none}
 :focus-visible{outline:3px solid var(--blue);outline-offset:3px;border-radius:8px}
 button:focus:not(:focus-visible){outline:none}
 
+
+.free-daily-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  height:36px;padding:0 10px;border-radius:999px;border:1.5px solid rgba(14,111,98,.35);
+  background:linear-gradient(180deg,#E8FBF6,#D4F5EC);color:var(--teal);
+  font-family:inherit;font-size:11px;font-weight:800;letter-spacing:.2px;cursor:pointer;
+  white-space:nowrap;max-width:100%;
+}
+.free-daily-btn:hover{filter:brightness(.98)}
+.free-daily-btn:disabled{opacity:.55;cursor:not-allowed;filter:none}
+.free-daily-btn.ready{border-color:rgba(20,190,92,.45);background:linear-gradient(180deg,#ECFDF3,#D1FAE5);color:#047857}
+.free-daily-btn .fd-lab{pointer-events:none}
+@media(max-width:520px){
+  .free-daily-btn{height:32px;padding:0 8px;font-size:10px}
+}
 </style>
 </head>
 <body>
@@ -887,6 +902,9 @@ button:focus:not(:focus-visible){outline:none}
         <span class="pb-lab" id="playBalLab">Play</span>
         <span class="pb-val" id="playBal">Deposit</span>
       </span>
+    </button>
+    <button type="button" class="free-daily-btn" id="freeDailyBtn" title="1 free ticket every 24 hours" aria-label="Claim free daily ticket">
+      <span class="fd-lab" id="freeDailyLab">Free daily</span>
     </button>
     <button type="button" class="tix-chip" id="tixChip" aria-live="polite" aria-label="Open my tickets"><b id="tixBal">0</b> tix</button>
     <button type="button" class="wallet-btn" id="walletBtn" aria-label="Connect or disconnect wallet">Connect</button>
@@ -1122,29 +1140,39 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
-<!-- First-run / help modal (2 steps) -->
+<!-- First-run / help modal (FAQ) -->
 <div class="modal-bg" id="onboardBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
     <div class="onboard-panel on" data-step="0" id="onboardStep0">
       <h2 id="onboardTitle">How MegaPush works</h2>
       <p>No ticket shop. You earn lottery tickets by timing the climb.</p>
       <div class="steps">
-        <div class="step"><n>1</n><div>Buy an entry with Sepolia USDC<small>Stake from your wallet</small></div></div>
-        <div class="step"><n>2</n><div>Cash out before it flies<small>$5 @ 2× → 10 tickets · whole mult only</small></div></div>
-        <div class="step"><n>3</n><div>Tickets enter the Megapot draw<small>5 numbers + bonus · daily draw</small></div></div>
+        <div class="step"><n>1</n><div>Deposit Sepolia USDC<small>Funds go to your play balance</small></div></div>
+        <div class="step"><n>2</n><div>Stake &amp; bank before it flies<small>$10 @ 3.47× → 34 whole tickets</small></div></div>
+        <div class="step"><n>3</n><div>Tickets enter today's Megapot draw<small>Real on-chain tickets in your wallet</small></div></div>
       </div>
     </div>
     <div class="onboard-panel" data-step="1" id="onboardStep1">
+      <h2>Free daily ticket</h2>
+      <p>Once every 24 hours you can claim <b>1 free ticket</b> into today's Megapot draw — no stake required.</p>
+      <div class="steps">
+        <div class="step"><n>1</n><div>Connect your wallet<small>Base Sepolia</small></div></div>
+        <div class="step"><n>2</n><div>Tap <b>Free daily</b><small>One ticket to your wallet</small></div></div>
+        <div class="step"><n>3</n><div>Come back tomorrow<small>Resets 24 hours after each claim</small></div></div>
+      </div>
+    </div>
+    <div class="onboard-panel" data-step="2" id="onboardStep2">
       <h2>How winning works</h2>
-      <p>Your tickets are real Megapot entries in the same daily draw.</p>
+      <p>Your tickets are real Megapot entries in the same daily draw. MegaPush does not run the lottery.</p>
       <div class="steps">
         <div class="step"><n>1</n><div>About 1 in 4 tickets win something<small>Many tiers, not only jackpot</small></div></div>
         <div class="step"><n>2</n><div>Match bonus or numbers<small>Payout = minimum + premium share</small></div></div>
-        <div class="step"><n>3</n><div>Claim USDC on-chain<small>Use Claim all after the draw settles</small></div></div>
+        <div class="step"><n>3</n><div>Claim USDC on-chain<small>Same claim on megapot.io or Basescan</small></div></div>
       </div>
+      <p style="font-size:11px;color:var(--mid);margin-top:12px;line-height:1.4">MegaPush is an independent app on the Megapot protocol. It is not operated or endorsed by Megapot.</p>
     </div>
     <div class="onboard-dots" id="onboardDots" aria-hidden="true">
-      <i class="on" data-dot="0"></i><i data-dot="1"></i>
+      <i class="on" data-dot="0"></i><i data-dot="1"></i><i data-dot="2"></i>
     </div>
     <button type="button" class="go" id="onboardGo">Next</button>
   </div>
@@ -3011,9 +3039,9 @@ function storageGet(k){
 function storageSet(k,v){
   try{localStorage.setItem(k,v)}catch(e){}
 }
-/* 2-step first-run onboarding + re-open via help fab */
+/* First-run FAQ onboarding + re-open via help fab */
 let onboardStep = 0;
-const ONBOARD_STEPS = 2;
+const ONBOARD_STEPS = 3;
 
 function showOnboard(step){
   onboardStep = Math.max(0, Math.min(ONBOARD_STEPS - 1, step|0));
@@ -3060,6 +3088,58 @@ if($('helpFab')){
     showOnboard(0);
   };
 }
+
+/* Free daily ticket — 1× per 24h */
+function paintFreeDailyFromGlobal(){
+  try{
+    const fn = window.updateFreeDailyUi || window.Megapot?.updateFreeDailyUi || window.Megapot?.refreshFreeDailyUi;
+    if(typeof fn === 'function') fn({
+      freeDailyEligible: window.__mpFreeDailyEligible,
+      freeDailyNextAt: window.__mpFreeDailyNextAt,
+      freeDailyMsLeft: window.__mpFreeDailyNextAt ? Math.max(0, window.__mpFreeDailyNextAt - Date.now()) : 0,
+    });
+  }catch(_){}
+}
+if($('freeDailyBtn')){
+  $('freeDailyBtn').onclick = async ()=>{
+    const btn = $('freeDailyBtn');
+    const lab = $('freeDailyLab');
+    if(!window.Megapot){
+      alert('Still loading — try again in a second');
+      return;
+    }
+    if(!window.Megapot.account){
+      await window.Megapot.connectWallet?.();
+      if(!window.Megapot.account){ alert('Connect wallet to claim'); return; }
+    }
+    btn.disabled = true;
+    if(lab) lab.textContent = 'Claiming…';
+    try{
+      const res = await window.Megapot.claimFreeDailyTicket();
+      if(res?.ok){
+        if(lab) lab.textContent = 'Claimed!';
+        $('status') && ($('status').textContent = 'Free daily ticket added · check Tickets');
+        try{ await window.Megapot.loadUserTickets?.({ silent:true }); }catch(_){}
+        setTimeout(()=>{ try{ window.Megapot.refreshFreeDailyUi?.(); }catch(_){ paintFreeDailyFromGlobal(); } }, 800);
+      }else{
+        const err = res?.error || 'Could not claim';
+        if(lab) lab.textContent = 'Free daily';
+        if(res?.freeDailyMsLeft > 0 || res?.freeDailyNextAt){
+          try{ window.Megapot.refreshFreeDailyUi?.(res); }catch(_){}
+        }else{
+          btn.disabled = false;
+        }
+        if(!/already claimed/i.test(err)) alert(err);
+      }
+    }catch(e){
+      btn.disabled = false;
+      if(lab) lab.textContent = 'Free daily';
+      alert(e?.message || String(e));
+    }
+  };
+  setInterval(paintFreeDailyFromGlobal, 30000);
+}
+
 $('previewOk').onclick=()=>$('previewBg').classList.remove('show');
 if($('previewViewTix')){
   $('previewViewTix').onclick=()=>{
@@ -4467,6 +4547,12 @@ async function refreshPlayBalance(){
         pending: loc.pending,
       });
       setPlayBalUi(show);
+      if(j.freeDailyEligible != null){
+        window.__mpFreeDailyEligible = !!j.freeDailyEligible;
+        window.__mpFreeDailyNextAt = j.freeDailyNextAt || null;
+        try{ updateFreeDailyUi(j); }catch(_){}
+      }
+      if(j.progressUsdc != null) window.__mpProgressUsdc = Number(j.progressUsdc) || 0;
       renderBankHistory(mergeBankHistory(j.history || [], readLocalHistory(account)));
       return playBalance;
     }
@@ -4584,9 +4670,74 @@ async function bankApi(body, opts = {}){
   });
   const j = await r.json().catch(()=>({}));
   if(j && j.progressUsdc != null) window.__mpProgressUsdc = Number(j.progressUsdc)||0;
+  if(j && j.freeDailyEligible != null) window.__mpFreeDailyEligible = !!j.freeDailyEligible;
+  if(j && j.freeDailyNextAt != null) window.__mpFreeDailyNextAt = j.freeDailyNextAt;
+  try{ if(typeof updateFreeDailyUi === 'function') updateFreeDailyUi(j); }catch(_){}
   if(!opts.quiet && j && (j.balance != null || j.deposited != null)) setPlayBalUi(j.deposited != null ? j.deposited : j.balance);
   return { http: r.status, ...j };
 }
+
+async function claimFreeDailyTicket(){
+  if(!account){
+    await connectWallet({ silent: false });
+    if(!account) return { ok:false, error:'Connect wallet first' };
+  }
+  const j = await bankApi({ action: 'free_daily', player: account });
+  if(j && j.freeDailyNextAt != null) window.__mpFreeDailyNextAt = j.freeDailyNextAt;
+  if(j && j.freeDailyEligible != null) window.__mpFreeDailyEligible = !!j.freeDailyEligible;
+  try{ updateFreeDailyUi(j); }catch(_){}
+  if(j?.ok){
+    try{ await loadUserTickets({ silent: true }); }catch(_){}
+  }
+  return j;
+}
+
+function updateFreeDailyUi(info){
+  const btn = document.getElementById('freeDailyBtn');
+  const lab = document.getElementById('freeDailyLab');
+  if(!btn || !lab) return;
+  const eligible = info && info.freeDailyEligible === true;
+  const msLeft = Number(info && info.freeDailyMsLeft) || 0;
+  const nextAt = info && info.freeDailyNextAt != null ? Number(info.freeDailyNextAt) : window.__mpFreeDailyNextAt;
+  if(eligible || (info && info.ok && info.tickets)){
+    // after success eligible is false
+  }
+  const can = info ? !!info.freeDailyEligible : (window.__mpFreeDailyEligible !== false && !nextAt);
+  if(info && info.ok === false && info.freeDailyEligible === false){
+    btn.disabled = true;
+    btn.classList.remove('ready');
+    if(msLeft > 0){
+      const h = Math.floor(msLeft / 3600000);
+      const m = Math.floor((msLeft % 3600000) / 60000);
+      lab.textContent = h > 0 ? ('Free in '+h+'h') : ('Free in '+m+'m');
+    }else if(nextAt && nextAt > Date.now()){
+      const left = nextAt - Date.now();
+      const h = Math.floor(left / 3600000);
+      const m = Math.floor((left % 3600000) / 60000);
+      lab.textContent = h > 0 ? ('Free in '+h+'h') : ('Free in '+Math.max(1,m)+'m');
+    }else{
+      lab.textContent = 'Free daily';
+    }
+    return;
+  }
+  if(info && info.freeDailyEligible === false && (msLeft > 0 || (nextAt && nextAt > Date.now()))){
+    btn.disabled = true;
+    btn.classList.remove('ready');
+    const left = msLeft > 0 ? msLeft : (nextAt - Date.now());
+    const h = Math.floor(left / 3600000);
+    const m = Math.floor((left % 3600000) / 60000);
+    lab.textContent = h > 0 ? ('Free in '+h+'h') : ('Free in '+Math.max(1,m)+'m');
+    return;
+  }
+  btn.disabled = false;
+  btn.classList.add('ready');
+  lab.textContent = 'Free daily';
+}
+window.updateFreeDailyUi = updateFreeDailyUi;
+window.claimFreeDailyTicket = claimFreeDailyTicket;
+
+
+
 
 /** Deposit USDC to house once → credit play balance INSTANTLY (optimistic + durable server). */
 async function depositToPlayBalance(amountUsd){
@@ -5391,6 +5542,9 @@ window.Megapot = {
   reconcileDepositsOnChain,
   refundStake,
   houseBuyTickets,
+  claimFreeDailyTicket,
+  updateFreeDailyUi,
+  refreshFreeDailyUi: updateFreeDailyUi,
   claimWinnings,
   refreshUsdcBalance,
   ensureTreasuryConfigured,
