@@ -1,73 +1,51 @@
 # Deploy MegaPush on Cloudflare Pages
 
-Works around Vercel deploy rate limits. Same app: static files in `public/` + API under `/api/*`.
-
-## 1. Create the project
-
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages**
-2. **Create** → **Pages** → **Connect to Git**
-3. Select **Oluseyix/Megapush** (or your fork)
-4. Build settings:
+## Critical settings (this was the /api/health → landing bug)
 
 | Setting | Value |
 |--------|--------|
-| Framework preset | **None** |
-| Build command | *(leave empty)* or `echo ok` |
-| Build output directory | `public` |
-| Root directory | `/` (repo root) |
+| **Root directory** | **empty / repository root** (NOT `public`) |
+| **Build command** | empty or `echo ok` |
+| **Build output directory** | `public` |
+| **Compatibility flags** | `nodejs_compat` (Settings → Functions) |
 
-5. **Save and Deploy**
+If Root directory is set to `public`, Functions never deploy and `/api/*` falls through to the landing HTML.
 
-## 2. Secrets (required for cash-out / refund)
+## Connect Git
+
+1. [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
+2. Select **Oluseyix/Megapush**
+3. Use the settings table above
+4. Deploy
+
+## Secrets
 
 **Settings → Environment variables** (Production + Preview):
 
-| Name | Required | Notes |
-|------|----------|--------|
-| `HOUSE_PRIVATE_KEY` | **Yes** | Same key as Vercel — wallet `0x804BEb…` |
-| `ROUND_SECRET` | Optional | Global mult seed |
-| `RPC_URL` | Optional | Default `https://sepolia.base.org` |
+| Name | Type | Required |
+|------|------|----------|
+| `HOUSE_PRIVATE_KEY` | **Secret** | Yes |
+| `ROUND_SECRET` | Secret | Optional |
+| `RPC_URL` | Text | Optional |
 
-Then **Retry deployment** (env vars apply after redeploy).
+Then **Retry deployment**.
 
-## 3. Verify
-
-```text
-https://YOUR-PROJECT.pages.dev/api/health
-```
-
-Expect:
-
-```json
-{ "ok": true, "hasHousePrivateKey": true, "treasuryMatch": true }
-```
-
-Game:
-
-```text
-https://YOUR-PROJECT.pages.dev/game.html
-```
-
-Cash-out still calls `/api/cashout` (relative) — works on Pages the same as Vercel.
-
-## 4. Custom domain (optional)
-
-Pages → **Custom domains** → add `play.yourdomain.com` (or move off Vercel when ready).
-
-## 5. CLI deploy (optional)
+## Verify
 
 ```bash
-npm i -g wrangler
-wrangler login
-# set secret
-echo "YOUR_KEY" | wrangler pages secret put HOUSE_PRIVATE_KEY --project-name megapush
-wrangler pages deploy public --project-name megapush
+curl -sS https://megapush.pages.dev/api/health
 ```
 
-Functions in `functions/api/*` are picked up automatically on Git deploys.
+Must return JSON, e.g.:
 
-## How it works
+```json
+{ "ok": true, "platform": "cloudflare-pages", "hasHousePrivateKey": true }
+```
 
-- **Static:** `public/` (landing + `game.html`)
-- **API:** `functions/api/{cashout,refund,health,round}.js` → wraps existing `api/*.js` (Vercel handlers)
-- **Compatibility:** `nodejs_compat` so `viem` + house txs run on Workers
+If you still get the **landing HTML** page:
+
+1. Root directory is wrong (must be repo root)
+2. Redeploy after fixing
+3. Confirm Functions show under the deployment (not “0 functions”)
+
+Game: `https://megapush.pages.dev/game.html`
