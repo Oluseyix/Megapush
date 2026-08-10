@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-withdraw">
+<meta name="megapush-build" content="20260810-depositui">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -540,13 +540,103 @@ nav::-webkit-scrollbar{display:none}
 .mission-pop .mission-prog{height:6px;background:var(--wash);border-radius:4px;overflow:hidden;margin-bottom:8px}
 .mission-pop .mission-prog i{display:block;height:100%;background:var(--teal-2);border-radius:4px;transition:width .4s}
 .mission-pop .mission-reward{font-size:12px;font-weight:800;color:var(--teal)}
+/* Header deposit / balance CTA */
 .play-bal-btn{
-  cursor:pointer;font-family:inherit;border:1px solid var(--line);
+  display:inline-flex;align-items:center;gap:6px;
+  min-height:36px;padding:7px 12px;border-radius:10px;
+  border:0;cursor:pointer;font-family:inherit;
+  background:var(--teal);color:#fff;
+  box-shadow:0 2px 0 rgba(11,111,98,.35);
   -webkit-tap-highlight-color:transparent;
+  transition:transform .12s,background .15s,box-shadow .15s;
 }
-.play-bal-btn:hover,.play-bal-btn:focus-visible{border-color:var(--teal-2);outline:none}
-.play-bal-btn:active{transform:scale(.97)}
-.play-bal-btn.has-bal{background:var(--wash);color:var(--teal);font-weight:800}
+.play-bal-btn:hover,.play-bal-btn:focus-visible{
+  background:var(--teal-2);outline:none;
+}
+.play-bal-btn:active{transform:scale(.97);box-shadow:none}
+.play-bal-btn .pb-ico{
+  width:16px;height:16px;border-radius:5px;background:rgba(255,255,255,.22);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:900;line-height:1;flex:none;
+}
+.play-bal-btn .pb-main{
+  display:flex;flex-direction:column;align-items:flex-start;line-height:1.05;gap:1px;
+}
+.play-bal-btn .pb-lab{
+  font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  opacity:.85;
+}
+.play-bal-btn .pb-val{
+  font-family:'Archivo Black',sans-serif;font-size:13px;font-weight:400;
+  letter-spacing:-.2px;
+}
+.play-bal-btn.has-bal{
+  background:#fff;color:var(--ink);border:1px solid var(--line);
+  box-shadow:none;
+}
+.play-bal-btn.has-bal .pb-ico{background:rgba(14,111,98,.12);color:var(--teal)}
+.play-bal-btn.has-bal .pb-lab{color:var(--mid);opacity:1}
+.play-bal-btn.has-bal .pb-val{color:var(--teal)}
+.play-bal-btn.busy{opacity:.7;pointer-events:none}
+
+/* Bank sheet */
+.bank-hero{
+  text-align:center;padding:16px 14px;border-radius:14px;
+  background:linear-gradient(145deg,#0E6F62 0%,#17A18B 55%,#1E2657 140%);
+  color:#fff;margin:0 0 14px;
+}
+.bank-hero .bh-lab{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;opacity:.8}
+.bank-hero .bh-val{
+  font-family:'Archivo Black',sans-serif;font-size:36px;line-height:1.1;
+  margin:6px 0 2px;letter-spacing:-1px;
+}
+.bank-hero .bh-hint{font-size:12px;font-weight:600;opacity:.85}
+.bank-mode{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px;
+  background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:4px;
+  margin-bottom:14px;
+}
+.bank-mode button{
+  border:0;background:transparent;border-radius:9px;padding:10px 8px;
+  font-family:inherit;font-size:13px;font-weight:800;color:var(--mid);cursor:pointer;
+}
+.bank-mode button.on{
+  background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(15,22,38,.08);
+}
+.bank-amt-wrap{
+  display:flex;align-items:center;gap:0;
+  border:1px solid var(--line);border-radius:12px;background:var(--wash);
+  overflow:hidden;margin-bottom:12px;
+}
+.bank-amt-wrap .cur{
+  padding:0 4px 0 14px;font-family:'Archivo Black',sans-serif;font-size:18px;color:var(--mid);
+}
+.bank-amt-wrap input{
+  flex:1;border:0;background:transparent;padding:14px 10px 14px 4px;
+  font-family:'Archivo Black',sans-serif;font-size:22px;color:var(--ink);
+  min-width:0;outline:none;
+}
+.bank-amt-wrap .bank-max{
+  margin:6px;padding:8px 12px;border:0;border-radius:8px;
+  background:var(--ink);color:#fff;font-size:11px;font-weight:800;
+  font-family:inherit;cursor:pointer;flex:none;
+}
+.bank-amt-wrap .bank-max[hidden]{display:none!important}
+.bank-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.bank-pills .pill{
+  flex:1;min-width:56px;padding:10px 8px;border-radius:10px;
+  border:1px solid var(--line);background:#fff;font-weight:800;font-size:13px;
+  font-family:inherit;cursor:pointer;color:var(--ink);
+}
+.bank-pills .pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.bank-status{
+  min-height:18px;font-size:12.5px;font-weight:700;color:var(--mid);
+  text-align:center;margin:0 0 10px;
+}
+.bank-status.err{color:var(--red)}
+.bank-status.ok{color:var(--green)}
+.bank-actions{display:flex;flex-direction:column;gap:8px}
+.bank-actions .go:disabled{opacity:.55;cursor:not-allowed}
 .wallet-btn{
   background:var(--ink);color:#fff;border-radius:10px;padding:7px 11px;
   font-size:11.5px;font-weight:800;min-height:36px;white-space:nowrap;
@@ -610,6 +700,10 @@ nav::-webkit-scrollbar{display:none}
   nav{grid-area:nav;width:100%;justify-content:flex-start;gap:3px}
   .tab{flex:1;padding:8px 6px;font-size:12px;min-height:38px;text-align:center;justify-content:center}
   .right{grid-area:right;gap:5px}
+  .play-bal-btn{min-height:32px;padding:5px 9px;gap:5px}
+  .play-bal-btn .pb-lab{font-size:8px}
+  .play-bal-btn .pb-val{font-size:11.5px}
+  .play-bal-btn .pb-ico{width:14px;height:14px;font-size:10px}
   .bal,.tix-chip{min-height:32px;display:inline-flex;align-items:center;font-size:11px;padding:5px 8px}
   .wrap{padding:8px 10px calc(28px + var(--safe-b))}
   .bet{padding:8px;border-radius:12px;border-width:1.5px}
@@ -696,8 +790,12 @@ button:focus:not(:focus-visible){outline:none}
     </nav>
   </div>
   <div class="right">
-    <button type="button" class="bal play-bal-btn" id="playBalChip" title="Deposit USDC once, then stake without wallet popups" aria-label="Deposit or play balance">
-      <span id="playBal">Deposit</span>
+    <button type="button" class="play-bal-btn" id="playBalChip" title="Deposit to play" aria-label="Deposit or play balance">
+      <span class="pb-ico" aria-hidden="true">+</span>
+      <span class="pb-main">
+        <span class="pb-lab" id="playBalLab">Play</span>
+        <span class="pb-val" id="playBal">Deposit</span>
+      </span>
     </button>
     <button type="button" class="tix-chip" id="tixChip" aria-live="polite" aria-label="Open my tickets"><b id="tixBal">0</b> tix</button>
     <button type="button" class="wallet-btn" id="walletBtn" aria-label="Connect or disconnect wallet">Connect</button>
@@ -870,27 +968,42 @@ button:focus:not(:focus-visible){outline:none}
 
 
 
-<!-- Play balance: deposit / withdraw stake capital (not lottery winnings) -->
+<!-- Play balance sheet -->
 <div class="modal-bg" id="bankSheetBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
     <h2 id="bankSheetTitle">Play balance</h2>
-    <p id="bankSheetSub">Stake capital for the climb. Lottery wins are claimed separately under Winnings / Tickets.</p>
-    <div class="receipt-bits" style="margin-bottom:12px">
-      <div class="rb-row"><span>Balance</span><b id="bankSheetBal">Empty</b></div>
+    <p id="bankSheetSub">Fund once, then stake without wallet popups. Lottery prizes are on Winnings.</p>
+
+    <div class="bank-hero">
+      <div class="bh-lab">Available to stake</div>
+      <div class="bh-val" id="bankSheetBal">$0</div>
+      <div class="bh-hint" id="bankHeroHint">Deposit Sepolia USDC to start</div>
     </div>
-    <div class="pills" id="bankPills" style="margin-bottom:12px">
+
+    <div class="bank-mode" role="tablist" aria-label="Deposit or withdraw">
+      <button type="button" class="on" id="bankModeDeposit" data-mode="deposit" role="tab" aria-selected="true">Deposit</button>
+      <button type="button" id="bankModeWithdraw" data-mode="withdraw" role="tab" aria-selected="false">Withdraw</button>
+    </div>
+
+    <div class="bank-pills" id="bankPills">
       <button type="button" class="pill" data-bank="5">$5</button>
       <button type="button" class="pill" data-bank="10">$10</button>
       <button type="button" class="pill on" data-bank="25">$25</button>
       <button type="button" class="pill" data-bank="50">$50</button>
     </div>
-    <div class="amt" style="margin-bottom:12px">
-      <input id="bankAmt" value="25" inputmode="decimal" placeholder="Amount" aria-label="Amount" style="width:100%;text-align:center;font-weight:800;font-size:18px;padding:12px;border:1px solid var(--line);border-radius:12px">
+
+    <div class="bank-amt-wrap">
+      <span class="cur">$</span>
+      <input id="bankAmt" value="25" inputmode="decimal" placeholder="0" aria-label="Amount">
+      <button type="button" class="bank-max" id="bankMaxBtn" hidden>Max</button>
     </div>
-    <button type="button" class="go" id="bankDepositBtn">Deposit</button>
-    <button type="button" class="go secondary" id="bankWithdrawBtn" style="margin-top:8px">Withdraw to wallet</button>
-    <p class="ws-hint" style="margin-top:10px">Deposit = one wallet confirm, then free stakes. Withdraw = USDC back to your wallet. <b>Winnings</b> tab is for lottery prize claims, not this balance.</p>
-    <button type="button" class="go secondary" id="bankSheetClose" style="margin-top:10px">Close</button>
+
+    <div class="bank-status" id="bankStatus" role="status"></div>
+
+    <div class="bank-actions">
+      <button type="button" class="go" id="bankPrimaryBtn">Deposit USDC</button>
+      <button type="button" class="go secondary" id="bankSheetClose">Close</button>
+    </div>
   </div>
 </div>
 
@@ -2316,11 +2429,8 @@ document.addEventListener('click',e=>{
           paintBet(b);
           $('status').textContent = 'Deposit play balance first · tap Deposit';
           // Open deposit sheet
-          try{
-            const chip = document.getElementById('playBalChip');
-            if(chip) chip.click();
-          }catch(_){}
-          alert('Deposit USDC to your play balance first (header → Deposit). Then stake without wallet popups.');
+          try{ window.openBankSheet?.('deposit'); }catch(_){}
+          // no alert — sheet is the CTA
           return;
         }
         if(!res?.ok){
@@ -3019,33 +3129,101 @@ async function connectWallet(opts = {}){
 }
 
 
+function fmtPlayUsd(n){
+  const v = Math.max(0, Number(n) || 0);
+  if(v >= 1000) return '$' + v.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if(Math.abs(v - Math.round(v)) < 1e-9) return '$' + String(Math.round(v));
+  return '$' + v.toFixed(2);
+}
+
 function setPlayBalUi(n){
   playBalance = Math.max(0, Math.round((Number(n) || 0) * 100) / 100);
   const el = $('playBal');
+  const lab = $('playBalLab');
   const chip = $('playBalChip');
+  const ico = chip?.querySelector('.pb-ico');
   if(el){
     if(playBalance > 0){
-      el.textContent = '$' + (playBalance % 1 === 0 ? String(playBalance) : playBalance.toFixed(2));
+      el.textContent = fmtPlayUsd(playBalance);
+      if(lab) lab.textContent = 'Balance';
+      if(ico) ico.textContent = '$';
       chip?.classList.add('has-bal');
-      if(chip) chip.title = 'Play balance · tap to deposit more';
+      if(chip) chip.title = 'Play balance · tap to deposit or withdraw';
     }else{
       el.textContent = 'Deposit';
+      if(lab) lab.textContent = 'Play';
+      if(ico) ico.textContent = '+';
       chip?.classList.remove('has-bal');
-      if(chip) chip.title = 'Deposit USDC once, then stake without wallet popups';
+      if(chip) chip.title = 'Deposit USDC to stake without popups';
     }
   }
   const el2 = $('bankSheetBal');
-  if(el2){
-    el2.textContent = playBalance > 0
-      ? ('$' + (playBalance % 1 === 0 ? String(playBalance) : playBalance.toFixed(2)))
-      : 'Empty · deposit to play';
+  if(el2) el2.textContent = fmtPlayUsd(playBalance);
+  const hint = $('bankHeroHint');
+  if(hint){
+    hint.textContent = playBalance > 0
+      ? 'Ready to stake · no wallet popup per round'
+      : 'Deposit Sepolia USDC to start';
   }
-  const wbtn = $('bankWithdrawBtn');
-  if(wbtn){
-    wbtn.disabled = !(playBalance > 0);
-    wbtn.style.opacity = playBalance > 0 ? '1' : '.5';
+  // Withdraw mode: disable primary if empty
+  if(bankSheetMode === 'withdraw'){
+    const p = $('bankPrimaryBtn');
+    if(p) p.disabled = !(playBalance > 0);
   }
 }
+
+let bankSheetMode = 'deposit';
+
+function setBankStatus(msg, kind){
+  const el = $('bankStatus');
+  if(!el) return;
+  el.textContent = msg || '';
+  el.classList.remove('err','ok');
+  if(kind) el.classList.add(kind);
+}
+
+function setBankMode(mode){
+  bankSheetMode = mode === 'withdraw' ? 'withdraw' : 'deposit';
+  const dep = $('bankModeDeposit');
+  const wit = $('bankModeWithdraw');
+  dep?.classList.toggle('on', bankSheetMode === 'deposit');
+  wit?.classList.toggle('on', bankSheetMode === 'withdraw');
+  if(dep) dep.setAttribute('aria-selected', bankSheetMode === 'deposit' ? 'true' : 'false');
+  if(wit) wit.setAttribute('aria-selected', bankSheetMode === 'withdraw' ? 'true' : 'false');
+  const maxBtn = $('bankMaxBtn');
+  if(maxBtn) maxBtn.hidden = bankSheetMode !== 'withdraw';
+  const primary = $('bankPrimaryBtn');
+  if(primary){
+    primary.textContent = bankSheetMode === 'withdraw' ? 'Withdraw to wallet' : 'Deposit USDC';
+    primary.disabled = bankSheetMode === 'withdraw' && !(playBalance > 0);
+  }
+  if(bankSheetMode === 'withdraw' && playBalance > 0){
+    if($('bankAmt')) $('bankAmt').value = String(Math.floor(playBalance) || playBalance);
+    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
+  }else if(bankSheetMode === 'deposit'){
+    if($('bankAmt') && (!Number($('bankAmt').value) || Number($('bankAmt').value) > playBalance + 1e9)){
+      // keep amount or default
+      if(!Number($('bankAmt').value)) $('bankAmt').value = '25';
+    }
+  }
+  setBankStatus('');
+}
+
+function openBankSheet(mode){
+  setBankMode(mode || 'deposit');
+  if(bankSheetMode === 'deposit' && $('bankAmt') && !Number($('bankAmt').value)){
+    $('bankAmt').value = '25';
+  }
+  setPlayBalUi(playBalance);
+  setBankStatus('');
+  $('bankSheetBg')?.classList.add('show');
+  refreshPlayBalance().then(() => setPlayBalUi(playBalance));
+  // focus amount after open
+  setTimeout(() => { try{ $('bankAmt')?.focus(); $('bankAmt')?.select?.(); }catch(_){} }, 80);
+}
+window.openBankSheet = openBankSheet;
+window.setBankMode = setBankMode;
+
 
 async function refreshPlayBalance(){
   if(!account){ setPlayBalUi(0); return 0; }
@@ -3593,76 +3771,105 @@ window.__megapushWalletReady = true;
 
 
 // Play balance sheet
-function openBankSheet(){
-  if($('bankAmt') && !$('bankAmt').value) $('bankAmt').value = '25';
-  setPlayBalUi(playBalance);
-  $('bankSheetBg')?.classList.add('show');
-  refreshPlayBalance();
-}
 $('playBalChip')?.addEventListener('click', () => {
-  if(!window.Megapot?.account){ onWalletBtnClick(); return; }
-  openBankSheet();
+  openBankSheet(playBalance > 0 ? 'deposit' : 'deposit');
 });
 $('bankSheetClose')?.addEventListener('click', () => $('bankSheetBg')?.classList.remove('show'));
 $('bankSheetBg')?.addEventListener('click', (e) => {
   if(e.target === $('bankSheetBg')) $('bankSheetBg')?.classList.remove('show');
+});
+$('bankModeDeposit')?.addEventListener('click', () => setBankMode('deposit'));
+$('bankModeWithdraw')?.addEventListener('click', () => setBankMode('withdraw'));
+$('bankMaxBtn')?.addEventListener('click', () => {
+  if($('bankAmt')) $('bankAmt').value = String(Math.max(0, Math.floor(playBalance)));
+  document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
 });
 document.querySelectorAll('#bankPills .pill').forEach(p => {
   p.addEventListener('click', () => {
     document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
     p.classList.add('on');
     if($('bankAmt')) $('bankAmt').value = p.getAttribute('data-bank') || '25';
+    setBankStatus('');
   });
 });
-$('bankDepositBtn')?.addEventListener('click', async () => {
-  const btn = $('bankDepositBtn');
-  const amt = Math.floor(Number($('bankAmt')?.value) || 0);
-  if(!(amt > 0)){ alert('Enter a deposit amount'); return; }
-  if(btn){ btn.disabled = true; btn.textContent = 'Confirm in wallet…'; }
-  try{
-    const res = await depositToPlayBalance(amt);
-    if(res?.ok){
-      if(btn) btn.textContent = 'Deposited · $' + (res.balance ?? playBalance);
-      if($('status')) $('status').textContent = 'Balance $' + playBalance + ' · stake without popups';
-      setTimeout(() => {
-        if(btn){ btn.disabled=false; btn.textContent='Deposit'; }
-      }, 900);
-    }else{
-      alert(res?.error || 'Deposit failed');
-      if(btn){ btn.disabled = false; btn.textContent = 'Deposit'; }
-    }
-  }catch(e){
-    alert(e?.message || String(e));
-    if(btn){ btn.disabled = false; btn.textContent = 'Deposit'; }
-  }
+$('bankAmt')?.addEventListener('input', () => {
+  document.querySelectorAll('#bankPills .pill').forEach(x => {
+    x.classList.toggle('on', String(x.getAttribute('data-bank')) === String(Math.floor(Number($('bankAmt')?.value)||0)));
+  });
 });
-$('bankWithdrawBtn')?.addEventListener('click', async () => {
-  const btn = $('bankWithdrawBtn');
-  if(playBalance <= 0){
-    alert('Nothing to withdraw — deposit first, or your balance is empty.');
+
+async function runBankPrimary(){
+  const btn = $('bankPrimaryBtn');
+  const chip = $('playBalChip');
+  let amt = Math.floor(Number($('bankAmt')?.value) || 0);
+
+  if(bankSheetMode === 'deposit'){
+    if(!(amt > 0)){ setBankStatus('Enter an amount to deposit', 'err'); return; }
+    if(!account){
+      setBankStatus('Connecting wallet…');
+      await connectWallet({ silent: false });
+      if(!account){ setBankStatus('Connect a wallet to deposit', 'err'); return; }
+    }
+    if(btn){ btn.disabled = true; btn.textContent = 'Confirm in wallet…'; }
+    chip?.classList.add('busy');
+    setBankStatus('Approve the USDC transfer in your wallet…');
+    try{
+      const res = await depositToPlayBalance(amt);
+      if(res?.ok){
+        setPlayBalUi(res.balance ?? playBalance);
+        setBankStatus('Deposited ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance), 'ok');
+        if($('status')) $('status').textContent = 'Play balance ' + fmtPlayUsd(playBalance) + ' · stake with no popups';
+        if(btn) btn.textContent = 'Deposited';
+        setTimeout(() => {
+          if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
+          chip?.classList.remove('busy');
+        }, 1000);
+      }else{
+        setBankStatus(res?.error || 'Deposit failed', 'err');
+        if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
+        chip?.classList.remove('busy');
+      }
+    }catch(e){
+      setBankStatus(e?.shortMessage || e?.message || String(e), 'err');
+      if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
+      chip?.classList.remove('busy');
+    }
     return;
   }
-  let amt = Math.floor(Number($('bankAmt')?.value) || 0);
+
+  // withdraw
+  if(!(playBalance > 0)){ setBankStatus('Nothing to withdraw yet', 'err'); return; }
   if(!(amt > 0) || amt > playBalance) amt = Math.floor(playBalance);
-  if(!confirm('Withdraw $' + amt + ' USDC to your wallet?')) return;
+  if(!(amt > 0)){ setBankStatus('Enter a withdraw amount', 'err'); return; }
+  if(!account){
+    await connectWallet({ silent: false });
+    if(!account){ setBankStatus('Connect wallet first', 'err'); return; }
+  }
   if(btn){ btn.disabled = true; btn.textContent = 'Withdrawing…'; }
+  setBankStatus('Sending USDC to your wallet…');
   try{
     const res = await withdrawFromPlayBalance(amt);
     if(res?.ok){
-      if(btn) btn.textContent = 'Sent · $' + amt;
-      if($('status')) $('status').textContent = 'Withdrew $' + amt + ' to wallet · balance $' + playBalance;
+      setPlayBalUi(res.balance ?? playBalance);
+      setBankStatus('Sent ' + fmtPlayUsd(amt) + ' to wallet', 'ok');
+      if($('status')) $('status').textContent = 'Withdrew ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance);
+      if(btn) btn.textContent = 'Sent';
       setTimeout(() => {
-        if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
-      }, 1200);
+        setBankMode('withdraw');
+        if(btn){ btn.disabled = !(playBalance > 0); btn.textContent = 'Withdraw to wallet'; }
+      }, 1000);
     }else{
-      alert(res?.error || 'Withdraw failed');
+      setBankStatus(res?.error || 'Withdraw failed', 'err');
       if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
     }
   }catch(e){
-    alert(e?.message || String(e));
+    setBankStatus(e?.message || String(e), 'err');
     if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
   }
-});
+}
+
+$('bankPrimaryBtn')?.addEventListener('click', () => { runBankPrimary(); });
+
 
 const claimBtn = $('claimAll');
 if(claimBtn){
