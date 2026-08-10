@@ -165,6 +165,28 @@ async function creditFromDepositTx(env, player, txHash) {
   return { ok: true, balance: saved.balance, credited, already: false };
 }
 
+/** Credit play balance (used by cashout/refund paths — never send USDC to wallet). */
+export async function creditPlayBank(player, stakeUsd, entryId) {
+  if (!isAddr(player)) return { ok: false, error: 'bad player' };
+  const stake = Math.floor(Number(stakeUsd) || 0);
+  if (!(stake > 0)) return { ok: false, error: 'bad stake' };
+  const bank = await loadBank(player);
+  if (entryId && bank.entries[entryId]?.status === 'refunded') {
+    return { ok: true, already: true, balance: bank.balance, toBank: true };
+  }
+  bank.balance = Math.round((bank.balance + stake) * 100) / 100;
+  if (entryId) {
+    bank.entries[entryId] = {
+      ...(bank.entries[entryId] || {}),
+      stake,
+      status: 'refunded',
+      at: Date.now(),
+    };
+  }
+  const saved = await saveBank(player, bank);
+  return { ok: true, balance: saved.balance, credited: stake, toBank: true };
+}
+
 export async function handleBank(request, env) {
   const url = new URL(request.url);
 

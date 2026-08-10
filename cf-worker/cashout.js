@@ -381,12 +381,15 @@ export async function handleCashout(request, env) {
     return json(result, 200);
   } catch (e) {
     console.error('cashout error', e?.shortMessage || e?.message || e);
-    let refundTxHash = null;
+    // Refund to play bank only — never transfer USDC back to the wallet
+    let refundToBank = null;
     if (Number.isFinite(stake) && stake > 0 && isAddr(recipient)) {
       try {
-        const clients = makeClients(env);
-        refundTxHash = await withHouseLock(() => tryRefundStake(clients, recipient, stake));
-      } catch (_) {}
+        const { creditPlayBank } = await import('./bank.js');
+        refundToBank = await creditPlayBank(recipient, stake, entryId);
+      } catch (re) {
+        console.error('bank refund failed', re?.message || re);
+      }
     }
     return json(
       {
@@ -396,7 +399,8 @@ export async function handleCashout(request, env) {
         recipient,
         tickets,
         stake: Number.isFinite(stake) ? stake : undefined,
-        refundTxHash: refundTxHash || undefined,
+        refundToBank: refundToBank?.ok ? true : false,
+        playBalance: refundToBank?.balance,
       },
       e?.statusCode || 500,
     );
