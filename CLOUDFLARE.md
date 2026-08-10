@@ -1,51 +1,60 @@
-# Deploy MegaPush on Cloudflare Pages
+# Cloudflare Pages — MegaPush
 
-## Critical settings (this was the /api/health → landing bug)
+## Why `/api/health` showed the landing page
 
-| Setting | Value |
+That HTML is `index.html`. It means **Functions did not run** — only static files were deployed.
+
+Usual causes:
+
+1. **Root directory = `public`** → `functions/` is ignored  
+2. **Deployed only the `public` folder** (drag-drop / wrong path) without `functions/`  
+3. **No redeploy** after adding secrets / code  
+
+## Correct dashboard settings
+
+**Workers & Pages → megapush → Settings → Builds and deployments:**
+
+| Field | Value |
 |--------|--------|
-| **Root directory** | **empty / repository root** (NOT `public`) |
-| **Build command** | empty or `echo ok` |
+| Production branch | `main` |
+| **Root directory** | *(leave blank)* = **repo root** |
+| **Build command** | `npm install` |
 | **Build output directory** | `public` |
-| **Compatibility flags** | `nodejs_compat` (Settings → Functions) |
 
-If Root directory is set to `public`, Functions never deploy and `/api/*` falls through to the landing HTML.
+**Settings → Functions:**
 
-## Connect Git
+- Compatibility flags: **`nodejs_compat`**
 
-1. [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
-2. Select **Oluseyix/Megapush**
-3. Use the settings table above
-4. Deploy
+**Settings → Environment variables** (Production):
 
-## Secrets
+| Name | Type |
+|------|------|
+| `HOUSE_PRIVATE_KEY` | **Encrypt / Secret** |
 
-**Settings → Environment variables** (Production + Preview):
+Then **Deployments → ⋯ → Retry deployment**.
 
-| Name | Type | Required |
-|------|------|----------|
-| `HOUSE_PRIVATE_KEY` | **Secret** | Yes |
-| `ROUND_SECRET` | Secret | Optional |
-| `RPC_URL` | Text | Optional |
-
-Then **Retry deployment**.
-
-## Verify
+## Correct CLI deploy (from repo root)
 
 ```bash
+cd MegaPush   # must contain both public/ AND functions/
+npm install
+npx wrangler pages deploy public --project-name megapush
+```
+
+Do **not** `cd public` before deploy.
+
+## Verify (must be JSON, not HTML)
+
+```bash
+curl -sS https://megapush.pages.dev/api/ping
+# {"ok":true,"platform":"cloudflare-pages","route":"/api/ping",...}
+
 curl -sS https://megapush.pages.dev/api/health
+# {"ok":true,"hasHousePrivateKey":true,"platform":"cloudflare-pages",...}
 ```
 
-Must return JSON, e.g.:
+If `curl` still returns `<!DOCTYPE html>`, Functions are still not deployed — fix Root directory and redeploy.
 
-```json
-{ "ok": true, "platform": "cloudflare-pages", "hasHousePrivateKey": true }
-```
+## Game URL
 
-If you still get the **landing HTML** page:
-
-1. Root directory is wrong (must be repo root)
-2. Redeploy after fixing
-3. Confirm Functions show under the deployment (not “0 functions”)
-
-Game: `https://megapush.pages.dev/game.html`
+https://megapush.pages.dev/game.html

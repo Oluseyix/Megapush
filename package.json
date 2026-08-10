@@ -5,8 +5,9 @@
     "node": "20.x"
   },
   "scripts": {
-    "cf:deploy": "wrangler pages deploy public --project-name megapush",
-    "cf:dev": "wrangler pages dev public --compatibility-flags nodejs_compat"
+    "build": "node -e \"console.log('MegaPush static + functions ready')\"",
+    "cf:deploy": "npm install && npx wrangler pages deploy public --project-name megapush --commit-dirty=true",
+    "cf:dev": "npx wrangler pages dev public --compatibility-flags=nodejs_compat"
   },
   "dependencies": {
     "viem": "^2.21.54"
