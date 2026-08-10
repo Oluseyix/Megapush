@@ -74,9 +74,14 @@ function emptyBank() {
     deposited: 0,
     /** Legacy alias of deposited for older clients */
     balance: 0,
+    /**
+     * Free/bonus stake credit (e.g. free daily). Spendable on stakes only —
+     * never withdrawable as USDC.
+     */
+    bonusUsdc: 0,
     /** Fractional ticket dollars; never withdrawable as USDC */
     progressUsdc: 0,
-    /** Last free daily ticket claim (ms) */
+    /** Last free daily claim (ms) */
     lastFreeAt: null,
     usedTx: [],
     entries: {},
@@ -112,11 +117,16 @@ function normalizeBank(j) {
   const deposited = j.deposited != null ? Number(j.deposited) : legacy;
   const d = money2(deposited);
   const lastFreeAt = j.lastFreeAt != null ? Number(j.lastFreeAt) : null;
+  const bonus = money2(j.bonusUsdc);
+  const spendable = money2(d + bonus);
   return {
     deposited: d,
-    balance: d,
+    bonusUsdc: bonus,
+    /** Spendable for stakes = deposited + bonus (not all withdrawable) */
+    balance: spendable,
     progressUsdc: money2(j.progressUsdc),
     lastFreeAt: Number.isFinite(lastFreeAt) && lastFreeAt > 0 ? lastFreeAt : null,
+    freeDailyMigrated: !!j.freeDailyMigrated,
     usedTx: Array.isArray(j.usedTx) ? j.usedTx.map((t) => String(t).toLowerCase()) : [],
     entries: j.entries && typeof j.entries === 'object' ? j.entries : {},
     history: normalizeHistory(j.history),
@@ -125,9 +135,31 @@ function normalizeBank(j) {
 
 function syncDeposited(bank) {
   bank.deposited = money2(bank.deposited);
-  bank.balance = bank.deposited;
+  bank.bonusUsdc = money2(bank.bonusUsdc);
   bank.progressUsdc = money2(bank.progressUsdc);
+  // Client "balance" = what they can stake
+  bank.balance = money2(bank.deposited + bank.bonusUsdc);
   return bank;
+}
+
+/** Spend stake from bonus first, then deposited. Returns false if insufficient. */
+function spendForStake(bank, stake) {
+  const need = Math.floor(Number(stake) || 0);
+  if (!(need > 0)) return false;
+  const bonus = money2(bank.bonusUsdc);
+  const dep = money2(bank.deposited);
+  if (bonus + dep + 1e-9 < need) return false;
+  let left = need;
+  if (bonus > 0) {
+    const fromBonus = Math.min(bonus, left);
+    bank.bonusUsdc = money2(bonus - fromBonus);
+    left -= fromBonus;
+  }
+  if (left > 0) {
+    bank.deposited = money2(dep - left);
+  }
+  syncDeposited(bank);
+  return true;
 }
 
 function pushHistory(bank, entry) {
@@ -193,14 +225,21 @@ async function loadBank(player, env) {
 /** Durable write: KV + Cache. */
 async function saveBank(player, data, env) {
   const p = String(player).toLowerCase();
-  const deposited = money2(data.deposited != null ? data.deposited : data.balance);
+  const deposited = money2(
+    data.deposited != null
+      ? data.deposited
+      : Math.max(0, (Number(data.balance) || 0) - (Number(data.bonusUsdc) || 0)),
+  );
+  const bonusUsdc = money2(data.bonusUsdc);
   const lastFreeAt =
     data.lastFreeAt != null && Number(data.lastFreeAt) > 0 ? Number(data.lastFreeAt) : null;
   const body = {
     deposited,
-    balance: deposited,
+    bonusUsdc,
+    balance: money2(deposited + bonusUsdc),
     progressUsdc: money2(data.progressUsdc),
     lastFreeAt,
+    freeDailyMigrated: !!data.freeDailyMigrated,
     usedTx: (data.usedTx || []).map((t) => String(t).toLowerCase()).slice(-500),
     entries: data.entries || {},
     history: normalizeHistory(data.history),
@@ -689,10 +728,13 @@ function freeDailyInfo(bank, nowMs = Date.now()) {
 
 /** Public bank snapshot for API responses */
 export function bankPublicView(bank) {
-  const deposited = money2(bank.deposited != null ? bank.deposited : bank.balance);
+  const deposited = money2(bank.deposited);
+  const bonusUsdc = money2(bank.bonusUsdc);
+  const spendable = money2(deposited + bonusUsdc);
   return {
-    balance: deposited,
+    balance: spendable,
     deposited,
+    bonusUsdc,
     withdrawable: deposited,
     progressUsdc: money2(bank.progressUsdc),
     progressTowardTicket: money2(bank.progressUsdc),
@@ -702,7 +744,9 @@ export function bankPublicView(bank) {
 }
 
 /**
- * Claim 1 free Megapot ticket once per 24h (house-funded, recipient = player).
+ * Free daily: +$1 stake credit (bonus) once per 24h.
+ * Spendable on stakes only — never withdrawable as USDC.
+ * Cash out after staking still pays Megapot tickets (not cash).
  */
 export async function claimFreeDailyTicket(player, env) {
   if (!isAddr(player)) return { ok: false, error: 'Valid player required', status: 400 };
@@ -710,9 +754,41 @@ export async function claimFreeDailyTicket(player, env) {
   const bank = await loadBank(player, env);
   const info = freeDailyInfo(bank, now);
   if (!info.freeDailyEligible) {
+    // One-time migrate: old free-daily bought a ticket / reserved claim but never gave stake credit
+    const oldTicketClaim = Object.values(bank.entries || {}).some(
+      (e) =>
+        e &&
+        (e.status === 'free_daily' || e.status === 'free_daily_pending') &&
+        e.bonusUsdc == null &&
+        (e.tickets != null || e.txHash),
+    );
+    if (oldTicketClaim && money2(bank.bonusUsdc) === 0 && !bank.freeDailyMigrated) {
+      bank.bonusUsdc = money2(bank.bonusUsdc + 1);
+      bank.freeDailyMigrated = true;
+      syncDeposited(bank);
+      pushHistory(bank, {
+        type: 'free_daily',
+        amount: 1,
+        entryId: 'free-daily-migrate',
+        at: now,
+      });
+      const saved = await saveBank(player, bank, env);
+      return {
+        ok: true,
+        creditedBonus: 1,
+        migrated: true,
+        entryId: 'free-daily-migrate',
+        ...bankPublicView(saved),
+        freeDailyEligible: false,
+        freeDailyNextAt: info.freeDailyNextAt,
+        freeDailyMsLeft: info.freeDailyMsLeft,
+        history: saved.history,
+        note: 'Free $1 stake credit restored — stake to play; not withdrawable.',
+      };
+    }
     return {
       ok: false,
-      error: 'Free daily ticket already claimed — come back in 24 hours',
+      error: 'Free daily already claimed — come back in 24 hours',
       status: 429,
       ...bankPublicView(bank),
       freeDailyNextAt: info.freeDailyNextAt,
@@ -724,79 +800,36 @@ export async function claimFreeDailyTicket(player, env) {
   if (bank.entries[entryId]?.status === 'free_daily') {
     return {
       ok: false,
-      error: 'Free daily ticket already claimed — come back in 24 hours',
+      error: 'Free daily already claimed — come back in 24 hours',
       status: 429,
       already: true,
       ...bankPublicView(bank),
     };
   }
 
-  // Reserve claim before buy (prevent double-spend); revert on failure
-  const prevFree = bank.lastFreeAt;
   bank.lastFreeAt = now;
-  bank.entries[entryId] = { status: 'free_daily_pending', at: now, tickets: 1 };
-  await saveBank(player, bank, env);
-
-  try {
-    const { executeHouseJob } = await import('./dos/client.js');
-    const { withHouseLock, buyTicketsForPlayer } = await import('./house-tx.js');
-    let buy;
-    if (env?.TX_SEQUENCER_DO) {
-      const out = await executeHouseJob(env, {
-        type: 'cashout',
-        id: entryId,
-        payload: { recipient: player, tickets: 1, entryId, stake: 0 },
-      });
-      if (!out?.ok || !out?.result?.ok) {
-        throw new Error(out?.error || out?.result?.error || 'Ticket buy failed');
-      }
-      buy = out.result;
-    } else {
-      buy = await withHouseLock(() => buyTicketsForPlayer(env, { recipient: player, tickets: 1 }));
-    }
-
-    const bank2 = await loadBank(player, env);
-    bank2.lastFreeAt = now;
-    bank2.entries[entryId] = {
-      status: 'free_daily',
-      at: now,
-      tickets: 1,
-      txHash: buy.txHash || null,
-    };
-    pushHistory(bank2, {
-      type: 'free_daily',
-      amount: 1,
-      txHash: buy.txHash || null,
-      entryId,
-      at: now,
-    });
-    const saved = await saveBank(player, bank2, env);
-    return {
-      ok: true,
-      tickets: 1,
-      txHash: buy.txHash,
-      entryId,
-      ...bankPublicView(saved),
-      freeDailyEligible: false,
-      freeDailyNextAt: now + FREE_DAILY_MS,
-      freeDailyMsLeft: FREE_DAILY_MS,
-      history: saved.history,
-    };
-  } catch (e) {
-    // Roll back reservation
-    try {
-      const bank3 = await loadBank(player, env);
-      bank3.lastFreeAt = prevFree;
-      delete bank3.entries[entryId];
-      await saveBank(player, bank3, env);
-    } catch (_) {}
-    return {
-      ok: false,
-      error: e?.shortMessage || e?.message || 'Free ticket unavailable',
-      status: e?.statusCode || 500,
-      ...bankPublicView(await loadBank(player, env).catch(() => emptyBank())),
-    };
-  }
+  bank.bonusUsdc = money2(bank.bonusUsdc + 1);
+  bank.freeDailyMigrated = true;
+  bank.entries[entryId] = { status: 'free_daily', at: now, bonusUsdc: 1 };
+  syncDeposited(bank);
+  pushHistory(bank, {
+    type: 'free_daily',
+    amount: 1,
+    entryId,
+    at: now,
+  });
+  const saved = await saveBank(player, bank, env);
+  return {
+    ok: true,
+    creditedBonus: 1,
+    entryId,
+    ...bankPublicView(saved),
+    freeDailyEligible: false,
+    freeDailyNextAt: now + FREE_DAILY_MS,
+    freeDailyMsLeft: FREE_DAILY_MS,
+    history: saved.history,
+    note: 'Free $1 stake credit — use it to play; not withdrawable. Cash out for tickets.',
+  };
 }
 
 /** Mark entry status after settle/lost (stake not returned to deposited). */
@@ -880,15 +913,13 @@ export async function handleBank(request, env) {
     return json({
       ok: true,
       player: player.toLowerCase(),
-      tickets: result.tickets,
-      txHash: result.txHash,
+      creditedBonus: result.creditedBonus,
       entryId: result.entryId,
       freeDailyEligible: false,
       freeDailyNextAt: result.freeDailyNextAt,
       freeDailyMsLeft: result.freeDailyMsLeft,
-      deposited: result.deposited,
-      progressUsdc: result.progressUsdc,
-      balance: result.balance,
+      ...bankPublicView(result),
+      note: result.note,
       history: result.history,
     });
   }
@@ -951,12 +982,13 @@ export async function handleBank(request, env) {
         history: bank.history || [],
       });
     }
-    // Stake only from deposited (withdrawable) pool
-    if (bank.deposited + 1e-9 < stake) {
+    // Spendable = bonus (free daily) + deposited. Never allow stake on empty wallet.
+    const spendable = money2(bank.deposited + bank.bonusUsdc);
+    if (spendable + 1e-9 < stake) {
       return json(
         {
           ok: false,
-          error: 'Insufficient deposited balance',
+          error: 'Insufficient play balance',
           ...bankPublicView(bank),
           need: stake,
         },
@@ -987,8 +1019,21 @@ export async function handleBank(request, env) {
       );
     }
 
-    bank.deposited = money2(bank.deposited - stake);
-    syncDeposited(bank);
+    if (!spendForStake(bank, stake)) {
+      // Race: re-check after RoundDO accepted
+      try {
+        await roundDoReleaseStake(env, { entryId, reason: 'insufficient_after_register' });
+      } catch (_) {}
+      return json(
+        {
+          ok: false,
+          error: 'Insufficient play balance',
+          ...bankPublicView(bank),
+          need: stake,
+        },
+        400,
+      );
+    }
     bank.entries[entryId] = {
       stake,
       at: Date.now(),

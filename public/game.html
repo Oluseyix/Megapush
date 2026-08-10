@@ -903,7 +903,7 @@ button:focus:not(:focus-visible){outline:none}
         <span class="pb-val" id="playBal">Deposit</span>
       </span>
     </button>
-    <button type="button" class="free-daily-btn" id="freeDailyBtn" title="1 free ticket every 24 hours" aria-label="Claim free daily ticket">
+    <button type="button" class="free-daily-btn" id="freeDailyBtn" title="$1 free stake credit every 24 hours (not withdrawable)" aria-label="Claim free daily ticket">
       <span class="fd-lab" id="freeDailyLab">Free daily</span>
     </button>
     <button type="button" class="tix-chip" id="tixChip" aria-live="polite" aria-label="Open my tickets"><b id="tixBal">0</b> tix</button>
@@ -1153,12 +1153,12 @@ button:focus:not(:focus-visible){outline:none}
       </div>
     </div>
     <div class="onboard-panel" data-step="1" id="onboardStep1">
-      <h2>Free daily ticket</h2>
-      <p>Once every 24 hours you can claim <b>1 free ticket</b> into today's Megapot draw — no stake required.</p>
+      <h2>Free daily play</h2>
+      <p>Once every 24 hours claim <b>$1 free stake credit</b> to play. It is <b>not withdrawable</b> — stake it, bank for tickets into today's Megapot draw.</p>
       <div class="steps">
         <div class="step"><n>1</n><div>Connect your wallet<small>Base Sepolia</small></div></div>
-        <div class="step"><n>2</n><div>Tap <b>Free daily</b><small>One ticket to your wallet</small></div></div>
-        <div class="step"><n>3</n><div>Come back tomorrow<small>Resets 24 hours after each claim</small></div></div>
+        <div class="step"><n>2</n><div>Tap <b>Free daily</b><small>+$1 play credit (stake only)</small></div></div>
+        <div class="step"><n>3</n><div>Stake $1 &amp; bank for tickets<small>Resets 24 hours after each claim</small></div></div>
       </div>
     </div>
     <div class="onboard-panel" data-step="2" id="onboardStep2">
@@ -3174,7 +3174,7 @@ if($('freeDailyBtn')){
       const res = await window.Megapot.claimFreeDailyTicket();
       if(res?.ok){
         if(lab) lab.textContent = 'Claimed!';
-        $('status') && ($('status').textContent = 'Free daily ticket added · check Tickets');
+        $('status') && ($('status').textContent = 'Free daily +$1 play credit · stake to earn tickets');
         try{ await window.Megapot.loadUserTickets?.({ silent:true }); }catch(_){}
         setTimeout(()=>{ try{ window.Megapot.refreshFreeDailyUi?.(); }catch(_){ paintFreeDailyFromGlobal(); } }, 800);
       }else{
@@ -4379,6 +4379,7 @@ function histTypeLabel(t){
   if(k === 'withdraw') return 'Withdraw';
   if(k === 'stake') return 'Stake';
   if(k === 'refund') return 'Refund';
+  if(k === 'free_daily') return 'Free daily';
   return k || 'Tx';
 }
 function histSignedAmount(row){
@@ -4743,7 +4744,12 @@ async function claimFreeDailyTicket(){
   if(j && j.freeDailyEligible != null) window.__mpFreeDailyEligible = !!j.freeDailyEligible;
   try{ updateFreeDailyUi(j); }catch(_){}
   if(j?.ok){
-    try{ await loadUserTickets({ silent: true }); }catch(_){}
+    // Free daily is stake credit — update play balance (not lottery tickets yet)
+    const bal = j.balance != null ? j.balance : (j.deposited != null || j.bonusUsdc != null
+      ? (Number(j.deposited)||0) + (Number(j.bonusUsdc)||0)
+      : null);
+    if(bal != null) setPlayBalUi(bal);
+    try{ await refreshPlayBalance(); }catch(_){}
   }
   return j;
 }
