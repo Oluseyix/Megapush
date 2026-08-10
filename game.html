@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-depositui">
+<meta name="megapush-build" content="20260810-roundhist">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -94,6 +94,18 @@ nav::-webkit-scrollbar{display:none}
 .tix-chip:hover,.tix-chip:focus-visible{background:#fff;border-color:var(--teal-2);outline:none}
 .tix-chip:active{transform:scale(.97)}
 .tix-chip b{font-family:'Archivo Black',sans-serif;color:var(--teal)}
+.sound-btn{
+  width:36px;height:36px;min-width:36px;border-radius:10px;padding:0;
+  background:var(--wash);border:1px solid var(--line);color:var(--ink);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:15px;line-height:1;cursor:pointer;flex:none;
+  transition:background .15s,border-color .15s,transform .15s,opacity .15s;
+  -webkit-tap-highlight-color:transparent;font-family:inherit;
+}
+.sound-btn:hover,.sound-btn:focus-visible{background:#fff;border-color:var(--teal-2);outline:none}
+.sound-btn:active{transform:scale(.96)}
+.sound-btn.muted{opacity:.75;color:var(--mid)}
+.sound-btn .sound-ico{display:block;pointer-events:none}
 .cashout-receipt{
   display:none;margin:10px 4px 0;padding:12px 14px;border-radius:14px;
   background:#fff;border:1px solid var(--line);box-shadow:0 6px 18px rgba(30,38,87,.08);
@@ -185,13 +197,33 @@ nav::-webkit-scrollbar{display:none}
 .status{font-size:13px;font-weight:600;color:#4C5477;margin:10px 0 8px;min-height:20px;transition:color .3s;padding:0 8px}
 .status.hot{color:var(--heat-d);font-weight:700}
 .status.won{color:var(--green);font-weight:700}
-.prev-mults{display:flex;gap:6px;justify-content:center;margin:4px 0 8px;min-height:28px;flex-wrap:wrap}
+.prev-row{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  margin:4px 0 8px;min-height:28px;flex-wrap:wrap;
+}
+.prev-mults{display:flex;gap:6px;justify-content:center;min-height:28px;flex-wrap:wrap;flex:1}
 .prev-mults span{
   font-family:'Archivo Black',sans-serif;font-size:11px;line-height:1;padding:3px 6px;border-radius:5px;
   background:rgba(255,255,255,.65);color:var(--mid);
   animation:prevIn .35s cubic-bezier(.2,1.4,.4,1) both;
   display:inline-flex;align-items:center;justify-content:center;
 }
+.round-hist-btn{
+  flex:none;border:1px solid var(--line);background:rgba(255,255,255,.85);
+  color:var(--ink);font-family:inherit;font-size:11px;font-weight:800;
+  padding:5px 10px;border-radius:9px;cursor:pointer;line-height:1.2;
+  -webkit-tap-highlight-color:transparent;
+}
+.round-hist-btn:hover,.round-hist-btn:focus-visible{border-color:var(--teal-2);outline:none}
+.round-hist-list{display:flex;flex-direction:column;gap:6px;max-height:min(55vh,420px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.round-hist-row{
+  display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center;
+  background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+}
+.round-hist-row .rh-rank{font-size:11px;font-weight:800;color:var(--soft);min-width:22px}
+.round-hist-row .rh-mult{font-family:'Archivo Black',sans-serif;font-size:18px;letter-spacing:-.5px}
+.round-hist-row .rh-meta{font-size:11px;font-weight:600;color:var(--mid);text-align:right}
+.round-hist-row .rh-id{font-size:10px;font-weight:700;color:var(--soft);grid-column:1 / -1}
 @keyframes prevIn{from{opacity:0;transform:translateY(6px) scale(.9)}}
 
 .fly-overlay{position:absolute;left:0;right:0;top:22%;z-index:15;display:none;pointer-events:none;text-align:center}
@@ -369,6 +401,8 @@ nav::-webkit-scrollbar{display:none}
 .tix-meta.live{color:var(--teal)}
 .tix-meta.won{color:var(--green)}
 .tix-meta.lost{color:var(--mid)}
+.tix-row.tix-win{background:linear-gradient(90deg,rgba(20,190,92,.08),transparent);border-radius:10px}
+.tix-row.tix-win .tix-meta{font-weight:800}
 .past-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap}
 .filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .filters button{padding:7px 12px;border-radius:20px;font-size:12px;font-weight:700;background:var(--wash);border:1px solid var(--line);color:var(--mid);min-height:36px}
@@ -484,7 +518,7 @@ nav::-webkit-scrollbar{display:none}
   display:block;transition:background .2s,transform .2s;
 }
 .onboard-dots i.on{background:var(--ink);transform:scale(1.15)}
-/* Same vertical band as mission fab (right:14px; top:38%) */
+/* Floating FABs — vertically draggable on mobile so they don't block the game */
 .help-fab{
   position:fixed;left:14px;top:38%;z-index:40;
   width:48px;height:48px;border-radius:50%;
@@ -493,9 +527,10 @@ nav::-webkit-scrollbar{display:none}
   font-size:16px;font-weight:800;color:var(--ink);
   display:flex;align-items:center;justify-content:center;
   letter-spacing:.2px;
-  transform:translateY(-50%);
+  touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;
 }
-.help-fab:active{transform:translateY(-50%) scale(.96)}
+.help-fab:active{transform:scale(.96)}
+.help-fab.dragging{cursor:grabbing;opacity:.92;transform:scale(1.04);box-shadow:0 10px 28px rgba(30,38,87,.28)}
 .modal h2{font-family:'Archivo Black',sans-serif;font-size:22px;margin-bottom:6px}
 .modal p{font-size:14px;color:var(--mid);line-height:1.45;margin-bottom:12px}
 .modal .steps{display:flex;flex-direction:column;gap:10px;margin:14px 0 18px}
@@ -522,16 +557,25 @@ nav::-webkit-scrollbar{display:none}
   background:#fff;border:1px solid var(--line);
   box-shadow:0 6px 20px rgba(30,38,87,.18);
   font-size:20px;display:flex;align-items:center;justify-content:center;
-  transform:translateY(-50%);
+  touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;
 }
-.mission-fab:active{transform:translateY(-50%) scale(.96)}
+.mission-fab:active{transform:scale(.96)}
+.mission-fab.dragging{cursor:grabbing;opacity:.92;transform:scale(1.04);box-shadow:0 10px 28px rgba(30,38,87,.28)}
 .mission-pop{
   position:fixed;right:14px;top:38%;z-index:41;
   width:min(280px,calc(100vw - 28px));
-  transform:translateY(calc(-50% - 100% - 10px));
+  transform:none;
   background:#fff;border:1px solid var(--line);border-radius:16px;
   padding:14px;box-shadow:0 12px 32px rgba(30,38,87,.16);
 }
+.fab-drag-hint{
+  position:fixed;left:50%;bottom:calc(18px + var(--safe-b,0px));z-index:45;
+  transform:translateX(-50%);
+  background:rgba(30,38,87,.88);color:#fff;font-size:11.5px;font-weight:700;
+  padding:7px 12px;border-radius:999px;pointer-events:none;opacity:0;
+  transition:opacity .25s;white-space:nowrap;
+}
+.fab-drag-hint.show{opacity:1}
 .mission-pop[hidden]{display:none!important}
 .mission-pop-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .mission-pop-h strong{font-size:14px;font-weight:800}
@@ -591,6 +635,47 @@ nav::-webkit-scrollbar{display:none}
   margin:6px 0 2px;letter-spacing:-1px;
 }
 .bank-hero .bh-hint{font-size:12px;font-weight:600;opacity:.85}
+.bank-history{
+  margin:14px 0 0;padding:12px;border-radius:12px;
+  background:var(--wash);border:1px solid var(--line);
+}
+.bank-history .bh-hist-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:8px;
+}
+.bank-history .bh-hist-head strong{
+  font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:var(--mid);
+}
+.bank-history .bh-hist-head a{
+  font-size:11.5px;font-weight:800;color:var(--teal);text-decoration:none;
+}
+.bank-history .bh-hist-head a:hover{text-decoration:underline}
+.bank-history .bh-hist-list{
+  max-height:min(28vh,220px);overflow-y:auto;-webkit-overflow-scrolling:touch;
+  display:flex;flex-direction:column;gap:6px;
+}
+.bank-history .bh-row{
+  display:grid;grid-template-columns:1fr auto;gap:4px 10px;
+  background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 10px;
+  font-size:12.5px;font-weight:700;color:var(--ink);
+}
+.bank-history .bh-row .bh-type{font-weight:800}
+.bank-history .bh-row .bh-type.deposit{color:var(--teal)}
+.bank-history .bh-row .bh-type.withdraw{color:var(--red, #B31D38)}
+.bank-history .bh-row .bh-type.stake{color:var(--ink)}
+.bank-history .bh-row .bh-type.refund{color:#B87A00}
+.bank-history .bh-row .bh-amt{font-family:'Archivo Black',sans-serif;font-size:13px;text-align:right}
+.bank-history .bh-row .bh-amt.pos{color:var(--teal)}
+.bank-history .bh-row .bh-amt.neg{color:var(--mid)}
+.bank-history .bh-row .bh-meta{
+  grid-column:1 / -1;display:flex;justify-content:space-between;align-items:center;gap:8px;
+  font-size:11px;font-weight:600;color:var(--mid);
+}
+.bank-history .bh-row .bh-meta a{color:var(--teal);font-weight:800;text-decoration:none}
+.bank-history .bh-row .bh-meta a:hover{text-decoration:underline}
+.bank-history .bh-empty{
+  text-align:center;padding:12px 8px;font-size:12.5px;font-weight:600;color:var(--mid);
+}
 .bank-mode{
   display:grid;grid-template-columns:1fr 1fr;gap:6px;
   background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:4px;
@@ -705,6 +790,7 @@ nav::-webkit-scrollbar{display:none}
   .play-bal-btn .pb-val{font-size:11.5px}
   .play-bal-btn .pb-ico{width:14px;height:14px;font-size:10px}
   .bal,.tix-chip{min-height:32px;display:inline-flex;align-items:center;font-size:11px;padding:5px 8px}
+  .sound-btn{width:32px;height:32px;min-width:32px;font-size:14px}
   .wrap{padding:8px 10px calc(28px + var(--safe-b))}
   .bet{padding:8px;border-radius:12px;border-width:1.5px}
   .bet-top{margin-bottom:5px}
@@ -765,7 +851,8 @@ button:focus:not(:focus-visible){outline:none}
 <div class="flash" id="flash"></div>
 
 <!-- Mission FAB -->
-<button type="button" class="mission-fab" id="missionFab" aria-label="Daily mission">🎯</button>
+<button type="button" class="mission-fab" id="missionFab" aria-label="Daily mission · drag to move">🎯</button>
+<div class="fab-drag-hint" id="fabDragHint" hidden>Drag 🎯 or ? up or down</div>
 <div class="mission-pop" id="missionPop" hidden>
   <div class="mission-pop-h">
     <strong>Daily mission</strong>
@@ -790,6 +877,9 @@ button:focus:not(:focus-visible){outline:none}
     </nav>
   </div>
   <div class="right">
+    <button type="button" class="sound-btn" id="soundBtn" title="Mute sound" aria-label="Mute sound" aria-pressed="false">
+      <span class="sound-ico" id="soundIco" aria-hidden="true">🔊</span>
+    </button>
     <button type="button" class="play-bal-btn" id="playBalChip" title="Deposit to play" aria-label="Deposit or play balance">
       <span class="pb-ico" aria-hidden="true">+</span>
       <span class="pb-main">
@@ -807,7 +897,7 @@ button:focus:not(:focus-visible){outline:none}
   <!-- PLAY -->
   <div class="page on" id="page-play">
     <div class="mega">
-      <div class="lab">Tonight's Megapot</div>
+      <div class="lab">Megapot prize pool</div>
       <div class="fig" id="potFig">—</div>
       <div class="stub">
         <div class="c">LAST DRAW</div>
@@ -819,7 +909,10 @@ button:focus:not(:focus-visible){outline:none}
       <div class="lab">This round</div>
       <div class="mult num" id="mult" aria-live="polite" aria-atomic="true">1.00×</div>
       <div class="status" id="status" role="status" aria-live="polite">Global round · stake below to join the next climb</div>
-      <div class="prev-mults" id="prev"></div>
+      <div class="prev-row">
+        <div class="prev-mults" id="prev"></div>
+        <button type="button" class="round-hist-btn" id="roundHistBtn" aria-label="Round history">History</button>
+      </div>
 
       <div class="fly-overlay" id="flyOverlay">
         <div class="fly-stamp">
@@ -873,8 +966,8 @@ button:focus:not(:focus-visible){outline:none}
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <div>
-          <div class="card-lab">Today's drawing</div>
-          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets (today + recent draws) · 5 + bonus</div>
+          <div class="card-lab">Live drawing</div>
+          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets in current draw · 5 + bonus</div>
         </div>
         <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink);text-align:right">
           <div style="font-size:10px;font-weight:700;color:var(--mid);letter-spacing:.3px;text-transform:uppercase;margin-bottom:2px">Draw in</div>
@@ -888,7 +981,7 @@ button:focus:not(:focus-visible){outline:none}
       <div class="past-head">
         <div>
           <div class="num">Past drawings</div>
-          <div style="font-size:12.5px;color:var(--mid);margin-top:2px">Wins &amp; losses</div>
+          <div style="font-size:12.5px;color:var(--mid);margin-top:2px">Settled tickets from earlier draws</div>
         </div>
       </div>
       <div class="filters" id="pastFilter">
@@ -904,25 +997,25 @@ button:focus:not(:focus-visible){outline:none}
 
   <!-- BOARD -->
   <div class="page" id="page-board">
-    <div class="seg" style="margin-bottom:14px">
-      <button type="button" class="on">Today</button>
-      <button type="button">Week</button>
-      <button type="button">All time</button>
+    <div class="seg" id="lbPeriod" style="margin-bottom:14px" role="tablist" aria-label="Leaderboard period">
+      <button type="button" class="on" data-period="today" role="tab" aria-selected="true">Today</button>
+      <button type="button" data-period="week" role="tab" aria-selected="false">Week</button>
+      <button type="button" data-period="month" role="tab" aria-selected="false">Month</button>
     </div>
-    <div class="card" style="padding:6px 2px">
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-lab">Best cash-out · <span id="lbPeriodLab">Today</span></div>
+      <div class="card-val" id="lbTopMult">—</div>
+      <div class="card-sub" id="lbTopSub">Anonymous board · highest multiplier wins</div>
+    </div>
+    <div class="card" style="padding:6px 2px;margin-bottom:18px">
       <table class="lb">
-        <thead><tr><th>#</th><th>Player</th><th>Highest</th><th>Tickets</th></tr></thead>
-        <tbody>
-          <tr><td class="rk">1</td><td>0x55…aa</td><td class="num">47.2×</td><td>312</td></tr>
-          <tr><td class="rk">2</td><td>0x7a…f2</td><td class="num">28.4×</td><td>198</td></tr>
-          <tr class="you"><td class="rk">YOU</td><td id="lbYou">—</td><td class="num" id="lbMult">—</td><td id="lbTix">0</td></tr>
-          <tr><td class="rk">4</td><td>0x3c…91</td><td class="num">11.1×</td><td>74</td></tr>
-          <tr><td class="rk">5</td><td>0x1d…c8</td><td class="num">9.6×</td><td>61</td></tr>
-          <tr><td class="rk">6</td><td>0x8f…b4</td><td class="num">8.2×</td><td>48</td></tr>
+        <thead><tr><th>#</th><th>Pilot</th><th>Best</th></tr></thead>
+        <tbody id="lbBody">
+          <tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px">Loading live board…</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="card">
+    <div class="card" id="inviteCard" style="margin-top:4px">
       <div class="card-lab">Invite</div>
       <div class="card-sub" style="margin-bottom:10px">Friends' first cash-out earns you <b>5 tickets</b> into tonight's draw</div>
       <button type="button" class="go" id="inviteBtn">Copy invite link</button>
@@ -972,10 +1065,10 @@ button:focus:not(:focus-visible){outline:none}
 <div class="modal-bg" id="bankSheetBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
     <h2 id="bankSheetTitle">Play balance</h2>
-    <p id="bankSheetSub">Fund once, then stake without wallet popups. Lottery prizes are on Winnings.</p>
+    <p id="bankSheetSub">Deposit USDC to stake. Lottery prizes are on Winnings.</p>
 
     <div class="bank-hero">
-      <div class="bh-lab">Available to stake</div>
+      <div class="bh-lab" id="bankHeroLab">Available to stake</div>
       <div class="bh-val" id="bankSheetBal">$0</div>
       <div class="bh-hint" id="bankHeroHint">Deposit Sepolia USDC to start</div>
     </div>
@@ -988,13 +1081,13 @@ button:focus:not(:focus-visible){outline:none}
     <div class="bank-pills" id="bankPills">
       <button type="button" class="pill" data-bank="5">$5</button>
       <button type="button" class="pill" data-bank="10">$10</button>
-      <button type="button" class="pill on" data-bank="25">$25</button>
+      <button type="button" class="pill" data-bank="25">$25</button>
       <button type="button" class="pill" data-bank="50">$50</button>
     </div>
 
     <div class="bank-amt-wrap">
       <span class="cur">$</span>
-      <input id="bankAmt" value="25" inputmode="decimal" placeholder="0" aria-label="Amount">
+      <input id="bankAmt" value="" inputmode="decimal" placeholder="Enter amount" aria-label="Amount">
       <button type="button" class="bank-max" id="bankMaxBtn" hidden>Max</button>
     </div>
 
@@ -1003,6 +1096,16 @@ button:focus:not(:focus-visible){outline:none}
     <div class="bank-actions">
       <button type="button" class="go" id="bankPrimaryBtn">Deposit USDC</button>
       <button type="button" class="go secondary" id="bankSheetClose">Close</button>
+    </div>
+
+    <div class="bank-history" id="bankHistory">
+      <div class="bh-hist-head">
+        <strong>Transaction history</strong>
+        <a id="bankExplorerLink" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer">BaseScan ↗</a>
+      </div>
+      <div class="bh-hist-list" id="bankHistoryList">
+        <div class="bh-empty">Connect wallet to see deposits &amp; withdrawals</div>
+      </div>
     </div>
   </div>
 </div>
@@ -1047,7 +1150,19 @@ button:focus:not(:focus-visible){outline:none}
 </div>
 
 <!-- Re-open how-it-works anytime -->
-<button type="button" class="help-fab" id="helpFab" aria-label="How MegaPush works" title="How it works">?</button>
+<button type="button" class="help-fab" id="helpFab" aria-label="How MegaPush works · drag to move" title="How it works · drag to move">?</button>
+
+<!-- Round history (last ~20 crashes) -->
+<div class="modal-bg" id="roundHistBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="roundHistTitle">
+    <h2 id="roundHistTitle">Round history</h2>
+    <p>Last 20 global crashes · same for everyone</p>
+    <div class="round-hist-list" id="roundHistList">
+      <div class="bh-empty">Loading rounds…</div>
+    </div>
+    <button type="button" class="go secondary" id="roundHistClose" style="margin-top:14px">Close</button>
+  </div>
+</div>
 
 <!-- Cash-out ticket preview -->
 <div class="modal-bg" id="previewBg">
@@ -1079,30 +1194,85 @@ button:focus:not(:focus-visible){outline:none}
 </div>
 
 <script>
+/* API paths — same origin only (optional ?api=https://… override) */
+function resolveApiBase(){
+  try{
+    const q = new URLSearchParams(location.search).get('api');
+    if(!q || q === 'same' || q === 'local') return '';
+    return String(q).replace(/\/$/,'');
+  }catch(_){ return ''; }
+}
+const API_BASE = resolveApiBase();
+function apiUrl(path){
+  const p = path.startsWith('/') ? path : '/'+path;
+  return API_BASE ? (API_BASE + p) : p;
+}
+window.API_BASE = API_BASE;
+window.apiUrl = apiUrl;
+window.resolveApiBase = resolveApiBase;
+
 (function(){
 const $=id=>document.getElementById(id);
 let actx=null;
+/** Sound on by default; remember mute preference. */
+let soundOn = true;
+try{
+  const s = localStorage.getItem('mp_sound');
+  if(s === '0' || s === 'off' || s === 'false') soundOn = false;
+  if(s === '1' || s === 'on' || s === 'true') soundOn = true;
+}catch(_){}
+
 function ensureAudio(){
+  if(!soundOn) return null;
   if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)();
   if(actx.state==='suspended') actx.resume();
+  return actx;
 }
 function beep(freq,dur,type='sine',vol=.08,slide=0){
+  if(!soundOn) return;
   try{
-    ensureAudio();
-    const o=actx.createOscillator(), g=actx.createGain();
+    const ctx = ensureAudio();
+    if(!ctx) return;
+    const o=ctx.createOscillator(), g=ctx.createGain();
     o.type=type; o.frequency.value=freq;
-    if(slide) o.frequency.linearRampToValueAtTime(freq+slide, actx.currentTime+dur);
+    if(slide) o.frequency.linearRampToValueAtTime(freq+slide, ctx.currentTime+dur);
     g.gain.value=vol;
-    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+dur);
-    o.connect(g); g.connect(actx.destination);
-    o.start(); o.stop(actx.currentTime+dur);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+dur);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime+dur);
   }catch(e){}
 }
-function playTick(){ beep(420+Math.random()*80, .03, 'triangle', .028) }
-function playCash(){ beep(660,.07,'sine',.09); setTimeout(()=>beep(880,.1,'sine',.07),60) }
-function playCrash(){ beep(170,.3,'sawtooth',.1,-110); setTimeout(()=>beep(85,.4,'triangle',.06,-35),60) }
-function playStart(){ beep(520,.08,'sine',.05); setTimeout(()=>beep(700,.12,'sine',.04),70) }
-function playTicket(){ beep(920,.04,'sine',.04) }
+function playTick(){ if(!soundOn) return; beep(420+Math.random()*80, .03, 'triangle', .028) }
+function playCash(){ if(!soundOn) return; beep(660,.07,'sine',.09); setTimeout(()=>beep(880,.1,'sine',.07),60) }
+function playCrash(){ if(!soundOn) return; beep(170,.3,'sawtooth',.1,-110); setTimeout(()=>beep(85,.4,'triangle',.06,-35),60) }
+function playStart(){ if(!soundOn) return; beep(520,.08,'sine',.05); setTimeout(()=>beep(700,.12,'sine',.04),70) }
+function playTicket(){ if(!soundOn) return; beep(920,.04,'sine',.04) }
+
+function paintSoundBtn(){
+  const btn = $('soundBtn');
+  const ico = $('soundIco');
+  if(!btn) return;
+  btn.classList.toggle('muted', !soundOn);
+  btn.setAttribute('aria-pressed', soundOn ? 'false' : 'true');
+  btn.setAttribute('aria-label', soundOn ? 'Mute sound' : 'Unmute sound');
+  btn.title = soundOn ? 'Mute sound' : 'Unmute sound';
+  if(ico) ico.textContent = soundOn ? '🔊' : '🔇';
+}
+function setSoundOn(on){
+  soundOn = !!on;
+  try{ localStorage.setItem('mp_sound', soundOn ? '1' : '0'); }catch(_){}
+  if(!soundOn && actx){
+    try{ actx.suspend(); }catch(_){}
+  }
+  paintSoundBtn();
+  if(soundOn){
+    // short confirm chirp when turning sound back on
+    try{ beep(720, .06, 'sine', .06); }catch(_){}
+  }
+}
+function toggleSound(){ setSoundOn(!soundOn); }
+paintSoundBtn();
+$('soundBtn')?.addEventListener('click', (e)=>{ e.preventDefault(); toggleSound(); });
 
 const feed=[['valeriohq','bought','5 TICKETS'],['hailesilassie','won','$197.80'],['ada.r','cashed out','6.20×'],['smooth-yellow','bought','1 TICKET'],['tunde.o','won','$42.00'],['kemi.a','cashed out','11.80×']];
 $('tk').innerHTML=feed.map(([n,v,x])=>`<span class="ti"><i></i><b>${n}</b> ${v} <span class="${v==='won'?'money':'tix'}">${x}</span></span>`).join('').repeat(2);
@@ -1148,6 +1318,9 @@ function syncMission(){
 syncTixUI(); syncMission();
 
 const ticketData=[]; // filled only from on-chain getUserTickets
+const pastDraws=[]; // on-chain past tickets + optional wins API overlay
+let pastFilter='all';
+
 function renderTickets(){
   const list=$('tixList');
   if(!list) return;
@@ -1169,10 +1342,47 @@ function renderTickets(){
     </div>
   `).join('');
 }
+
+function renderPast(){
+  const el=$('pastList');
+  if(!el) return;
+  // won filter includes unclaimed + claimed wins; lost = no prize
+  const list=pastDraws.filter(d=>{
+    if(pastFilter==='all') return true;
+    if(pastFilter==='won') return d.result==='won' || d.tier==='Claimed' || d.tier==='Unclaimed';
+    if(pastFilter==='lost') return d.result==='lost' || d.tier==='Drawn' || d.tier==='No prize';
+    return d.result===pastFilter;
+  });
+  if(!list.length){
+    el.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No past draws yet · tickets move here after a draw settles</div>';
+    return;
+  }
+  el.innerHTML=list.map(d=>{
+    const isWon = d.result==='won' || d.tier==='Unclaimed' || d.tier==='Claimed';
+    const metaClass = isWon ? (d.tier==='Claimed' ? 'lost' : 'won') : 'lost';
+    let meta = d.tier || 'Drawn';
+    if(isWon){
+      if(d.tier==='Claimed') meta = (d.prize ? d.prize+' · ' : '') + 'Claimed';
+      else if(d.tier==='Unclaimed') meta = (d.prize || 'Won') + ' · Claim';
+      else meta = d.prize || 'Won';
+    }
+    return `
+    <div class="tix-row${isWon?' tix-win':''}">
+      <div class="tix-id">${d.date}</div>
+      <div class="tix-nums">
+        ${(d.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
+        ${d.bonus!=null?`<span class="bonus">${pad(d.bonus)}</span>`:''}
+      </div>
+      <div class="tix-meta ${metaClass}">${meta}</div>
+    </div>`;
+  }).join('');
+}
+
 /** Bridge classic game UI ↔ module wallet code (separate JS scopes). */
 window.MegaPushUI = {
   get ticketCount(){ return ticketCount; },
   get ticketData(){ return ticketData; },
+  get pastDraws(){ return pastDraws; },
   applyTickets(mapped){
     const list = Array.isArray(mapped) ? mapped : [];
     ticketData.length = 0;
@@ -1195,10 +1405,34 @@ window.MegaPushUI = {
     syncTixUI();
     return ticketCount;
   },
+  applyPastDraws(rows){
+    pastDraws.length = 0;
+    (rows || []).forEach(r => pastDraws.push(r));
+    renderPast();
+    return pastDraws.length;
+  },
+  mergePastWin(row){
+    if(!row) return;
+    const tokenId = row.tokenId != null ? String(row.tokenId) : '';
+    if(tokenId){
+      const hit = pastDraws.find(d => String(d.tokenId) === tokenId);
+      if(hit){ Object.assign(hit, row); renderPast(); return; }
+    }
+    pastDraws.unshift(row);
+    renderPast();
+  },
+  renderPast,
+  seedDemoLotteryUi: (opts) => { try{ return seedDemoLotteryUi(opts); }catch(_){ return 0; } },
+  claimDemoWins: () => { try{ return claimDemoWins(); }catch(_){ return { ok: false }; } },
+  markTicketsClaimed: (addr, ids) => { try{ return markTicketsClaimed(addr, ids); }catch(_){ return null; } },
+  isTicketClaimed: (addr, id) => { try{ return isTicketClaimed(addr, id); }catch(_){ return false; } },
   syncTixUI,
   renderTickets,
+  refreshLeaderboard: () => { try{ refreshLeaderboard(); }catch(_){} },
+  postLeaderboardScore: (opts) => { try{ return postLeaderboardScore(opts); }catch(_){} },
 };
 renderTickets();
+renderPast();
 // Instant restore of last session tickets (survives refresh until chain reloads)
 try{
   const last = localStorage.getItem('mp_last_wallet');
@@ -1213,32 +1447,6 @@ try{
   }
 }catch(_){}
 
-const pastDraws=[]; // filled from wins API when wallet connected
-
-let pastFilter='all';
-function renderPast(){
-  const el=$('pastList');
-  if(!el) return;
-  const list=pastDraws.filter(d=>pastFilter==='all'||d.result===pastFilter);
-  if(!list.length){
-    el.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">No past draws yet</div>';
-    return;
-  }
-  el.innerHTML=list.map(d=>`
-    <div class="tix-row">
-      <div class="tix-id">${d.date}</div>
-      <div class="tix-nums">
-        ${(d.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
-        ${d.bonus!=null?`<span class="bonus">${pad(d.bonus)}</span>`:''}
-      </div>
-      <div class="tix-meta ${d.result}">${d.result==='won'?d.prize:d.tier}</div>
-    </div>
-  `).join('');
-}
-
-
-
-renderPast();
 document.querySelectorAll('#pastFilter button').forEach(btn=>{
   btn.addEventListener('click',()=>{
     document.querySelectorAll('#pastFilter button').forEach(b=>b.classList.remove('on'));
@@ -1247,6 +1455,124 @@ document.querySelectorAll('#pastFilter button').forEach(btn=>{
     renderPast();
   });
 });
+
+/* ── Live leaderboard (Today / Week / Month) — privacy-first ── */
+let lbPeriod = 'today';
+let lbLoading = false;
+
+function lbPeriodLabel(p){
+  if(p==='week') return 'This week';
+  if(p==='month') return 'This month';
+  return 'Today';
+}
+
+async function refreshLeaderboard(){
+  if(lbLoading) return;
+  const body = $('lbBody');
+  if(!body) return;
+  lbLoading = true;
+  try{
+    const player = (window.Megapot && window.Megapot.account) || '';
+    const q = new URLSearchParams({
+      period: lbPeriod,
+      limit: '20',
+      tzOffset: String(new Date().getTimezoneOffset()),
+    });
+    if(player) q.set('player', player);
+    const r = await fetch(apiUrl('/api/leaderboard')+'?'+q.toString(), { cache: 'no-store' });
+    const j = r.ok ? await r.json() : null;
+    if(!j?.ok){
+      body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px">Board unavailable · try again</td></tr>';
+      return;
+    }
+    const lab = $('lbPeriodLab');
+    if(lab) lab.textContent = lbPeriodLabel(j.period || lbPeriod);
+    const topMult = $('lbTopMult');
+    const topSub = $('lbTopSub');
+    const nPlayers = Number(j.players || 0);
+    if(j.top && j.top.mult > 0){
+      if(topMult) topMult.textContent = Number(j.top.mult).toFixed(2)+'×';
+      if(topSub){
+        topSub.textContent = nPlayers
+          ? (nPlayers+' pilot'+(nPlayers===1?'':'s')+' · '+lbPeriodLabel(j.period || lbPeriod).toLowerCase())
+          : lbPeriodLabel(j.period || lbPeriod);
+      }
+    }else{
+      if(topMult) topMult.textContent = '—';
+      if(topSub) topSub.textContent = 'No scores for '+lbPeriodLabel(j.period || lbPeriod).toLowerCase()+' yet';
+    }
+
+    const rows = Array.isArray(j.rows) ? j.rows : [];
+    const you = j.you;
+    const lines = [];
+
+    if(!rows.length){
+      lines.push('<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px">No scores yet for '+lbPeriodLabel(lbPeriod).toLowerCase()+'</td></tr>');
+    }else{
+      for(const row of rows){
+        const isYou = !!row.isYou;
+        const name = isYou ? 'You' : (row.handle || 'Pilot');
+        lines.push(
+          `<tr class="${isYou?'you':''}">`+
+          `<td class="rk">${isYou?'YOU':row.rank}</td>`+
+          `<td>${name}</td>`+
+          `<td class="num">${Number(row.highest).toFixed(2)}×</td></tr>`
+        );
+      }
+    }
+
+    // YOU row if connected and not already ranked
+    if(you && you.isYou && !rows.some(r => r.isYou)){
+      lines.push(
+        `<tr class="you">`+
+        `<td class="rk">YOU</td>`+
+        `<td>You</td>`+
+        `<td class="num">${you.highest > 0 ? Number(you.highest).toFixed(2)+'×' : '—'}</td></tr>`
+      );
+    }
+
+    body.innerHTML = lines.join('');
+  }catch(e){
+    console.warn('leaderboard', e);
+    body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px">Could not load board</td></tr>';
+  }finally{
+    lbLoading = false;
+  }
+}
+
+function setLbPeriod(period){
+  const p = period === 'week' || period === 'month' ? period : 'today';
+  lbPeriod = p;
+  document.querySelectorAll('#lbPeriod button').forEach(btn=>{
+    const on = btn.dataset.period === p;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  refreshLeaderboard();
+}
+
+document.querySelectorAll('#lbPeriod button').forEach(btn=>{
+  btn.addEventListener('click', () => setLbPeriod(btn.dataset.period));
+});
+
+/** Best-effort client-side score post (server also records on cashout). */
+async function postLeaderboardScore({ player, multiplier, tickets, entryId } = {}){
+  try{
+    if(!player || !(Number(multiplier) > 0)) return;
+    await fetch(apiUrl('/api/leaderboard'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        player,
+        multiplier: Number(multiplier),
+        tickets: Math.max(0, Math.floor(Number(tickets)||0)),
+        entryId: entryId || undefined,
+        at: Date.now(),
+      }),
+    });
+  }catch(_){}
+  try{ refreshLeaderboard(); }catch(_){}
+}
 
 /* Live draw countdown (Megapot API ended_at, fallback on-chain drawingTime) */
 let drawEndsAt=null; // ms epoch
@@ -1313,8 +1639,84 @@ let lastAutoMiss=null;
 // Balance is on-chain Sepolia USDC only (set by Megapot module)
 if($('bal')) $('bal').textContent='— USDC';
 if($('bal')) $('bal').setAttribute('aria-label','Sepolia USDC balance');
-const history=[];
+const history=[]; // recent crash mults for the chip strip
+let roundHistoryCache=[]; // last 20 from server
 const HEAT=[['#14BE5C','#0B8B41'],['#F0A81E','#B87A00'],['#F2415F','#B31D38']];
+
+function multColor(v){
+  const n=Number(v)||0;
+  if(n<2) return '#6B7280';
+  if(n<5) return '#B87A00';
+  if(n<20) return '#B31D38';
+  return '#7C3AED';
+}
+function fmtRoundTime(ts){
+  const n=Number(ts);
+  if(!(n>0)) return '—';
+  try{
+    return new Date(n).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(_){ return '—'; }
+}
+function renderRoundHistoryList(rounds){
+  const el=$('roundHistList');
+  if(!el) return;
+  const list=Array.isArray(rounds)?rounds:[];
+  if(!list.length){
+    el.innerHTML='<div class="bh-empty">No completed rounds yet</div>';
+    return;
+  }
+  el.innerHTML=list.map((r,i)=>{
+    const mult=Number(r.crashMult!=null?r.crashMult:r.mult)||0;
+    const color=multColor(mult);
+    const when=fmtRoundTime(r.crashAt||r.at);
+    const rid=r.roundId!=null?String(r.roundId):'—';
+    return (
+      '<div class="round-hist-row">'+
+        '<div class="rh-rank">#'+(i+1)+'</div>'+
+        '<div class="rh-mult" style="color:'+color+'">'+mult.toFixed(2)+'×</div>'+
+        '<div class="rh-meta">'+when+'</div>'+
+        '<div class="rh-id">Round '+rid+(r.hand!=null?' · hand '+r.hand:'')+'</div>'+
+      '</div>'
+    );
+  }).join('');
+}
+async function fetchRoundHistory(){
+  try{
+    const r=await fetch(apiUrl('/api/round')+'?history=20&t='+Date.now(),{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j&&j.ok&&Array.isArray(j.rounds)){
+      roundHistoryCache=j.rounds;
+      // Keep chip strip in sync (newest first → show last few)
+      const strip=j.rounds.slice(0,6).map(x=>Number(x.crashMult)).filter(n=>n>0).reverse();
+      if(strip.length){
+        history.length=0;
+        strip.forEach(v=>history.push(v));
+        if($('prev')){
+          $('prev').innerHTML=history.map((v,idx)=>{
+            return `<span style="color:${multColor(v)};animation-delay:${idx*35}ms">${v.toFixed(2)}×</span>`;
+          }).join('');
+        }
+      }
+      return j.rounds;
+    }
+  }catch(e){ console.warn('round history', e); }
+  return roundHistoryCache;
+}
+function openRoundHistory(){
+  const bg=$('roundHistBg');
+  if(!bg) return;
+  bg.classList.add('show');
+  const list=$('roundHistList');
+  if(list) list.innerHTML='<div class="bh-empty">Loading rounds…</div>';
+  fetchRoundHistory().then(rounds=>renderRoundHistoryList(rounds));
+}
+function closeRoundHistory(){
+  $('roundHistBg')?.classList.remove('show');
+}
+$('roundHistBtn')?.addEventListener('click', ()=> openRoundHistory());
+$('roundHistClose')?.addEventListener('click', ()=> closeRoundHistory());
+$('roundHistBg')?.addEventListener('click', (e)=>{ if(e.target===$('roundHistBg')) closeRoundHistory(); });
 
 /* megapush-flow2 */
 /* ── Global synchronized multiplier (same everywhere) ── */
@@ -1332,7 +1734,7 @@ function serverNow(){ return Date.now() + clockOffset; }
 
 async function fetchGlobalRound(){
   try{
-    const r=await fetch('/api/round?t='+Date.now(),{cache:'no-store'});
+    const r=await fetch(apiUrl('/api/round')+'?t='+Date.now(),{cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const j=await r.json();
     if(j && j.serverNow){
@@ -1400,30 +1802,47 @@ function multAt(g, now){
   return m;
 }
 
-/** Client-side verify of commit–reveal (Web Crypto) */
+/** Verify commit–reveal: local Web Crypto + optional POST /api/verify */
 async function verifyFairRound(g){
   if(!g || !g.serverSeed || !g.serverSeedHash || g.crashMult==null) return { ok:false, error:'Missing reveal' };
+  let local = { ok:false };
   try{
     const data = new TextEncoder().encode(g.serverSeed);
     const buf = await crypto.subtle.digest('SHA-256', data);
     const hex = [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-    if(hex !== g.serverSeedHash) return { ok:false, error:'Seed hash mismatch' };
-    // Bustabit-style recompute
-    const h = g.serverSeed.replace(/^0x/,'').toLowerCase();
-    const n = parseInt(h.slice(0,13), 16);
-    const e = Math.pow(2,52);
-    let crash = 1.0;
-    if(n % 33 !== 0){
-      crash = Math.floor((100*e - n)/(e - n))/100;
-      crash = Math.min(1000, Math.max(1, Math.round(crash*100)/100));
+    if(hex !== g.serverSeedHash) local = { ok:false, error:'Seed hash mismatch' };
+    else {
+      const h = g.serverSeed.replace(/^0x/,'').toLowerCase();
+      const n = parseInt(h.slice(0,13), 16);
+      const e = Math.pow(2,52);
+      let crash = 1.0;
+      if(n % 33 !== 0){
+        crash = Math.floor((100*e - n)/(e - n))/100;
+        crash = Math.min(10000, Math.max(1, Math.round(crash*100)/100));
+      }
+      if(Math.abs(crash - Number(g.crashMult)) > 0.015){
+        local = { ok:false, error:'Crash mult mismatch', expected:crash, got:g.crashMult };
+      } else {
+        local = { ok:true, crash, seedHash:hex };
+      }
     }
-    if(Math.abs(crash - Number(g.crashMult)) > 0.001){
-      return { ok:false, error:'Crash mult mismatch', expected:crash, got:g.crashMult };
-    }
-    return { ok:true, crash, seedHash:hex };
   }catch(e){
-    return { ok:false, error:e.message||String(e) };
+    local = { ok:false, error:e.message||String(e) };
   }
+  try{
+    const r = await fetch(apiUrl('/api/verify'), {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        serverSeed: g.serverSeed,
+        serverSeedHash: g.serverSeedHash,
+        crashMult: g.crashMult,
+      }),
+    });
+    const j = await r.json();
+    if(j && j.ok) return { ok:true, crash:j.computedCrashMult, seedHash:j.computedHash, server:true, local };
+  }catch(_){}
+  return local;
 }
 
 function paintBet(b){
@@ -1469,16 +1888,35 @@ function paintBet(b){
     st.textContent='Ready';
     go.className='go';
     const hasStake = b.amt != null && Number(b.amt) > 0;
-    go.disabled = !hasStake;
-    go.textContent = hasStake ? ('Stake $'+Number(b.amt).toFixed(0)+' USDC') : 'Select stake';
-    if(!hasStake){
-      ft.innerHTML='Pick a stake amount';
-    }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
-      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+ticketsFromStakeMult(b.amt, b.auto)+' tix</b>';
-    }else if(b.autoOn){
-      ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
+    let windowOpen = true;
+    try{
+      const g = globalRound;
+      if(g){
+        const now = serverNow();
+        const ph = phaseAt(g, now);
+        if(g.kill || g.windowClosed || g.acceptingBets===false || (ph && ph!=='betting')) windowOpen = false;
+      }
+    }catch(_){}
+    go.disabled = !hasStake || !windowOpen;
+    if(hasStake && !windowOpen){
+      go.textContent = 'Wait for betting…';
+      ft.innerHTML = (globalRound && globalRound.kill) ? 'Play paused' : 'Betting closed · next hand soon';
     }else{
-      ft.innerHTML=(window.Megapot && Number(window.Megapot.playBalance)>0) ? ('Play $'+Number(window.Megapot.playBalance).toFixed(0)+' · no wallet popup') : 'Tap Deposit in the header first';
+      go.textContent = hasStake ? ('Stake $'+Number(b.amt).toFixed(0)+' USDC') : 'Select stake';
+      if(!hasStake){
+        ft.innerHTML='Pick a stake amount';
+      }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
+        ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+ticketsFromStakeMult(b.amt, b.auto)+' tix</b>';
+      }else if(b.autoOn){
+        ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
+      }else{
+        const expHint = (globalRound && globalRound.remainingExposureUsdc!=null)
+          ? ' · room $'+Number(globalRound.remainingExposureUsdc).toFixed(0)
+          : '';
+        ft.innerHTML=(window.Megapot && Number(window.Megapot.playBalance)>0)
+          ? ('Play balance $'+Number(window.Megapot.playBalance).toFixed(0)+expHint)
+          : 'Tap Deposit in the header first';
+      }
     }
   }
   if(b.state==='pending'){
@@ -1505,18 +1943,18 @@ function paintBet(b){
   if(b.state==='won'){
     const tixEst = ticketsFromStakeMult(b.amt, b.at);
     const tixShow = b.ticketsBought != null ? wholeTickets(b.ticketsBought) : tixEst;
-    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Buying tickets' : 'Cashed out');
+    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Locking tickets' : 'Cashed out');
     go.className='go wait';
     go.disabled=true;
     if(b.payoutFailed){
-      go.textContent='Tickets failed';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · buy failed · stake returned to play balance';
+      go.textContent='Failed';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · stake returned to play balance';
     }else if(b.payoutPending){
-      go.textContent='Buying…';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · house spending USDC on your tickets';
+      go.textContent='…';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · securing your tickets…';
     }else{
       go.textContent='+'+tixShow+' tickets';
-      ft.innerHTML='Banked at <b>'+(b.at||0).toFixed(2)+'×</b> · tickets in your wallet';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · tickets locked in';
     }
   }
   if(b.state==='lost'){
@@ -1770,7 +2208,7 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Ticket buy failed · try again';
+    $('status').textContent = 'Cash-out failed · try again';
     return;
   }
 
@@ -1786,11 +2224,11 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Ticket buy failed · check wallet';
+    $('status').textContent = 'Cash-out failed · check wallet';
     return;
   }
 
-  $('status').textContent = 'Buying your tickets…';
+  $('status').textContent = 'Cashing out…';
   $('status').classList.remove('won');
 
   try{
@@ -1801,28 +2239,33 @@ async function cashOut(b){
       recipient: player, // always player wallet
     });
     b.payoutPending = false;
+    // Prefer server settlement mult (client mult is ignored on-chain)
+    if(res && res.ok && res.multiplier != null && Number(res.multiplier) > 0){
+      b.at = Number(res.multiplier);
+    }else if(res && res.ok && res.settlement && res.settlement.mult != null){
+      b.at = Number(res.settlement.mult);
+    }
 
     // Success ONLY if ok && txHash
     if(!res || !res.ok || !res.txHash){
       b.payoutFailed = true;
       b.ticketsBought = null;
       paintBet(b);
-      const err = res?.error || 'House buy failed';
       if(res?.refundTxHash){
-        $('status').textContent = 'Tickets failed · stake back in play balance';
+        $('status').textContent = 'Cash-out failed · stake back in play balance';
         if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
       }else{
         // API should refund; frontend backup refund if stake was taken
         if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
           const rf = await window.Megapot.refundStake(entryId, stakeAmt);
           if(rf?.ok){
-            $('status').textContent = 'Tickets failed · stake back in play balance';
+            $('status').textContent = 'Cash-out failed · stake back in play balance';
             if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
           }else{
-            $('status').textContent = 'Tickets failed · check refund';
+            $('status').textContent = 'Cash-out failed · check refund';
           }
         }else{
-          $('status').textContent = 'Tickets failed · try again';
+          $('status').textContent = 'Cash-out failed · try again';
         }
       }
       return;
@@ -1858,6 +2301,17 @@ async function cashOut(b){
     maybeShare(at, bought);
     cashoutsToday++;
     syncMission();
+    try{
+      const post = window.MegaPushUI?.postLeaderboardScore || postLeaderboardScore;
+      if(typeof post === 'function'){
+        post({
+          player,
+          multiplier: at,
+          tickets: bought,
+          entryId: entryId || res.txHash,
+        });
+      }
+    }catch(_){}
     $('status').textContent = '+'+wholeTickets(bought)+' ticket'+(wholeTickets(bought)===1?'':'s')+' locked in';
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
@@ -1875,13 +2329,13 @@ async function cashOut(b){
       try{
         const rf = await window.Megapot.refundStake(entryId, stakeAmt);
         if(rf?.ok){
-          $('status').textContent = 'Tickets failed · stake back in play balance';
+          $('status').textContent = 'Cash-out failed · stake back in play balance';
           if(window.Megapot.refreshPlayBalance) await window.Megapot.refreshPlayBalance();
           return;
         }
       }catch(_){}
     }
-    $('status').textContent = 'Tickets failed · try again';
+    $('status').textContent = 'Cash-out failed · try again';
   }
 }
 
@@ -1935,10 +2389,13 @@ function crash(){
   playCrash();
   history.push(m);
   if(history.length>6) history.shift();
-  $('prev').innerHTML=history.map((v,idx)=>{
-    const c=v<2?'#6B7280':v<5?'#B87A00':'#B31D38';
-    return `<span style="color:${c};animation-delay:${idx*35}ms">${v.toFixed(2)}×</span>`;
-  }).join('');
+  if($('prev')){
+    $('prev').innerHTML=history.map((v,idx)=>{
+      return `<span style="color:${multColor(v)};animation-delay:${idx*35}ms">${v.toFixed(2)}×</span>`;
+    }).join('');
+  }
+  // Refresh cached history strip (best-effort)
+  try{ fetchRoundHistory(); }catch(_){}
   bets.forEach(b=>{if(b.state==='live'){b.state='lost';paintBet(b)}});
   const host=$('particles');if(host) host.innerHTML='';
   // HARD: always leave Flew Away after 3s even if global sync stalls
@@ -2118,8 +2575,28 @@ function globalFrame(){
   globalRaf=requestAnimationFrame(globalFrame);
 }
 
+async function runPreflight(){
+  try{
+    const [ping, health] = await Promise.all([
+      fetch(apiUrl('/api/ping'),{cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+      fetch(apiUrl('/api/health'),{cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+    ]);
+    const pf = {
+      ok: !!(ping && ping.ok) && health?.status !== 'paused',
+      at: Date.now(),
+    };
+    window.__mpPreflight = pf;
+    return pf;
+  }catch(e){
+    window.__mpPreflight = { ok:false };
+    return window.__mpPreflight;
+  }
+}
+window.runPreflight = runPreflight;
+
 function startGlobalSync(){
   if(globalPollTimer) clearInterval(globalPollTimer);
+  runPreflight().catch(()=>{});
   fetchGlobalRound().then(()=>{
     if(!globalRaf) globalRaf=requestAnimationFrame(globalFrame);
   });
@@ -2142,10 +2619,320 @@ function fmtMoney(n){
   return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 
+/** Demo lottery wins (Sepolia has no Megapot wins API) — preview claim UX */
+let demoLotteryActive = false;
+let demoUnclaimedUsd = 0;
+let demoUnclaimedCount = 0;
+
+/** Persist claimed ticket ids so they never reappear as unclaimed after claim / refresh. */
+function claimedTixKey(addr){
+  return 'mp_claimed_tix_' + String(addr || 'anon').toLowerCase();
+}
+function readClaimedTixSet(addr){
+  try{
+    const raw = localStorage.getItem(claimedTixKey(addr));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  }catch(_){ return new Set(); }
+}
+function writeClaimedTixSet(addr, set){
+  try{
+    localStorage.setItem(claimedTixKey(addr), JSON.stringify([...set]));
+  }catch(_){}
+}
+function markTicketsClaimed(addr, ids){
+  if(!ids || !ids.length) return readClaimedTixSet(addr);
+  const set = readClaimedTixSet(addr);
+  ids.forEach(id => {
+    if(id != null && String(id)) set.add(String(id));
+  });
+  writeClaimedTixSet(addr, set);
+  return set;
+}
+function isTicketClaimed(addr, tokenId){
+  if(tokenId == null || tokenId === '') return false;
+  return readClaimedTixSet(addr).has(String(tokenId));
+}
+function applyClaimedStateToPast(addr){
+  const set = readClaimedTixSet(addr);
+  if(!set.size) return;
+  pastDraws.forEach(d => {
+    const id = d.tokenId != null ? String(d.tokenId) : '';
+    if(id && set.has(id) && (d.result === 'won' || d.tier === 'Unclaimed' || d.tier === 'Claimed')){
+      d.tier = 'Claimed';
+      d.result = 'won';
+      d.claimed = true;
+    }
+  });
+}
+
+function demoLotteryRows(){
+  const day = (offsetDays, h=14, m=30) => {
+    const d = new Date(Date.now() - offsetDays * 86400000);
+    d.setHours(h, m, 0, 0);
+    return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  };
+  return [
+    {
+      tokenId: 'demo-win-1',
+      date: day(0, 12, 20),
+      picks: [3, 9, 14, 18, 22],
+      bonus: 7,
+      result: 'won',
+      prize: '$24.50',
+      tier: 'Unclaimed',
+      demo: true,
+      unclaimedUsd: 24.50,
+    },
+    {
+      tokenId: 'demo-win-2',
+      date: day(0, 11, 5),
+      picks: [1, 6, 11, 19, 25],
+      bonus: 4,
+      result: 'won',
+      prize: '$12.00',
+      tier: 'Unclaimed',
+      demo: true,
+      unclaimedUsd: 12.00,
+    },
+    {
+      tokenId: 'demo-win-3',
+      date: day(1, 16, 40),
+      picks: [5, 8, 12, 17, 24],
+      bonus: 2,
+      result: 'won',
+      prize: '$11.35',
+      tier: 'Unclaimed',
+      demo: true,
+      unclaimedUsd: 11.35,
+    },
+    {
+      tokenId: 'demo-claimed-1',
+      date: day(2, 15, 10),
+      picks: [2, 7, 13, 20, 23],
+      bonus: 9,
+      result: 'won',
+      prize: '$86.00',
+      tier: 'Claimed',
+      demo: true,
+    },
+    {
+      tokenId: 'demo-claimed-2',
+      date: day(3, 13, 55),
+      picks: [4, 10, 15, 21, 25],
+      bonus: 1,
+      result: 'won',
+      prize: '$4.20',
+      tier: 'Claimed',
+      demo: true,
+    },
+    {
+      tokenId: 'demo-lost-1',
+      date: day(1, 14, 0),
+      picks: [6, 11, 16, 19, 22],
+      bonus: 8,
+      result: 'lost',
+      prize: null,
+      tier: 'No prize',
+      demo: true,
+    },
+    {
+      tokenId: 'demo-lost-2',
+      date: day(2, 10, 30),
+      picks: [1, 4, 9, 14, 18],
+      bonus: 5,
+      result: 'lost',
+      prize: null,
+      tier: 'No prize',
+      demo: true,
+    },
+    {
+      tokenId: 'demo-lost-3',
+      date: day(4, 17, 15),
+      picks: [8, 12, 15, 20, 24],
+      bonus: 3,
+      result: 'lost',
+      prize: null,
+      tier: 'No prize',
+      demo: true,
+    },
+  ];
+}
+
+/**
+ * Preview wins + claims in Past drawings / claim card.
+ * Real on-chain wins (if any) stay; demo fills empty Sepolia UX.
+ * Claimed ticket ids are persisted — they never reappear as unclaimed.
+ */
+function seedDemoLotteryUi(opts = {}){
+  const addr = opts.address
+    || (window.Megapot && window.Megapot.account)
+    || null;
+  const claimed = readClaimedTixSet(addr);
+
+  // If user already claimed all demo wins, never re-inflate claim card
+  const demoAllClaimed = ['demo-win-1', 'demo-win-2', 'demo-win-3'].every(id => claimed.has(id));
+
+  // Promote a few real "Drawn" tickets into sample wins when present (skip if already claimed)
+  let promoted = 0;
+  const demoPrizes = ['$18.50', '$6.00', '$42.75'];
+  pastDraws.forEach((d, i) => {
+    if(d.demo) return;
+    const tid = d.tokenId != null ? String(d.tokenId) : '';
+    if(tid && claimed.has(tid)){
+      d.result = 'won';
+      d.tier = 'Claimed';
+      d.claimed = true;
+      return;
+    }
+    if(promoted >= 2) return;
+    if(d.result === 'lost' || d.tier === 'Drawn' || d.tier === 'No prize'){
+      if(i % 3 === 0 || opts.forceWins){
+        // Stable demo id for promoted tickets so claim sticks across reloads
+        if(!d.tokenId) d.tokenId = 'promo-win-' + i;
+        const pid = String(d.tokenId);
+        if(claimed.has(pid)){
+          d.result = 'won';
+          d.tier = 'Claimed';
+          d.claimed = true;
+          d.demoWin = true;
+          return;
+        }
+        d.result = 'won';
+        d.prize = demoPrizes[promoted % demoPrizes.length];
+        d.tier = 'Unclaimed';
+        d.demoWin = true;
+        promoted++;
+      }
+    }
+  });
+
+  // Inject full demo draw history if we still lack wins
+  const winCount = pastDraws.filter(d => d.result === 'won' || d.tier === 'Unclaimed' || d.tier === 'Claimed').length;
+  if(winCount < 2 || opts.force){
+    const existing = new Set(pastDraws.map(d => String(d.tokenId || '')));
+    demoLotteryRows().forEach(row => {
+      const id = String(row.tokenId);
+      if(existing.has(id)) return;
+      // Honor prior claims — never re-show as Unclaimed
+      if(claimed.has(id)){
+        row = { ...row, tier: 'Claimed', result: 'won', claimed: true };
+      }
+      if(row.result === 'won') pastDraws.unshift(row);
+      else pastDraws.push(row);
+      existing.add(id);
+    });
+  }else{
+    // Still apply claimed state to any demo rows already present
+    applyClaimedStateToPast(addr);
+  }
+
+  // Final pass: force claimed set onto all past rows
+  applyClaimedStateToPast(addr);
+  renderPast();
+
+  // Claim card — only unclaimed, never re-offer already-claimed tickets
+  const unclaimedFromPast = pastDraws.filter(d =>
+    d.tier === 'Unclaimed' && (d.demo || d.demoWin) && !claimed.has(String(d.tokenId || ''))
+  );
+  let demoTotal = 0;
+  unclaimedFromPast.forEach(d => {
+    if(d.unclaimedUsd != null) demoTotal += Number(d.unclaimedUsd) || 0;
+    else if(d.prize){
+      const n = parseFloat(String(d.prize).replace(/[^0-9.]/g, ''));
+      if(Number.isFinite(n)) demoTotal += n;
+    }
+  });
+
+  if(demoAllClaimed || (claimed.size > 0 && unclaimedFromPast.length === 0)){
+    demoLotteryActive = false;
+    demoUnclaimedUsd = 0;
+    demoUnclaimedCount = 0;
+    // Only clear claim UI if nothing real is unclaimed
+    if(unclaimedWinsUsd <= 0 || demoLotteryActive === false){
+      setUnclaimedWinnings({
+        totalUsd: 0,
+        count: 0,
+        address: addr,
+      });
+    }
+    return pastDraws.length;
+  }
+
+  if(unclaimedWinsUsd <= 0 && demoTotal > 0 && unclaimedFromPast.length > 0){
+    demoLotteryActive = true;
+    demoUnclaimedUsd = Math.round(demoTotal * 100) / 100;
+    demoUnclaimedCount = unclaimedFromPast.length;
+    setUnclaimedWinnings({
+      totalUsd: demoUnclaimedUsd,
+      count: demoUnclaimedCount,
+      address: addr,
+      demo: true,
+    });
+  }else if(addr && unclaimedWinsUsd <= 0 && !demoAllClaimed && unclaimedFromPast.length === 0 && !claimed.has('demo-win-1')){
+    // First-time empty seed only when nothing claimed yet
+    demoLotteryActive = true;
+    demoUnclaimedUsd = 47.85;
+    demoUnclaimedCount = 3;
+    setUnclaimedWinnings({
+      totalUsd: demoUnclaimedUsd,
+      count: demoUnclaimedCount,
+      address: addr,
+      demo: true,
+    });
+  }else if(unclaimedFromPast.length === 0){
+    demoLotteryActive = false;
+    if(unclaimedWinsUsd <= 0){
+      setUnclaimedWinnings({ totalUsd: 0, count: 0, address: addr });
+    }
+  }
+
+  return pastDraws.length;
+}
+
+/** Simulate claim flow for demo unclaimed wins (Sepolia preview). */
+function claimDemoWins(){
+  if(!demoLotteryActive){
+    return { ok: false, error: 'No demo wins' };
+  }
+  const addr = (window.Megapot && window.Megapot.account) || null;
+  let claimedUsd = 0;
+  const claimedIds = [];
+  pastDraws.forEach(d => {
+    if(d.tier === 'Unclaimed' || (d.result === 'won' && d.tier !== 'Claimed' && (d.demo || d.demoWin))){
+      if(d.unclaimedUsd != null) claimedUsd += Number(d.unclaimedUsd) || 0;
+      else if(d.prize){
+        const n = parseFloat(String(d.prize).replace(/[^0-9.]/g, ''));
+        if(Number.isFinite(n)) claimedUsd += n;
+      }
+      d.tier = 'Claimed';
+      d.result = 'won';
+      d.claimed = true;
+      if(d.tokenId != null) claimedIds.push(String(d.tokenId));
+    }
+  });
+  // Always mark standard demo wins claimed so they never reappear unclaimed
+  ['demo-win-1', 'demo-win-2', 'demo-win-3'].forEach(id => claimedIds.push(id));
+  markTicketsClaimed(addr, claimedIds);
+
+  if(!(claimedUsd > 0)) claimedUsd = unclaimedWinsUsd || demoUnclaimedUsd || 0;
+  demoLotteryActive = false;
+  demoUnclaimedUsd = 0;
+  demoUnclaimedCount = 0;
+  setUnclaimedWinnings({
+    totalUsd: 0,
+    count: 0,
+    address: addr,
+  });
+  renderPast();
+  return { ok: true, demo: true, claimedUsd: Math.round(claimedUsd * 100) / 100 };
+}
+
 /** Update Tickets claim card + Winnings tab from unclaimed lottery wins only */
-function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null } = {}){
+function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null, demo = false } = {}){
   unclaimedWinsUsd = Number(totalUsd) || 0;
   unclaimedWinsCount = Math.max(0, Math.floor(Number(count) || 0));
+  if(!demo && unclaimedWinsUsd > 0) demoLotteryActive = false;
 
   const money = fmtMoney(unclaimedWinsUsd);
   const has = unclaimedWinsUsd > 0 && unclaimedWinsCount > 0;
@@ -2155,10 +2942,10 @@ function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null } = {}){
   const claimSub = $('claimSub');
   const claimLab = $('claimLab');
   const claimAll = $('claimAll');
-  if(claimLab) claimLab.textContent = has ? 'Ready to claim' : 'Unclaimed wins';
+  if(claimLab) claimLab.textContent = has ? (demoLotteryActive ? 'Ready to claim' : 'Ready to claim') : 'Unclaimed wins';
   if(claimVal) claimVal.textContent = has ? money : '—';
   if(claimSub){
-    if(!address) claimSub.textContent = 'Connect wallet to load wins';
+    if(!address && !has) claimSub.textContent = 'Connect wallet to load wins';
     else if(has) claimSub.textContent = unclaimedWinsCount+' winning ticket'+(unclaimedWinsCount===1?'':'s')+' · claim to wallet';
     else claimSub.textContent = 'No unclaimed wins right now';
   }
@@ -2194,10 +2981,8 @@ function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null } = {}){
     wdClaim.textContent = has ? 'Go to Tickets to claim' : '';
   }
 
-  const lbYou = $('lbYou');
-  if(lbYou && address) lbYou.textContent = address.slice(0,4)+'…'+address.slice(-3);
-  const lbTix = $('lbTix');
-  if(lbTix) lbTix.textContent = String(typeof ticketCount === 'number' ? ticketCount : 0);
+  // Leaderboard YOU row refreshes with period data
+  try{ if(typeof refreshLeaderboard === 'function') refreshLeaderboard(); }catch(_){}
 }
 
 if($('wdClaimBtn')){
@@ -2219,8 +3004,6 @@ window.setWinningsFromWallet = function(_usdcRaw, address){
   // Keep address display only; amounts come from setUnclaimedWinnings / loadWins
   const addrEl = $('addr');
   if(addrEl) addrEl.value = address || '';
-  const lbYou = $('lbYou');
-  if(lbYou) lbYou.textContent = address ? (address.slice(0,4)+'…'+address.slice(-3)) : '—';
 };
 window.setUnclaimedWinnings = setUnclaimedWinnings;
 setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
@@ -2277,6 +3060,7 @@ if($('onboardGo')){
 
 if($('helpFab')){
   $('helpFab').onclick = ()=>{
+    if($('helpFab').dataset.dragged === '1') return;
     showOnboard(0);
   };
 }
@@ -2501,26 +3285,149 @@ document.querySelectorAll('#nav .tab').forEach(tab=>{
     const page=$('page-'+tab.dataset.page);
     if(page) page.classList.add('on');
     // Re-pull on-chain tickets when opening Tickets (fixes stale empty list)
-    if(tab.dataset.page === 'tickets' && window.Megapot?.loadUserTickets){
-      window.Megapot.loadUserTickets({ retries: 3, delayMs: 400, lookback: 10 }).catch(()=>{});
+    if(tab.dataset.page === 'tickets'){
+      if(window.Megapot?.loadUserTickets){
+        window.Megapot.loadUserTickets({ retries: 3, delayMs: 400, lookback: 12 })
+          .then(() => { try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: window.Megapot?.account }); }catch(_){} })
+          .catch(()=>{ try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: window.Megapot?.account }); }catch(_){} });
+      }else{
+        try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: window.Megapot?.account }); }catch(_){}
+      }
+      try{ window.Megapot?.loadWins?.(); }catch(_){}
+      // Always paint win/claim preview when opening Tickets
+      setTimeout(() => { try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: window.Megapot?.account }); }catch(_){} }, 400);
+    }
+    if(tab.dataset.page === 'board'){
+      try{ refreshLeaderboard(); }catch(_){}
     }
   });
 });
 document.querySelectorAll('.seg button').forEach(btn=>{
   btn.addEventListener('click',()=>{
+    // Leaderboard period buttons have their own handler
+    if(btn.closest('#lbPeriod')) return;
     btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
     btn.classList.add('on');
   });
 });
 
+// Initial + periodic leaderboard refresh
+try{ refreshLeaderboard(); }catch(_){}
+setInterval(()=>{ try{ refreshLeaderboard(); }catch(_){} }, 30000);
+
 const fab=$('missionFab'), pop=$('missionPop');
+function positionMissionPop(){
+  if(!fab || !pop || pop.hidden) return;
+  const r = fab.getBoundingClientRect();
+  const gap = 10;
+  // Prefer above the fab; if not enough room, place below
+  pop.style.right = '14px';
+  pop.style.left = 'auto';
+  pop.style.transform = 'none';
+  // Measure after making visible
+  const ph = pop.offsetHeight || 160;
+  let top = r.top - ph - gap;
+  if(top < 12) top = Math.min(window.innerHeight - ph - 12, r.bottom + gap);
+  pop.style.top = Math.max(12, top) + 'px';
+}
 if(fab&&pop){
-  fab.onclick=()=>{pop.hidden=!pop.hidden};
-  $('missionClose').onclick=()=>{pop.hidden=true};
+  fab.addEventListener('click', (e)=>{
+    if(fab.dataset.dragged === '1'){ e.preventDefault(); e.stopPropagation(); return; }
+    pop.hidden = !pop.hidden;
+    if(!pop.hidden) positionMissionPop();
+  });
+  $('missionClose')?.addEventListener('click', ()=>{ pop.hidden = true; });
   document.addEventListener('click',e=>{
     if(!pop.hidden && !pop.contains(e.target) && e.target!==fab) pop.hidden=true;
   });
+  window.addEventListener('resize', ()=>{ try{ positionMissionPop(); }catch(_){} });
 }
+
+/** Drag floating FABs vertically so they don't block the climb on mobile. */
+function makeFabDraggable(el, storageKey){
+  if(!el) return;
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  // Restore saved vertical position (px from top)
+  try{
+    const saved = localStorage.getItem(storageKey);
+    if(saved != null && saved !== ''){
+      const y = Number(saved);
+      if(Number.isFinite(y)){
+        el.style.top = clamp(y, 56, window.innerHeight - 64) + 'px';
+      }
+    }
+  }catch(_){}
+
+  let startY = 0, startTop = 0, dragging = false, moved = false, pointerId = null;
+
+  const onDown = (e) => {
+    if(e.button != null && e.button !== 0) return;
+    const t = e.touches ? e.touches[0] : e;
+    startY = t.clientY;
+    startTop = el.getBoundingClientRect().top;
+    dragging = true;
+    moved = false;
+    el.dataset.dragged = '0';
+    el.classList.add('dragging');
+    pointerId = e.pointerId;
+    try{ el.setPointerCapture?.(pointerId); }catch(_){}
+  };
+  const onMove = (e) => {
+    if(!dragging) return;
+    const t = e.touches ? e.touches[0] : e;
+    const dy = t.clientY - startY;
+    if(Math.abs(dy) > 6) moved = true;
+    if(!moved) return;
+    e.preventDefault();
+    const next = clamp(startTop + dy, 56, window.innerHeight - 64);
+    el.style.top = next + 'px';
+    if(el.id === 'missionFab') positionMissionPop();
+  };
+  const onUp = () => {
+    if(!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+    if(moved){
+      el.dataset.dragged = '1';
+      try{ localStorage.setItem(storageKey, String(Math.round(el.getBoundingClientRect().top))); }catch(_){}
+      // Suppress the click that follows a drag
+      setTimeout(()=>{ el.dataset.dragged = '0'; }, 280);
+    }
+    try{ if(pointerId != null) el.releasePointerCapture?.(pointerId); }catch(_){}
+    pointerId = null;
+  };
+
+  el.addEventListener('pointerdown', onDown, { passive: true });
+  el.addEventListener('pointermove', onMove, { passive: false });
+  el.addEventListener('pointerup', onUp);
+  el.addEventListener('pointercancel', onUp);
+  // Block click after drag for help fab too
+  el.addEventListener('click', (e) => {
+    if(el.dataset.dragged === '1'){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+}
+
+makeFabDraggable($('missionFab'), 'mp_fab_mission_top');
+makeFabDraggable($('helpFab'), 'mp_fab_help_top');
+
+// One-time nudge on small screens
+try{
+  if(window.matchMedia('(max-width:720px)').matches && !localStorage.getItem('mp_fab_drag_hint')){
+    const hint = $('fabDragHint');
+    if(hint){
+      hint.hidden = false;
+      requestAnimationFrame(()=> hint.classList.add('show'));
+      setTimeout(()=>{
+        hint.classList.remove('show');
+        setTimeout(()=>{ hint.hidden = true; }, 300);
+      }, 3200);
+      localStorage.setItem('mp_fab_drag_hint', '1');
+    }
+  }
+}catch(_){}
 
 
 // Custom stake amount → clear pill selection if not matching a pill
@@ -2569,9 +3476,16 @@ import {
 import { baseSepolia } from 'https://esm.sh/viem@2.21.54/chains';
 
 // ═══ CONFIG ═══
+const API_BASE = (typeof window.API_BASE === 'string') ? window.API_BASE : (window.resolveApiBase ? window.resolveApiBase() : '');
+function apiUrl(path){
+  if(typeof window.apiUrl === 'function') return window.apiUrl(path);
+  const p = path.startsWith('/') ? path : '/'+path;
+  return API_BASE ? (API_BASE + p) : p;
+}
+
 const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const HOUSE_BUY_URL = '/api/cashout';
-const BANK_URL = '/api/bank';
+const HOUSE_BUY_URL = apiUrl('/api/cashout');
+const BANK_URL = apiUrl('/api/bank');
 let playBalance = 0;
 const bankEntryIds = new Set(); // stakes taken from play balance
 
@@ -2775,7 +3689,7 @@ function isMobileUa(){
 
 function dappUrlForWallet(){
   try{ return location.origin + location.pathname + location.search; }
-  catch(_){ return 'https://megapush.pages.dev/game'; }
+  catch(_){ try{ return location.origin + '/game.html'; }catch(_){ return '/game.html'; } }
 }
 function openMetaMaskDapp(){
   const hostPath = (location.host + location.pathname + location.search).replace(/^\/+/, '');
@@ -2978,7 +3892,7 @@ async function refreshUsdcBalance(){
 
 /**
  * Jackpot display vs Sepolia gameplay:
- * - UI "Tonight's Megapot" → Megapot Data API (mainnet jackpot, e.g. ~$1.1M)
+ * - UI "Megapot prize pool" → Megapot Data API (mainnet jackpot, e.g. ~$1.1M)
  * - ticketPrice + drawingId for stakes/tickets → Base Sepolia RPC (testnet contracts)
  */
 async function loadLivePot(){
@@ -3136,6 +4050,8 @@ function fmtPlayUsd(n){
   return '$' + v.toFixed(2);
 }
 
+let bankSheetMode = 'deposit';
+
 function setPlayBalUi(n){
   playBalance = Math.max(0, Math.round((Number(n) || 0) * 100) / 100);
   const el = $('playBal');
@@ -3154,17 +4070,12 @@ function setPlayBalUi(n){
       if(lab) lab.textContent = 'Play';
       if(ico) ico.textContent = '+';
       chip?.classList.remove('has-bal');
-      if(chip) chip.title = 'Deposit USDC to stake without popups';
+      if(chip) chip.title = 'Deposit USDC to play';
     }
   }
   const el2 = $('bankSheetBal');
   if(el2) el2.textContent = fmtPlayUsd(playBalance);
-  const hint = $('bankHeroHint');
-  if(hint){
-    hint.textContent = playBalance > 0
-      ? 'Ready to stake · no wallet popup per round'
-      : 'Deposit Sepolia USDC to start';
-  }
+  updateBankHeroCopy();
   // Withdraw mode: disable primary if empty
   if(bankSheetMode === 'withdraw'){
     const p = $('bankPrimaryBtn');
@@ -3172,7 +4083,25 @@ function setPlayBalUi(n){
   }
 }
 
-let bankSheetMode = 'deposit';
+function updateBankHeroCopy(){
+  const lab = $('bankHeroLab');
+  const hint = $('bankHeroHint');
+  if(bankSheetMode === 'withdraw'){
+    if(lab) lab.textContent = 'Available to withdraw';
+    if(hint){
+      hint.textContent = playBalance > 0
+        ? 'Withdraw USDC to your wallet'
+        : 'Nothing to withdraw yet · deposit first';
+    }
+  }else{
+    if(lab) lab.textContent = 'Available to stake';
+    if(hint){
+      hint.textContent = playBalance > 0
+        ? 'Your play balance'
+        : 'Deposit Sepolia USDC to start';
+    }
+  }
+}
 
 function setBankStatus(msg, kind){
   const el = $('bankStatus');
@@ -3197,56 +4126,470 @@ function setBankMode(mode){
     primary.textContent = bankSheetMode === 'withdraw' ? 'Withdraw to wallet' : 'Deposit USDC';
     primary.disabled = bankSheetMode === 'withdraw' && !(playBalance > 0);
   }
-  if(bankSheetMode === 'withdraw' && playBalance > 0){
-    if($('bankAmt')) $('bankAmt').value = String(Math.floor(playBalance) || playBalance);
-    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
-  }else if(bankSheetMode === 'deposit'){
-    if($('bankAmt') && (!Number($('bankAmt').value) || Number($('bankAmt').value) > playBalance + 1e9)){
-      // keep amount or default
-      if(!Number($('bankAmt').value)) $('bankAmt').value = '25';
+  if(bankSheetMode === 'withdraw'){
+    // Pre-fill max only on withdraw when funded; never invent a deposit amount
+    if(playBalance > 0 && $('bankAmt')){
+      $('bankAmt').value = String(Math.floor(playBalance) || playBalance);
+    }else if($('bankAmt')){
+      $('bankAmt').value = '';
     }
+    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
+  }else{
+    // Deposit: leave amount empty — user chooses pill or types
+    if($('bankAmt')) $('bankAmt').value = '';
+    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
   }
+  updateBankHeroCopy();
   setBankStatus('');
 }
 
 function openBankSheet(mode){
   setBankMode(mode || 'deposit');
-  if(bankSheetMode === 'deposit' && $('bankAmt') && !Number($('bankAmt').value)){
-    $('bankAmt').value = '25';
+  // Deposit never auto-selects an amount
+  if(bankSheetMode === 'deposit'){
+    if($('bankAmt')) $('bankAmt').value = '';
+    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
   }
   setPlayBalUi(playBalance);
   setBankStatus('');
   $('bankSheetBg')?.classList.add('show');
-  refreshPlayBalance().then(() => setPlayBalUi(playBalance));
-  // focus amount after open
-  setTimeout(() => { try{ $('bankAmt')?.focus(); $('bankAmt')?.select?.(); }catch(_){} }, 80);
+  refreshPlayBalance().then(() => {
+    setPlayBalUi(playBalance);
+    refreshBankHistory().catch(()=>{});
+  });
+  // Focus empty amount field so user can type (no pre-selected value)
+  setTimeout(() => { try{ $('bankAmt')?.focus(); }catch(_){} }, 80);
 }
 window.openBankSheet = openBankSheet;
 window.setBankMode = setBankMode;
 
 
-async function refreshPlayBalance(){
-  if(!account){ setPlayBalUi(0); return 0; }
+/** Local bank backup — survives server/edge lag so deposits feel instant. */
+function bankLocalKey(addr){
+  return 'mp_bank_' + String(addr || '').toLowerCase();
+}
+function readLocalBank(addr){
   try{
-    const r = await fetch(BANK_URL + '?player=' + encodeURIComponent(account), { cache: 'no-store' });
+    const raw = localStorage.getItem(bankLocalKey(addr));
+    if(!raw) return { balance: 0, usedTx: [], pending: [] };
+    const j = JSON.parse(raw);
+    return {
+      balance: Math.max(0, Number(j.balance) || 0),
+      usedTx: Array.isArray(j.usedTx) ? j.usedTx : [],
+      pending: Array.isArray(j.pending) ? j.pending : [],
+    };
+  }catch(_){
+    return { balance: 0, usedTx: [], pending: [] };
+  }
+}
+function writeLocalBank(addr, data){
+  try{
+    localStorage.setItem(bankLocalKey(addr), JSON.stringify({
+      balance: Math.max(0, Math.round((Number(data.balance) || 0) * 100) / 100),
+      usedTx: (data.usedTx || []).slice(-200),
+      pending: (data.pending || []).slice(-50),
+      updatedAt: Date.now(),
+    }));
+  }catch(_){}
+}
+function localCreditDeposit(addr, amount, txHash){
+  const b = readLocalBank(addr);
+  const tx = String(txHash || '').toLowerCase();
+  if(tx && b.usedTx.includes(tx)) return b.balance;
+  const amt = Math.max(0, Number(amount) || 0);
+  b.balance = Math.round((b.balance + amt) * 100) / 100;
+  if(tx){
+    b.usedTx.push(tx);
+    if(!b.pending.some(p => String(p.tx).toLowerCase() === tx)){
+      b.pending.push({ tx, amount: amt, at: Date.now() });
+    }
+  }
+  writeLocalBank(addr, b);
+  return b.balance;
+}
+function localMarkDepositSynced(addr, txHash, serverBalance){
+  const b = readLocalBank(addr);
+  const tx = String(txHash || '').toLowerCase();
+  b.pending = b.pending.filter(p => String(p.tx).toLowerCase() !== tx);
+  if(tx && !b.usedTx.includes(tx)) b.usedTx.push(tx);
+  if(serverBalance != null && Number.isFinite(Number(serverBalance))){
+    // Prefer server when durable; never drop pending-only credits
+    const pendingSum = b.pending.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    b.balance = Math.max(Number(serverBalance) || 0, pendingSum);
+  }
+  writeLocalBank(addr, b);
+  return b.balance;
+}
+
+const BASESCAN_TX = 'https://sepolia.basescan.org/tx/';
+const BASESCAN_ADDR = 'https://sepolia.basescan.org/address/';
+let bankHistoryCache = [];
+
+function shortTx(h){
+  const s = String(h || '');
+  if(s.length < 12) return s || '—';
+  return s.slice(0, 6) + '…' + s.slice(-4);
+}
+function fmtHistTime(ts){
+  const n = Number(ts);
+  if(!(n > 0)) return '';
+  try{
+    return new Date(n).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  }catch(_){ return ''; }
+}
+function histTypeLabel(t){
+  const k = String(t || '').toLowerCase();
+  if(k === 'deposit') return 'Deposit';
+  if(k === 'withdraw') return 'Withdraw';
+  if(k === 'stake') return 'Stake';
+  if(k === 'refund') return 'Refund';
+  return k || 'Tx';
+}
+function histSignedAmount(row){
+  const amt = Math.abs(Number(row.amount) || 0);
+  const t = String(row.type || '').toLowerCase();
+  const neg = t === 'withdraw' || t === 'stake';
+  const sign = neg ? '−' : '+';
+  return { text: sign + '$' + amt.toFixed(amt % 1 ? 2 : 0), neg };
+}
+function mergeBankHistory(serverList, localList){
+  const map = new Map();
+  const add = (row) => {
+    if(!row) return;
+    const key = row.txHash
+      ? (String(row.type) + ':' + String(row.txHash).toLowerCase())
+      : (String(row.type) + ':' + String(row.entryId || '') + ':' + String(row.at || ''));
+    if(!map.has(key)) map.set(key, row);
+  };
+  (serverList || []).forEach(add);
+  (localList || []).forEach(add);
+  return Array.from(map.values()).sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)).slice(0, 50);
+}
+function renderBankHistory(list){
+  const el = $('bankHistoryList');
+  const link = $('bankExplorerLink');
+  if(link){
+    link.href = account
+      ? (BASESCAN_ADDR + account)
+      : 'https://sepolia.basescan.org';
+    link.textContent = account ? 'Wallet on BaseScan ↗' : 'BaseScan ↗';
+  }
+  if(!el) return;
+  if(!account){
+    el.innerHTML = '<div class="bh-empty">Connect wallet to see deposits &amp; withdrawals</div>';
+    return;
+  }
+  const rows = Array.isArray(list) ? list : [];
+  bankHistoryCache = rows;
+  if(!rows.length){
+    el.innerHTML = '<div class="bh-empty">No transactions yet</div>';
+    return;
+  }
+  el.innerHTML = rows.map(row => {
+    const { text, neg } = histSignedAmount(row);
+    const type = String(row.type || 'tx').toLowerCase();
+    const when = fmtHistTime(row.at);
+    const bal = row.balance != null ? ('Bal $' + Number(row.balance).toFixed(Number(row.balance) % 1 ? 2 : 0)) : '';
+    const tx = row.txHash
+      ? ('<a href="'+BASESCAN_TX+row.txHash+'" target="_blank" rel="noopener noreferrer">'+shortTx(row.txHash)+' ↗</a>')
+      : '<span>Internal</span>';
+    return (
+      '<div class="bh-row">'+
+        '<div class="bh-type '+type+'">'+histTypeLabel(type)+'</div>'+
+        '<div class="bh-amt '+(neg?'neg':'pos')+'">'+text+'</div>'+
+        '<div class="bh-meta"><span>'+when+(bal ? ' · '+bal : '')+'</span>'+tx+'</div>'+
+      '</div>'
+    );
+  }).join('');
+}
+function pushLocalHistory(addr, row){
+  if(!addr || !row) return;
+  try{
+    const key = 'mp_bank_hist_' + String(addr).toLowerCase();
+    let list = [];
+    try{ list = JSON.parse(localStorage.getItem(key) || '[]'); }catch(_){ list = []; }
+    if(!Array.isArray(list)) list = [];
+    list.unshift({
+      type: row.type,
+      amount: Number(row.amount) || 0,
+      txHash: row.txHash || null,
+      entryId: row.entryId || null,
+      at: row.at || Date.now(),
+      balance: row.balance != null ? Number(row.balance) : null,
+    });
+    list = list.slice(0, 50);
+    localStorage.setItem(key, JSON.stringify(list));
+    return list;
+  }catch(_){ return []; }
+}
+function readLocalHistory(addr){
+  try{
+    const key = 'mp_bank_hist_' + String(addr || '').toLowerCase();
+    const list = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(list) ? list : [];
+  }catch(_){ return []; }
+}
+async function refreshBankHistory(){
+  if(!account){
+    renderBankHistory([]);
+    return [];
+  }
+  const local = readLocalHistory(account);
+  renderBankHistory(mergeBankHistory([], local));
+  try{
+    const r = await fetch(
+      BANK_URL + '?player=' + encodeURIComponent(account) + '&history=1',
+      { cache: 'no-store' },
+    );
+    const j = await r.json().catch(() => ({}));
+    if(j?.ok){
+      const merged = mergeBankHistory(j.history || [], local);
+      renderBankHistory(merged);
+      if(j.balance != null && !(readLocalBank(account).pending || []).length){
+        // keep balance UI in sync when history loads
+      }
+      return merged;
+    }
+  }catch(e){ console.warn('bank history', e); }
+  return bankHistoryCache;
+}
+
+/** Scan chain for player→house USDC and credit any missing deposits (safe / idempotent). */
+async function reconcileDepositsOnChain(){
+  if(!account) return null;
+
+  // Prefer server-side scan
+  try{
+    const j = await bankApi({
+      action: 'reconcile',
+      player: account,
+      lookbackBlocks: 5000,
+    }, { quiet: true });
+    if(j?.ok){
+      if(j.balance != null) setPlayBalUi(j.balance);
+      if(Array.isArray(j.history)){
+        renderBankHistory(mergeBankHistory(j.history, readLocalHistory(account)));
+      }
+      if(j.totalNew > 0 || (j.results || []).some(r => r.already || r.credited > 0)){
+        try{
+          const done = new Set((j.results || []).filter(r => r.ok).map(r => String(r.txHash).toLowerCase()));
+          const loc = readLocalBank(account);
+          loc.pending = (loc.pending || []).filter(p => !done.has(String(p.tx).toLowerCase()));
+          if(j.balance != null) loc.balance = Number(j.balance) || loc.balance;
+          writeLocalBank(account, loc);
+          let all = JSON.parse(localStorage.getItem('mp_pending_deposits') || '[]');
+          if(Array.isArray(all)){
+            all = all.filter(p => !done.has(String(p.tx || '').toLowerCase()));
+            localStorage.setItem('mp_pending_deposits', JSON.stringify(all));
+          }
+        }catch(_){}
+      }
+      return j;
+    }
+  }catch(e){ console.warn('reconcile server', e); }
+
+  // Client-side fallback: scan logs → POST deposit per tx (idempotent)
+  try{
+    const head = await publicClient.getBlockNumber();
+    const start = head > 4000n ? head - 4000n : 0n;
+    const event = parseAbi([
+      'event Transfer(address indexed from, address indexed to, uint256 value)',
+    ])[0];
+    const logs = [];
+    let from = start;
+    while(from <= head){
+      let to = from + 1799n;
+      if(to > head) to = head;
+      try{
+        const batch = await publicClient.getLogs({
+          address: USDC,
+          event,
+          args: { from: account, to: HOUSE_TREASURY },
+          fromBlock: from,
+          toBlock: to,
+        });
+        logs.push(...(batch || []));
+      }catch(_){}
+      from = to + 1n;
+    }
+    const seen = new Set();
+    let totalNew = 0;
+    let lastBal = playBalance;
+    for(const log of logs){
+      const tx = log.transactionHash;
+      if(!tx || seen.has(tx.toLowerCase())) continue;
+      seen.add(tx.toLowerCase());
+      const amount = log.args?.value != null ? Number(formatUnits(log.args.value, 6)) : 0;
+      const j = await bankApi({
+        action: 'deposit',
+        player: account,
+        txHash: tx,
+        amount,
+      }, { quiet: true });
+      if(j?.ok && j.credited > 0) totalNew += j.credited;
+      if(j?.balance != null) lastBal = j.balance;
+    }
+    if(lastBal != null) setPlayBalUi(lastBal);
+    try{ await refreshBankHistory(); }catch(_){}
+    return { ok: true, totalNew, balance: lastBal, scanned: seen.size, client: true };
+  }catch(e){
+    console.warn('reconcile client', e);
+    return null;
+  }
+}
+
+async function refreshPlayBalance(){
+  if(!account){ setPlayBalUi(0); renderBankHistory([]); return 0; }
+  // Show local immediately
+  try{
+    const loc = readLocalBank(account);
+    if(loc.balance > 0 || loc.pending.length) setPlayBalUi(loc.balance);
+  }catch(_){}
+  // 1) Retry locally remembered pending deposits
+  try{ await flushPendingDeposits(); }catch(_){}
+  // 2) Scan chain for any deposit that never got into the bank (survives refresh / lost hash)
+  try{ await reconcileDepositsOnChain(); }catch(_){}
+  try{
+    const r = await fetch(
+      BANK_URL + '?player=' + encodeURIComponent(account) + '&history=1',
+      { cache: 'no-store' },
+    );
     const j = await r.json().catch(()=>({}));
-    if(j && j.ok){ setPlayBalUi(j.balance); return playBalance; }
+    if(j && j.ok){
+      const loc = readLocalBank(account);
+      // Prefer server after reconcile; keep local only if still has unsynced pending
+      const show = loc.pending.length
+        ? Math.max(Number(j.balance) || 0, loc.balance)
+        : Number(j.balance) || 0;
+      writeLocalBank(account, {
+        balance: show,
+        usedTx: loc.usedTx,
+        pending: loc.pending,
+      });
+      setPlayBalUi(show);
+      renderBankHistory(mergeBankHistory(j.history || [], readLocalHistory(account)));
+      return playBalance;
+    }
   }catch(e){ console.warn('play balance', e); }
+  try{ await refreshBankHistory(); }catch(_){}
   return playBalance;
 }
 
-async function bankApi(body){
+/** Persist pending deposit as soon as tx is submitted (survives refresh). */
+function rememberPendingDeposit(addr, amount, txHash){
+  if(!addr || !txHash) return;
+  const player = String(addr).toLowerCase();
+  const tx = String(txHash).toLowerCase();
+  const amt = Math.max(0, Number(amount) || 0);
+  // local bank pending
+  const b = readLocalBank(player);
+  if(!b.pending.some(p => String(p.tx).toLowerCase() === tx)){
+    b.pending.push({ tx, amount: amt, at: Date.now() });
+  }
+  if(!b.usedTx.includes(tx)) b.usedTx.push(tx);
+  // optimistic balance so UI doesn't show $0 after refresh
+  if(amt > 0 && !b.pendingSynced){
+    /* balance already adjusted by localCreditDeposit when called */
+  }
+  writeLocalBank(player, b);
+  // session + global recover list (extra safety)
+  try{
+    const key = 'mp_pending_deposits';
+    let all = [];
+    try{ all = JSON.parse(localStorage.getItem(key) || '[]'); }catch(_){ all = []; }
+    if(!Array.isArray(all)) all = [];
+    if(!all.some(p => p && String(p.tx).toLowerCase() === tx)){
+      all.push({ player, tx, amount: amt, at: Date.now() });
+    }
+    all = all.slice(-40);
+    localStorage.setItem(key, JSON.stringify(all));
+    sessionStorage.setItem('mp_last_deposit', JSON.stringify({ player, tx, amount: amt, at: Date.now() }));
+  }catch(_){}
+}
+
+function loadAllPendingDeposits(addr){
+  const player = String(addr || '').toLowerCase();
+  const map = new Map();
+  try{
+    const loc = readLocalBank(player);
+    (loc.pending || []).forEach(p => {
+      if(p?.tx) map.set(String(p.tx).toLowerCase(), { player, tx: String(p.tx).toLowerCase(), amount: Number(p.amount)||0 });
+    });
+  }catch(_){}
+  try{
+    const all = JSON.parse(localStorage.getItem('mp_pending_deposits') || '[]');
+    (Array.isArray(all) ? all : []).forEach(p => {
+      if(p && String(p.player).toLowerCase() === player && p.tx){
+        map.set(String(p.tx).toLowerCase(), {
+          player,
+          tx: String(p.tx).toLowerCase(),
+          amount: Number(p.amount)||0,
+        });
+      }
+    });
+  }catch(_){}
+  try{
+    const last = JSON.parse(sessionStorage.getItem('mp_last_deposit') || 'null');
+    if(last && String(last.player).toLowerCase() === player && last.tx){
+      map.set(String(last.tx).toLowerCase(), {
+        player,
+        tx: String(last.tx).toLowerCase(),
+        amount: Number(last.amount)||0,
+      });
+    }
+  }catch(_){}
+  return Array.from(map.values());
+}
+
+async function flushPendingDeposits(){
+  if(!account) return;
+  const pending = loadAllPendingDeposits(account);
+  if(!pending.length) return;
+  for(const p of pending){
+    try{
+      const last = await bankApi({
+        action: 'deposit',
+        player: account,
+        txHash: p.tx,
+        amount: p.amount,
+      }, { quiet: true });
+      if(last?.ok){
+        localMarkDepositSynced(account, p.tx, last.balance);
+        // remove from global pending list
+        try{
+          const key = 'mp_pending_deposits';
+          let all = JSON.parse(localStorage.getItem(key) || '[]');
+          if(Array.isArray(all)){
+            all = all.filter(x => !(x && String(x.tx).toLowerCase() === String(p.tx).toLowerCase()));
+            localStorage.setItem(key, JSON.stringify(all));
+          }
+        }catch(_){}
+        try{
+          const last = JSON.parse(sessionStorage.getItem('mp_last_deposit') || 'null');
+          if(last && String(last.tx).toLowerCase() === String(p.tx).toLowerCase()){
+            sessionStorage.removeItem('mp_last_deposit');
+          }
+        }catch(_){}
+        if(last.balance != null) setPlayBalUi(Math.max(Number(last.balance)||0, playBalance));
+      }
+    }catch(_){}
+  }
+}
+
+async function bankApi(body, opts = {}){
   const r = await fetch(BANK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const j = await r.json().catch(()=>({}));
-  if(j && j.balance != null) setPlayBalUi(j.balance);
+  if(!opts.quiet && j && j.balance != null) setPlayBalUi(j.balance);
   return { http: r.status, ...j };
 }
 
-/** Deposit USDC to house once → credit play balance (one wallet confirm). */
+/** Deposit USDC to house once → credit play balance INSTANTLY (optimistic + durable server). */
 async function depositToPlayBalance(amountUsd){
   const amt = Math.floor(Number(amountUsd) || 0);
   if(!(amt > 0)) return { ok: false, error: 'Enter a deposit amount' };
@@ -3254,17 +4597,136 @@ async function depositToPlayBalance(amountUsd){
     await connectWallet({ silent: false });
     if(!account) return { ok: false, error: 'Connect wallet first' };
   }
-  // Reuse transfer to treasury
-  const res = await stakeUsdc(amt, 99); // entryIndex 99 = deposit tag (not a live bet)
-  if(!res?.ok || !res.tx) return { ok: false, error: res?.error || 'Deposit transfer failed' };
-  // Credit bank from verified tx (retry a few times for RPC lag)
-  let last = null;
-  for(let i=0;i<8;i++){
-    last = await bankApi({ action: 'deposit', player: account, txHash: res.tx });
-    if(last?.ok) return { ok: true, ...last, tx: res.tx };
-    await new Promise(r => setTimeout(r, 600));
+
+  // Inline transfer so we can SAVE the tx hash the instant the wallet submits
+  // (before confirmation) — refresh-safe recovery.
+  const cfg = ensureTreasuryConfigured();
+  if(!cfg.ok) return cfg;
+  const treasury = cfg.address;
+  const onSepolia = await ensureBaseSepolia(eip1193, { interactive: true });
+  if(!onSepolia) return { ok: false, error: 'Please switch to Base Sepolia to deposit' };
+
+  const raw = parseUnits(String(amt), 6);
+  let bal;
+  try{
+    bal = await publicClient.readContract({ address: USDC, abi, functionName: 'balanceOf', args: [account] });
+  }catch(_){
+    return { ok: false, error: 'Could not read USDC balance — check RPC / network' };
   }
-  return { ok: false, error: last?.error || 'Could not credit deposit', tx: res.tx };
+  if(bal < raw){
+    const have = Number(formatUnits(bal, 6)).toFixed(2);
+    return { ok: false, error: `Insufficient Sepolia USDC (have ${have}, need ${amt})` };
+  }
+
+  let gas;
+  try{
+    gas = await publicClient.estimateContractGas({
+      address: USDC, abi, functionName: 'transfer', args: [treasury, raw], account,
+    });
+    gas = (gas * 12n) / 10n;
+  }catch(_){ gas = 100000n; }
+
+  let txHash;
+  try{
+    txHash = await walletClient.writeContract({
+      address: USDC,
+      abi,
+      functionName: 'transfer',
+      args: [treasury, raw],
+      account,
+      chain: CHAIN,
+      gas,
+    });
+  }catch(e){
+    return { ok: false, error: friendlyWalletError(e) };
+  }
+
+  // CRITICAL: remember deposit BEFORE waiting for confirmation / server credit
+  rememberPendingDeposit(account, amt, txHash);
+  const optimistic = localCreditDeposit(account, amt, txHash);
+  setPlayBalUi(optimistic);
+  pushLocalHistory(account, {
+    type: 'deposit',
+    amount: amt,
+    txHash,
+    at: Date.now(),
+    balance: optimistic,
+  });
+  renderBankHistory(mergeBankHistory(bankHistoryCache, readLocalHistory(account)));
+
+  // Wait for chain confirmation (deposit already saved if user refreshes now)
+  try{
+    await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 1 });
+  }catch(_){
+    // still try to credit — receipt may be on another RPC
+  }
+  try{ await refreshUsdcBalance(); }catch(_){}
+
+  // Server durable credit — multi-retry for RPC indexing lag
+  let last = null;
+  const delays = [0, 300, 500, 800, 1200, 1500, 2000, 2500, 3000, 4000, 5000];
+  for(let i = 0; i < delays.length; i++){
+    if(delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]));
+    last = await bankApi({
+      action: 'deposit',
+      player: account,
+      txHash,
+      amount: amt,
+    }, { quiet: true });
+    if(last?.ok){
+      const synced = localMarkDepositSynced(account, txHash, last.balance);
+      const show = Math.max(Number(last.balance) || 0, Number(synced) || 0, optimistic);
+      setPlayBalUi(show);
+      try{
+        let all = JSON.parse(localStorage.getItem('mp_pending_deposits') || '[]');
+        if(Array.isArray(all)){
+          all = all.filter(x => !(x && String(x.tx).toLowerCase() === String(txHash).toLowerCase()));
+          localStorage.setItem('mp_pending_deposits', JSON.stringify(all));
+        }
+        sessionStorage.removeItem('mp_last_deposit');
+      }catch(_){}
+      if(Array.isArray(last.history)){
+        renderBankHistory(mergeBankHistory(last.history, readLocalHistory(account)));
+      }else{
+        try{ refreshBankHistory(); }catch(_){}
+      }
+      return { ok: true, ...last, balance: show, tx: txHash, instant: true };
+    }
+    setPlayBalUi(readLocalBank(account).balance);
+  }
+
+  const keep = readLocalBank(account).balance;
+  setPlayBalUi(keep);
+  // Background keep-trying (idempotent by tx hash)
+  (async () => {
+    for(let i = 0; i < 30; i++){
+      await new Promise(r => setTimeout(r, 2000));
+      try{
+        const j = await bankApi({
+          action: 'deposit',
+          player: account,
+          txHash,
+          amount: amt,
+        }, { quiet: true });
+        if(j?.ok){
+          localMarkDepositSynced(account, txHash, j.balance);
+          setPlayBalUi(Math.max(Number(j.balance) || 0, readLocalBank(account).balance));
+          try{ sessionStorage.removeItem('mp_last_deposit'); }catch(_){}
+          return;
+        }
+      }catch(_){}
+    }
+  })();
+
+  return {
+    ok: true,
+    balance: keep,
+    credited: amt,
+    tx: txHash,
+    pendingSync: true,
+    instant: true,
+    warning: last?.error || 'Syncing deposit to server…',
+  };
 }
 
 /** Withdraw play balance USDC to player wallet (house sends). */
@@ -3282,6 +4744,20 @@ async function withdrawFromPlayBalance(amountUsd){
   });
   if(j?.ok){
     setPlayBalUi(j.balance);
+    if(j.txHash){
+      pushLocalHistory(account, {
+        type: 'withdraw',
+        amount: amt,
+        txHash: j.txHash,
+        at: Date.now(),
+        balance: j.balance,
+      });
+    }
+    if(Array.isArray(j.history)){
+      renderBankHistory(mergeBankHistory(j.history, readLocalHistory(account)));
+    }else{
+      try{ await refreshBankHistory(); }catch(_){}
+    }
     try{ await refreshUsdcBalance(); }catch(_){}
     return { ok: true, ...j };
   }
@@ -3289,7 +4765,7 @@ async function withdrawFromPlayBalance(amountUsd){
   return { ok: false, error: j?.error || 'Withdraw failed', ...j };
 }
 
-/** Stake from play balance — no wallet popup. */
+/** Stake from play balance — no wallet popup. Server enforces window + exposure. */
 async function stakeFromPlayBalance(amountUsd, entryIndex = 0){
   if(!account) return { ok: false, error: 'Please connect your wallet' };
   const amt = Math.floor(Number(amountUsd) || 0);
@@ -3297,11 +4773,42 @@ async function stakeFromPlayBalance(amountUsd, entryIndex = 0){
   if(playBalance + 1e-9 < amt){
     return { ok: false, error: 'Insufficient play balance', needDeposit: true, balance: playBalance };
   }
+  try{
+    const g = typeof globalRound !== 'undefined' ? globalRound : null;
+    if(g){
+      const now = typeof serverNow === 'function' ? serverNow() : Date.now();
+      const ph = typeof phaseAt === 'function' ? phaseAt(g, now) : g.phase;
+      if(g.kill) return { ok:false, error:'Play paused (kill switch)' };
+      if(g.windowClosed || g.acceptingBets===false || (ph && ph!=='betting')){
+        return { ok:false, error:'Betting window closed — wait for the next hand', windowClosed:true };
+      }
+    }
+  }catch(_){}
   const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
   const j = await bankApi({ action: 'stake', player: account, entryId, stake: amt });
-  if(!j?.ok) return { ok: false, error: j?.error || 'Bank stake failed', needDeposit: j?.error === 'Insufficient play balance', balance: j?.balance };
+  if(!j?.ok){
+    let err = j?.error || 'Bank stake failed';
+    if(j?.windowClosed || /betting window/i.test(err)) err = 'Betting window closed — wait for the next hand';
+    else if(/MAX_ROUND_EXPOSURE/i.test(err) || /exposure/i.test(err)) err = 'Round full (exposure cap) — try a smaller stake or next hand';
+    return {
+      ok: false,
+      error: err,
+      needDeposit: /insufficient play balance/i.test(String(j?.error||'')),
+      balance: j?.balance,
+      windowClosed: j?.windowClosed,
+      remainingUsdc: j?.remainingUsdc,
+    };
+  }
   bankEntryIds.add(entryId);
-  return { ok: true, entryId, amount: amt, fromBank: true, balance: j.balance };
+  return {
+    ok: true,
+    entryId,
+    amount: amt,
+    fromBank: true,
+    balance: j.balance,
+    roundId: j.roundId,
+    exposureUsdc: j.exposureUsdc,
+  };
 }
 
 async function creditPlayBalance(entryId, amountUsd){
@@ -3314,6 +4821,39 @@ async function creditPlayBalance(entryId, amountUsd){
     reason: 'refund',
   });
   return j;
+}
+
+/** Map wallet/provider errors into short, actionable copy. */
+function friendlyWalletError(e){
+  const raw = String(e?.shortMessage || e?.details || e?.message || e || '');
+  const lower = raw.toLowerCase();
+  // MetaMask Gas Station / 7702 / tx-sentinel — TLS or relay outage (NOT a USDC revert)
+  if(
+    lower.includes('gas station') ||
+    lower.includes('tx-sentinel') ||
+    lower.includes('7702') ||
+    lower.includes('nsurlerrordomain') ||
+    lower.includes('tls error') ||
+    (lower.includes('secure connection') && lower.includes('fail'))
+  ){
+    return 'MetaMask network glitch (Gas Station / relay TLS). Not a USDC error. Retry, or in MetaMask turn off Smart Transactions / Smart Account for Base Sepolia, then try again. Desktop MetaMask or Rabby often works better.';
+  }
+  if(lower.includes('user rejected') || lower.includes('user denied') || lower.includes('rejected the request')){
+    return 'Transaction rejected in wallet';
+  }
+  if(lower.includes('insufficient funds') || lower.includes('insufficient eth') || lower.includes('gas required exceeds')){
+    return 'Not enough Base Sepolia ETH for gas — get a little from a faucet';
+  }
+  if(lower.includes('chain') && (lower.includes('mismatch') || lower.includes('switch'))){
+    return 'Switch wallet network to Base Sepolia and retry';
+  }
+  // Strip giant nested UserInfo blobs from iOS MetaMask
+  if(raw.length > 180){
+    const head = raw.split(/Error Domain|UserInfo|NSUnderlying/i)[0].trim();
+    if(head && head.length < 160) return head;
+    return head.slice(0, 160) + '…';
+  }
+  return raw || 'Wallet transaction failed';
 }
 
 /** Player signs USDC transfer to HOUSE_TREASURY for stake amount (human dollars → 6 dec). */
@@ -3346,6 +4886,19 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
       return { ok: false, error: `Insufficient Sepolia USDC (have ${have}, need ${amt})` };
     }
 
+    // Explicit gas helps some wallets skip broken simulation / relay paths
+    let gas;
+    try{
+      gas = await publicClient.estimateContractGas({
+        address: USDC,
+        abi,
+        functionName: 'transfer',
+        args: [treasury, raw],
+        account,
+      });
+      gas = (gas * 12n) / 10n; // +20% headroom
+    }catch(_){ gas = 100000n; }
+
     const hash = await walletClient.writeContract({
       address: USDC,
       abi,
@@ -3353,6 +4906,7 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
       args: [treasury, raw],
       account,
       chain: CHAIN,
+      gas,
     });
     await publicClient.waitForTransactionReceipt({ hash });
     const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
@@ -3368,7 +4922,7 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
     return { ok: true, tx: hash, entryId, amount: amt, treasury };
   }catch(e){
     console.error('stakeUsdc', e);
-    return { ok: false, error: e?.shortMessage || e?.message || String(e) };
+    return { ok: false, error: friendlyWalletError(e) };
   }
 }
 
@@ -3526,14 +5080,15 @@ function restoreTicketCacheFor(addr){
 }
 
 /**
- * Load tickets across recent drawings (not only currentDrawingId).
- * Tickets from the previous drawing stay visible so a refresh does not wipe them.
+ * Load tickets across recent drawings.
+ * Live list = current drawing only.
+ * Past drawings = settled prior draws (on-chain), not the Megapot mainnet wins API.
  */
 async function loadUserTickets(opts = {}){
   const retries = Math.max(0, Number(opts.retries) || 0);
   const delayMs = Math.max(150, Number(opts.delayMs) || 400);
   const expectAtLeast = opts.expectAtLeast != null ? Math.max(0, Math.floor(Number(opts.expectAtLeast))) : null;
-  const lookback = Math.max(1, Math.min(12, Number(opts.lookback) || 8));
+  const lookback = Math.max(1, Math.min(16, Number(opts.lookback) || 12));
 
   if(!account){
     // Do NOT wipe — restore last wallet cache if present
@@ -3559,33 +5114,84 @@ async function loadUserTickets(opts = {}){
         drawingIds.push(d);
       }
 
-      const byToken = new Map();
+      const live = [];
+      const past = [];
+      const nowSec = Math.floor(Date.now() / 1000);
+
       for(const d of drawingIds){
+        let st = null;
+        try{
+          st = await publicClient.readContract({
+            address: JACKPOT, abi, functionName: 'getDrawingState', args: [d],
+          });
+        }catch(_){ st = null; }
+
+        const isCurrent = d === current;
+        const drawTime = st?.drawingTime != null ? Number(st.drawingTime) : 0;
+        const locked = !!(st && st.jackpotLock);
+        const hasWinner = st && st.winningTicket != null && BigInt(st.winningTicket) > 0n;
+        // Settled if not current, or jackpot locked / winning ticket set / draw time passed
+        const settled = !isCurrent || locked || hasWinner || (drawTime > 0 && drawTime <= nowSec);
+
+        let arr = [];
         try{
           const tickets = await publicClient.readContract({
             address: TICKET_NFT, abi, functionName: 'getUserTickets', args: [account, d],
           });
-          const arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
-          const isCurrent = d === current;
-          for(const t of arr){
-            const tokenId = t.ticketId != null ? String(t.ticketId) : '';
-            if(!tokenId || byToken.has(tokenId)) continue;
-            byToken.set(tokenId, {
-              tokenId,
-              picks: (t.normals || []).map(Number),
-              bonus: Number(t.bonusball),
-              status: 'live',
-              drawingId: String(d),
-              drawingLabel: isCurrent ? 'Live' : ('Draw #'+String(d)),
-            });
-          }
+          arr = Array.isArray(tickets) ? tickets : (tickets ? Array.from(tickets) : []);
         }catch(e){
           console.warn('getUserTickets drawing', String(d), e);
+          continue;
+        }
+
+        for(const t of arr){
+          const tokenId = t.ticketId != null ? String(t.ticketId) : '';
+          const picks = (t.normals || []).map(Number);
+          const bonus = Number(t.bonusball);
+          const packed = t.ticket?.packedTicket != null ? BigInt(t.ticket.packedTicket) : null;
+          const winPacked = st?.winningTicket != null ? BigInt(st.winningTicket) : null;
+          const exactWin = packed != null && winPacked != null && packed === winPacked && winPacked > 0n;
+
+          if(isCurrent && !settled){
+            live.push({
+              tokenId,
+              picks,
+              bonus,
+              status: 'live',
+              drawingId: String(d),
+              drawingLabel: 'Live',
+            });
+          }else{
+            // Past / settled drawing
+            const when = drawTime > 0
+              ? new Date(drawTime * 1000).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+              : ('#'+String(d));
+            past.push({
+              tokenId,
+              date: when,
+              drawId: String(d),
+              picks,
+              bonus,
+              result: exactWin ? 'won' : 'lost',
+              prize: exactWin ? 'Jackpot match' : null,
+              tier: exactWin ? 'Won' : (locked || hasWinner || (drawTime > 0 && drawTime <= nowSec) ? 'Drawn' : 'Pending'),
+            });
+          }
         }
       }
 
-      lastMapped = Array.from(byToken.values()).map((t, i) => ({ ...t, n: i + 1 }));
+      // Live tickets UI = current open draw only
+      lastMapped = live.map((t, i) => ({ ...t, n: i + 1 }));
       applyTicketsToUi(lastMapped);
+
+      // Past drawings from on-chain (Megapot mainnet wins API is empty on Sepolia)
+      if(window.MegaPushUI?.applyPastDraws){
+        window.MegaPushUI.applyPastDraws(past);
+      }
+      // Overlay any API wins if present
+      try{ await mergeWinsIntoPast(); }catch(_){}
+      // Preview wins + claim UX (Sepolia has no wins API)
+      try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: account }); }catch(_){}
 
       if(expectAtLeast == null || lastMapped.length >= expectAtLeast) return lastMapped;
     }catch(e){
@@ -3596,6 +5202,41 @@ async function loadUserTickets(opts = {}){
   return lastMapped;
 }
 
+/** Overlay Megapot wins API onto past list when it returns data (mainnet). */
+async function mergeWinsIntoPast(){
+  if(!account || !window.MegaPushUI?.mergePastWin) return;
+  try{
+    const r = await fetch(`${API}/wallets/${account}/wins?limit=50`);
+    if(!r.ok) return;
+    const j = await r.json();
+    const rows = j.data || j.wins || j || [];
+    if(!Array.isArray(rows) || !rows.length) return;
+
+    for(const w of rows){
+      const tokenId = String(w.user_ticket_id || w.ticket_id || w.ticketId || '');
+      const amount = w.amount?.amount != null
+        ? fmtUsd(BigInt(w.amount.amount), w.amount.decimals ?? 6)
+        : (w.winnings_amount ? fmtUsd(BigInt(w.winnings_amount)) : 'Won');
+      let claimed = w.claimed === true || w.claimed === 'true';
+      // Local claim memory (never re-show as unclaimed after claim)
+      if(tokenId && window.MegaPushUI?.isTicketClaimed?.(account, tokenId)) claimed = true;
+      const picks = (w.numbers || w.normals || []).map(Number);
+      const bonus = w.bonusball != null ? Number(w.bonusball) : null;
+      const date = String(w.round_id || w.drawing_id || w.date || '—');
+      window.MegaPushUI.mergePastWin({
+        tokenId,
+        date,
+        picks,
+        bonus,
+        result: 'won',
+        prize: amount,
+        tier: claimed ? 'Claimed' : 'Unclaimed',
+        claimed,
+      });
+    }
+  }catch(_){}
+}
+
 async function loadWins(){
   if(!account){
     if(typeof window.setUnclaimedWinnings === 'function'){
@@ -3604,27 +5245,9 @@ async function loadWins(){
     return;
   }
   try{
-    const r = await fetch(`${API}/wallets/${account}/wins?limit=50`);
-    if(r.ok){
-      const j = await r.json();
-      const rows = j.data || j.wins || j || [];
-      if(Array.isArray(rows) && typeof pastDraws !== 'undefined'){
-        pastDraws.length = 0;
-        rows.forEach(w => {
-          const amount = w.amount?.amount != null ? fmtUsd(BigInt(w.amount.amount), w.amount.decimals ?? 6) : (w.winnings_amount ? fmtUsd(BigInt(w.winnings_amount)) : '—');
-          const claimed = w.claimed === true || w.claimed === 'true';
-          pastDraws.push({
-            date: String(w.round_id || w.drawing_id || w.date || '—'),
-            result: claimed ? 'lost' : 'won',
-            prize: amount,
-            tier: claimed ? 'Claimed' : 'Unclaimed',
-            picks: (w.numbers || w.normals || []).map(Number),
-            bonus: w.bonusball != null ? Number(w.bonusball) : null,
-          });
-        });
-        if(typeof renderPast === 'function') renderPast();
-      }
-    }
+    // Do NOT wipe pastDraws here — on-chain past tickets own that list.
+    // Wins API (mainnet) is merged when available.
+    try{ await mergeWinsIntoPast(); }catch(_){}
 
     // Unclaimed lottery wins only — drives Tickets claim card + Winnings tab
     let total = 0n;
@@ -3634,23 +5257,43 @@ async function loadWins(){
       const uj = await u.json();
       list = uj.data || uj.wins || uj || [];
       if(!Array.isArray(list)) list = [];
+      // Drop wins already claimed in this browser (API lag / re-show)
+      list = list.filter(w => {
+        const id = String(w.user_ticket_id || w.ticket_id || w.ticketId || '');
+        return !(id && window.MegaPushUI?.isTicketClaimed?.(account, id));
+      });
       for(const w of list){
         if(w.amount?.amount) total += BigInt(w.amount.amount);
         else if(w.winnings_amount) total += BigInt(w.winnings_amount);
       }
     }
     const totalUsd = Number(formatUnits(total, 6));
-    if(typeof window.setUnclaimedWinnings === 'function'){
-      window.setUnclaimedWinnings({
-        totalUsd,
-        count: list.length,
-        address: account,
-      });
+    if(totalUsd > 0 && list.length){
+      if(typeof window.setUnclaimedWinnings === 'function'){
+        window.setUnclaimedWinnings({
+          totalUsd,
+          count: list.length,
+          address: account,
+        });
+      }
+    }else{
+      // Sepolia: no Megapot wins API — show polished claim + past-draw wins preview
+      try{
+        window.MegaPushUI?.seedDemoLotteryUi?.({ address: account });
+      }catch(_){
+        if(typeof window.setUnclaimedWinnings === 'function'){
+          window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+        }
+      }
     }
   }catch(e){
     console.warn('loadWins', e);
-    if(typeof window.setUnclaimedWinnings === 'function'){
-      window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+    try{
+      window.MegaPushUI?.seedDemoLotteryUi?.({ address: account });
+    }catch(_){
+      if(typeof window.setUnclaimedWinnings === 'function'){
+        window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+      }
     }
   }
 }
@@ -3664,8 +5307,18 @@ async function claimWinnings(){
     const j = await r.json();
     const list = j.data || j.wins || j || [];
     if(!Array.isArray(list) || !list.length) return { ok: false, error: 'No unclaimed wins' };
-    const ids = list.map(w => BigInt(w.user_ticket_id || w.ticket_id || w.ticketId)).filter(Boolean);
-    if(!ids.length) return { ok: false, error: 'No ticket ids' };
+    const idStrs = list.map(w => String(w.user_ticket_id || w.ticket_id || w.ticketId || '')).filter(Boolean);
+    // Skip already-claimed locally
+    const freshIds = idStrs.filter(id => !window.MegaPushUI?.isTicketClaimed?.(account, id));
+    const ids = freshIds.map(id => BigInt(id)).filter(Boolean);
+    if(!ids.length){
+      // Nothing left to claim on-chain — clear UI
+      window.MegaPushUI?.markTicketsClaimed?.(account, idStrs);
+      if(typeof window.setUnclaimedWinnings === 'function'){
+        window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+      }
+      return { ok: true, claimed: 0, already: true };
+    }
     const txs = [];
     for(let i=0;i<ids.length;i+=50){
       const chunk = ids.slice(i, i+50);
@@ -3676,11 +5329,17 @@ async function claimWinnings(){
       await publicClient.waitForTransactionReceipt({ hash });
       txs.push(hash);
     }
+    // Persist so they never reappear as unclaimed after claim
+    window.MegaPushUI?.markTicketsClaimed?.(account, freshIds);
+    if(typeof window.setUnclaimedWinnings === 'function'){
+      window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: account });
+    }
+    try{ window.MegaPushUI?.seedDemoLotteryUi?.({ address: account }); }catch(_){}
     await refreshUsdcBalance();
     await loadWins();
     return { ok: true, txs, claimed: ids.length };
   }catch(e){
-    return { ok: false, error: e?.shortMessage || e?.message || String(e) };
+    return { ok: false, error: friendlyWalletError(e) };
   }
 }
 
@@ -3725,6 +5384,7 @@ window.Megapot = {
   depositToPlayBalance,
   withdrawFromPlayBalance,
   refreshPlayBalance,
+  reconcileDepositsOnChain,
   refundStake,
   houseBuyTickets,
   claimWinnings,
@@ -3734,6 +5394,8 @@ window.Megapot = {
   get playBalance(){ return playBalance; },
   HOUSE_TREASURY,
   HOUSE_BUY_URL,
+  get API_BASE(){ return API_BASE; },
+  apiUrl,
   REFERRER,
   SOURCE,
   addresses: { JACKPOT, USDC, RANDOM_BUYER, BATCH, TICKET_NFT },
@@ -3814,16 +5476,25 @@ async function runBankPrimary(){
     chip?.classList.add('busy');
     setBankStatus('Approve the USDC transfer in your wallet…');
     try{
+      setBankStatus('Confirming on Base Sepolia…');
       const res = await depositToPlayBalance(amt);
       if(res?.ok){
         setPlayBalUi(res.balance ?? playBalance);
-        setBankStatus('Deposited ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance), 'ok');
-        if($('status')) $('status').textContent = 'Play balance ' + fmtPlayUsd(playBalance) + ' · stake with no popups';
+        const msg = res.pendingSync
+          ? ('Deposited ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance) + ' (syncing…)')
+          : ('Deposited ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance));
+        setBankStatus(msg, 'ok');
+        if($('status')) $('status').textContent = 'Play balance ' + fmtPlayUsd(playBalance);
         if(btn) btn.textContent = 'Deposited';
+        // Clear amount for next deposit
+        if($('bankAmt')) $('bankAmt').value = '';
+        document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
         setTimeout(() => {
           if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
           chip?.classList.remove('busy');
-        }, 1000);
+        }, 900);
+        // One more balance pull to lock server state
+        setTimeout(() => { refreshPlayBalance().catch(()=>{}); }, 1500);
       }else{
         setBankStatus(res?.error || 'Deposit failed', 'err');
         if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
@@ -3882,10 +5553,36 @@ if(claimBtn){
     }
     claimBtn.textContent = 'Claiming…';
     claimBtn.disabled = true;
-    const res = await claimWinnings();
+    let res;
+    try{
+      // Demo claim first when preview wins are active (Sepolia has no wins API)
+      const demoRes = window.MegaPushUI?.claimDemoWins?.();
+      if(demoRes?.ok && demoRes.demo){
+        res = {
+          ok: true,
+          claimed: demoRes.claimedUsd,
+          demo: true,
+        };
+      }else{
+        res = await claimWinnings();
+      }
+    }catch(e){
+      res = { ok: false, error: e?.message || String(e) };
+    }
     claimBtn.disabled = false;
-    claimBtn.textContent = res.ok ? `Claimed ${res.claimed}` : (res.error || 'Failed');
-    if(res.ok) setTimeout(()=> { claimBtn.textContent = 'Claim all'; }, 2500);
+    if(res?.ok){
+      if(res.demo){
+        claimBtn.textContent = 'Claimed $' + Number(res.claimed || 0).toFixed(2);
+        if($('status')) $('status').textContent = 'Claimed $' + Number(res.claimed || 0).toFixed(2) + ' lottery wins';
+        if($('claimSub')) $('claimSub').textContent = 'All demo wins marked claimed · Past drawings updated';
+      }else{
+        claimBtn.textContent = `Claimed ${res.claimed}`;
+      }
+      setTimeout(()=> { claimBtn.textContent = 'Claim all'; claimBtn.style.display = unclaimedWinsUsd > 0 ? 'block' : 'none'; }, 2500);
+    }else{
+      claimBtn.textContent = res?.error || 'Failed';
+      setTimeout(()=> { claimBtn.textContent = 'Claim all'; claimBtn.disabled = false; }, 2500);
+    }
   });
 }
 </script>

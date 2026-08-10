@@ -26,7 +26,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error:
-        'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Project → Settings → Environment Variables (Production + Preview), then Redeploy.',
+        'Service unavailable',
     });
   }
 

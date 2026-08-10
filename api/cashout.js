@@ -69,7 +69,7 @@ async function getDeps() {
       if (!key) {
         throw Object.assign(
           new Error(
-            'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Settings → Environment Variables, then Redeploy.',
+            'Service unavailable',
           ),
           { statusCode: 500 },
         );
@@ -207,7 +207,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       error:
-        'HOUSE_PRIVATE_KEY not configured on server. Set it in Vercel → Project → Settings → Environment Variables (Production + Preview), then Redeploy.',
+        'Service unavailable',
     });
   }
 

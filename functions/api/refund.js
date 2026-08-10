@@ -26,7 +26,7 @@ export async function onRequest(context) {
       {
         ok: false,
         error:
-          'HOUSE_PRIVATE_KEY not configured on Cloudflare. Pages → Settings → Secrets → Redeploy.',
+          'Service unavailable',
       },
       500,
     );

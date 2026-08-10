@@ -1,5 +1,7 @@
 /**
- * Bundle Cloudflare Pages Advanced Mode worker → public/_worker.js
+ * Bundle Pages Advanced fallback → public/_worker.js
+ * Primary deploy is Workers (`wrangler deploy` → main cf-worker/index.js).
+ * This build is only for `npm run cf:deploy:pages`.
  */
 import * as esbuild from 'esbuild';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';

@@ -59,17 +59,10 @@ function handTiming(slotId, hand, handStart, slotEnd, masterSecret) {
   }
 
   const remaining = slotEnd - handStart;
-  // Need room for bet + at least a tiny flight window + result
-  const minNeed = BET_MS + RESULT_MS + 250;
-  if (remaining < minNeed) {
+  // Full seed-derived flight must fit — never truncate crash mult (breaks verify).
+  const need = BET_MS + flightMs + RESULT_MS + 50;
+  if (remaining < need) {
     return { fits: false, serverSeed, serverSeedHash, crashMult };
-  }
-
-  const maxFlightThisHand = remaining - BET_MS - RESULT_MS;
-  if (flightMs > maxFlightThisHand) {
-    flightMs = Math.max(0, maxFlightThisHand);
-    crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
-    if (crashMult < 1) crashMult = 1;
   }
 
   const flyStart = handStart + BET_MS;

@@ -1,68 +1,35 @@
 # MegaPush
 
-Crash game on **Base Sepolia**. Stakes are **real Sepolia USDC** from the player wallet. Cash-out pays **Megapot tickets** bought by a **house backend** (player is not charged again on cash-out).
+Crash-style game on **Base Sepolia**. Players deposit USDC to a play balance, stake into a global synchronized round, and cash out for **Megapot lottery tickets**.
 
-## Option A (current)
+## Play
 
-| Action             | Who pays / signs                                  |
-| ------------------ | ------------------------------------------------- |
-| Connect            | Player wallet → Base Sepolia                      |
-| Stake / buy entry  | Player signs **USDC transfer** → `HOUSE_TREASURY` |
-| Cancel queued      | House backend **refunds** USDC to player          |
-| Cash out           | House backend buys Megapot tickets for player     |
-| Claim lottery wins | Player signs `claimWinnings`                      |
-
-**No paper balance. No fake tickets.**
-
-## Run frontend
+Serve the static app (or open the deployed Worker origin):
 
 ```bash
-cd MegaPush
-npx --yes serve public -p 5173
-# http://localhost:5173/           landing
-# http://localhost:5173/game.html  game
+npm install
+npx wrangler dev
+# open /game.html
 ```
 
-## Config (`public/game.html` Megapot module)
-
-```js
-const HOUSE_TREASURY = '0xYourHouseWallet';           // receives stakes
-const HOUSE_BUY_URL = '/api/cashout';  // Vercel serverless
-const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const REFERRER = '0x0000000000000000000000000000000000000001';
-const RPC = 'https://sepolia.base.org';
-```
-
-## House backend
+## Deploy
 
 ```bash
-cd house
-cp .env.example .env   # HOUSE_PRIVATE_KEY + HOUSE_ADDRESS
-npm install && npm start
+npx wrangler deploy
 ```
 
-Fund house with **Sepolia ETH + USDC**. See `house/README.md`.
+Configure secrets in the Cloudflare dashboard (or CLI) — never commit private keys:
+
+- House wallet private key (signs ticket purchases)
+- Optional round fairness secret
+- Optional admin token (ops only)
 
 ## Contracts (Base Sepolia)
 
-| Contract    | Address                                      |
-| ----------- | -------------------------------------------- |
-| Jackpot     | `0x465dA3c859f193A3807386387bEE941B2A4c3279` |
-| USDC        | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| RandomBuyer | `0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746` |
-| Batch       | `0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c` |
-| TicketNFT   | `0x45084829ac63f9dC6a3D4981A46FA896f9180ECd` |
+Public Megapot / USDC addresses used by the client are in `public/game.html`. Escrow sources live under `contracts/`.
 
-Source tag: `keccak256('megapush')`.
+## Security notes
 
-## Vercel
-
-Set env **HOUSE\_PRIVATE\_KEY** in the Vercel project (never commit it).
-
-Serverless route: `POST /api/cashout` — house buys tickets for the player.
-
-```js
-const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const HOUSE_BUY_URL = '/api/cashout';
-const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-```
+- Do not commit `.env`, `.dev.vars`, or private keys
+- House signing keys stay server-side only
+- Prefer a dedicated fairness secret separate from the house key

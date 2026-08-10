@@ -1,14 +1,35 @@
-# Cloudflare Pages — MegaPush
-# Dashboard: Workers & Pages → Create → Connect Git → this repo
-# Build output directory: public
-# Root directory: (repo root)
-#
-# Secrets (Settings → Environment variables / Secrets):
-#   HOUSE_PRIVATE_KEY  (required — same key as Vercel)
-#   ROUND_SECRET       (optional)
-#   RPC_URL            (optional, default Base Sepolia public RPC)
-
+# MegaPush — Workers + Static Assets
 name = "megapush"
+main = "cf-worker/index.js"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = "public"
+workers_dev = true
+preview_urls = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[kv_namespaces]]
+binding = "BANK_KV"
+id = "98039eb0b6574e8e98fe154b69e4b9a4"
+
+[[durable_objects.bindings]]
+name = "ROUND_DO"
+class_name = "RoundDO"
+
+[[durable_objects.bindings]]
+name = "TX_SEQUENCER_DO"
+class_name = "TxSequencerDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoundDO", "TxSequencerDO"]
+
+[vars]
+MAX_ROUND_EXPOSURE = "500"
+MAX_PAYOUT_MULT = "50"
+MAX_PAYOUT_PER_ENTRY = "200"
+MAX_PAYOUT_PER_HOUR = "2000"
+MAX_HOUSE_JOBS_PER_MINUTE = "40"

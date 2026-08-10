@@ -1,43 +1,22 @@
-# Cloudflare Pages — MegaPush (Advanced Worker)
+# Cloudflare deploy
 
-APIs are served by **`public/_worker.js`** (bundled from `cf-worker/`), not only static HTML.
-
-## Dashboard settings
-
-| Setting | Value |
-|--------|--------|
-| Root directory | **blank** (repo root) |
-| **Build command** | `npm install && npm run build` |
-| **Build output directory** | `public` |
-| Compatibility flags | `nodejs_compat` |
+```bash
+npm install
+npx wrangler deploy
+```
 
 ## Secrets
 
-**Settings → Variables and Secrets** (Production):
+Set secrets in the Cloudflare dashboard (or CLI). Never commit them.
 
-| Name | Type |
-|------|------|
-| `HOUSE_PRIVATE_KEY` | Encrypt / Secret |
+Required for cashouts: house wallet private key.  
+Recommended: dedicated round fairness secret.  
+Optional: admin token for rare ops-only Durable Object admin routes.
 
-Redeploy after adding.
-
-## CLI deploy (from repo root)
+Local development: put values in `.dev.vars` (gitignored).
 
 ```bash
-cd MegaPush
-npm install
-npm run build          # creates public/_worker.js
-npx wrangler pages deploy public --project-name megapush
+npx wrangler dev
 ```
 
-## Verify (must be JSON)
-
-```bash
-curl -sS https://megapush.pages.dev/api/ping
-# {"ok":true,"platform":"cloudflare-pages-worker",...}
-
-curl -sS https://megapush.pages.dev/api/health
-# {"ok":true,"hasHousePrivateKey":true,...}
-```
-
-If you still see `<!DOCTYPE html>`, the deploy did not include `_worker.js` — run `npm run build` and check `public/_worker.js` exists before deploy.
+Static files: `public/`. Worker entry: `cf-worker/index.js`.

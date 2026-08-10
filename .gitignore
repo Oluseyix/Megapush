@@ -5,9 +5,25 @@ dist
 .env
 .env.*
 !.env.example
+.dev.vars
+.wrangler
 house/node_modules
 house/.env
 
-# Cloudflare Pages advanced worker (generated)
+# Generated worker bundle
 public/_worker.js
 public/_worker_build.json
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Editor / OS
+.idea
+.vscode
+*.log
+
+# Foundry deps (install via forge install)
+contracts/lib/
+

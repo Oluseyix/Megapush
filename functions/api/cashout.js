@@ -71,7 +71,7 @@ function makeClients(env) {
   const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
   if (!key) {
     const err = new Error(
-      'HOUSE_PRIVATE_KEY not configured on Cloudflare. Pages → Settings → Environment variables → Secret → Redeploy.',
+      'Service unavailable',
     );
     err.statusCode = 500;
     throw err;

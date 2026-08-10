@@ -7,8 +7,12 @@
   "scripts": {
     "build": "node scripts/build-cf.mjs",
     "cf:build": "node scripts/build-cf.mjs",
-    "cf:deploy": "npm run build && npx wrangler pages deploy public --project-name megapush --commit-dirty=true",
-    "cf:dev": "npm run build && npx wrangler pages dev public --compatibility-flags=nodejs_compat"
+    "cf:deploy": "npx wrangler deploy",
+    "cf:deploy:pages": "npm run build && npx wrangler pages deploy public --project-name megapush --commit-dirty=true",
+    "cf:dev": "npx wrangler dev",
+    "cf:dev:pages": "npm run build && npx wrangler pages dev public --compatibility-flags=nodejs_compat",
+    "test:acceptance": "node scripts/acceptance.mjs",
+    "sync:game": "cp megapush.html game.html && cp megapush.html public/game.html"
   },
   "dependencies": {
     "viem": "^2.21.54"

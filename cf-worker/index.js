@@ -1,12 +1,17 @@
 /**
- * Cloudflare Pages Advanced Mode entry.
- * Built into public/_worker.js — handles /api/* then falls through to static assets.
+ * Cloudflare Workers + Static Assets entry.
+ * Public routes only — no admin probe surface.
  */
 import { handleCashout } from './cashout.js';
 import { handleRefund } from './refund.js';
 import { handleHealth } from './health.js';
 import { handleRound } from './round.js';
 import { handleBank } from './bank.js';
+import { handleLeaderboard } from './leaderboard.js';
+import { handleVerify } from './verify.js';
+
+export { RoundDO } from './dos/round-do.js';
+export { TxSequencerDO } from './dos/tx-sequencer-do.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -30,31 +35,42 @@ function cors(methods) {
   });
 }
 
+function killSwitchActive(env) {
+  const v = env?.KILL_SWITCH;
+  if (v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '') || '/';
 
-    // API routes
     if (path.startsWith('/api/') || path === '/api') {
       if (request.method === 'OPTIONS') {
         return cors('GET, POST, OPTIONS');
       }
 
+      if (
+        killSwitchActive(env) &&
+        (path === '/api/cashout' || path === '/api/refund' || path === '/api/bank')
+      ) {
+        return json({ ok: false, error: 'Service temporarily paused' }, 503);
+      }
+
       try {
         if (path === '/api/ping') {
-          return json({
-            ok: true,
-            platform: 'cloudflare-pages-worker',
-            route: '/api/ping',
-            ts: Date.now(),
-          });
+          return json({ ok: true, ts: Date.now() });
         }
         if (path === '/api/health') {
           return handleHealth(request, env);
         }
         if (path === '/api/round') {
           return handleRound(request, env);
+        }
+        if (path === '/api/verify') {
+          return handleVerify(request, env);
         }
         if (path === '/api/cashout') {
           if (request.method !== 'POST') return json({ ok: false, error: 'Use POST' }, 405);
@@ -67,17 +83,19 @@ export default {
         if (path === '/api/bank') {
           return handleBank(request, env);
         }
-        return json({ ok: false, error: 'Unknown API route', path }, 404);
+        if (path === '/api/leaderboard') {
+          return handleLeaderboard(request, env);
+        }
+        return json({ ok: false, error: 'Not found' }, 404);
       } catch (e) {
-        return json({ ok: false, error: e?.message || String(e), platform: 'cloudflare-pages-worker' }, 500);
+        console.error('api error', e?.message || e);
+        return json({ ok: false, error: 'Internal error' }, 500);
       }
     }
 
-    // Static assets (game.html, index.html, …)
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
     }
     return new Response('Not found', { status: 404 });
   },
 };
-// bank 1786368165

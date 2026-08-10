@@ -9,8 +9,7 @@
  *
  * POST /game/stake    { entryId, stake, tx, player }  (optional bookkeeping)
  *
- * Env: HOUSE_PRIVATE_KEY, HOUSE_ADDRESS, RPC_URL
- */
+ * Env: service credential */
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -29,8 +28,7 @@ import { baseSepolia } from 'viem/chains';
 
 const PORT = Number(process.env.PORT || 8787);
 const RPC = process.env.RPC_URL || 'https://sepolia.base.org';
-const HOUSE_KEY = process.env.HOUSE_PRIVATE_KEY;
-const HOUSE_ADDRESS = process.env.HOUSE_ADDRESS;
+const HOUSE_KEY = process.env.service credentialconst HOUSE_ADDRESS = process.env.HOUSE_ADDRESS;
 
 const JACKPOT = process.env.JACKPOT || '0x465dA3c859f193A3807386387bEE941B2A4c3279';
 const USDC = process.env.USDC || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -41,7 +39,7 @@ const PRECISE_UNIT = 1000000000000000000n;
 const SOURCE = keccak256(toBytes('megapush'));
 
 if (!HOUSE_KEY || !HOUSE_ADDRESS) {
-  console.error('Set HOUSE_PRIVATE_KEY and HOUSE_ADDRESS in house/.env');
+  console.error('Set service credential');
   process.exit(1);
 }
 
