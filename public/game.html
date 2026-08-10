@@ -3486,8 +3486,7 @@ function disconnectWallet(){
 function onWalletBtnClick(){
   if(account){
     const shortAddr = short(account);
-    const ok = confirm('Disconnect wallet '+shortAddr+'?\n\nYou can reconnect anytime.');
-    if(ok) disconnectWallet();
+    disconnectWallet(); // one-tap disconnect — reconnect is silent next visit
     return;
   }
   showWalletSheet();

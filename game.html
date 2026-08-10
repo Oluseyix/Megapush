@@ -2316,7 +2316,7 @@ document.addEventListener('click',e=>{
           return;
         }
         b.entryId=res.entryId;
-        if(res.fromBank) bankEntryIds.add(b.entryId);
+        // fromBank stakes are tracked inside Megapot module
         b.stakeTx=res.tx;
         b.state='queued';
         paintBet(b);
@@ -3486,8 +3486,7 @@ function disconnectWallet(){
 function onWalletBtnClick(){
   if(account){
     const shortAddr = short(account);
-    const ok = confirm('Disconnect wallet '+shortAddr+'?\n\nYou can reconnect anytime.');
-    if(ok) disconnectWallet();
+    disconnectWallet(); // one-tap disconnect — reconnect is silent next visit
     return;
   }
   showWalletSheet();
