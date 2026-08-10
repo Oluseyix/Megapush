@@ -1018,7 +1018,7 @@ button:focus:not(:focus-visible){outline:none}
     </div>
     <div class="card" id="inviteCard" style="margin-top:4px">
       <div class="card-lab">Invite</div>
-      <div class="card-sub" style="margin-bottom:10px">Friends' first cash-out earns you <b>5 tickets</b> into tonight's draw</div>
+      <div class="card-sub" style="margin-bottom:10px">Friends' first cash-out earns you <b>5 tickets</b> into today's draw</div>
       <button type="button" class="go" id="inviteBtn">Copy invite link</button>
     </div>
   </div>
@@ -1169,7 +1169,7 @@ button:focus:not(:focus-visible){outline:none}
 <div class="modal-bg" id="previewBg">
   <div class="modal">
     <h2 id="previewTitle">+12 tickets</h2>
-    <p id="previewSub">Cashed at 2.40× · entering tonight's draw</p>
+    <p id="previewSub">Cashed at 2.40× · entering today's draw</p>
     <div class="preview-tix" id="previewTix"></div>
     <div class="receipt-bits" id="previewReceipt">
       <div class="rb-row"><span>Draw in</span><b id="previewDrawTime">—</b></div>
@@ -1187,7 +1187,7 @@ button:focus:not(:focus-visible){outline:none}
     <div class="share-card">
       <div class="sc-lab">MegaPush</div>
       <div class="sc-mult" id="shareMult">11.80×</div>
-      <div class="sc-sub" id="shareSub">→ 59 tickets into tonight's Megapot</div>
+      <div class="sc-sub" id="shareSub">→ 59 tickets into today's Megapot</div>
     </div>
     <button type="button" class="go" id="shareCopy">Copy share text</button>
     <button type="button" class="go wait" style="margin-top:8px;background:var(--wash);color:var(--mid)" id="shareClose">Close</button>
@@ -2113,7 +2113,7 @@ function showCashoutReceipt({ tickets, at, txHash }){
   if(!box) return;
   const tix = wholeTickets(tickets);
   if($('crTitle')) $('crTitle').innerHTML = '<b>+'+tix+' ticket'+(tix===1?'':'s')+'</b> locked in';
-  if($('crSub')) $('crSub').textContent = 'Cashed at '+(Number(at)||0).toFixed(2)+'× · in tonight\'s draw';
+  if($('crSub')) $('crSub').textContent = 'Cashed at '+(Number(at)||0).toFixed(2)+'× · in today\'s draw';
   if($('crMultLabel')) $('crMultLabel').textContent = '';
   tickDrawTimers();
   const a=$('crTx');
@@ -2152,7 +2152,7 @@ function showTicketPreview(tickets, at, opts){
   const show=Math.min(6,tixN);
   for(let i=0;i<show;i++) samples.push(rndNums());
   $('previewTitle').textContent='+'+tixN+' tickets';
-  $('previewSub').textContent='Cashed at '+at.toFixed(2)+'× · entering tonight\'s Megapot draw';
+  $('previewSub').textContent='Cashed at '+at.toFixed(2)+'× · entering today\'s Megapot draw';
   $('previewTix').innerHTML=samples.map(s=>`
     <div class="pt">${s.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="b">${pad(s.bonus)}</span></div>
   `).join('')+(tixN>show?`<div class="pt">+${tixN-show} more</div>`:'');
@@ -2172,7 +2172,7 @@ function showTicketPreview(tickets, at, opts){
 function maybeShare(at, tickets){
   if(at<5) return;
   $('shareMult').textContent=at.toFixed(2)+'×';
-  $('shareSub').textContent='→ '+wholeTickets(tickets)+' tickets into tonight\'s Megapot';
+  $('shareSub').textContent='→ '+wholeTickets(tickets)+' tickets into today\'s Megapot';
   setTimeout(()=>$('shareBg').classList.add('show'),600);
 }
 
