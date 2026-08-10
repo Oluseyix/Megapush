@@ -1,16 +1,16 @@
 # MegaPush
 
-Aviator-style crash game on **Base Sepolia**. Stakes are **real Sepolia USDC** from the player wallet. Cash-out pays **Megapot tickets** bought by a **house backend** (player is not charged again on cash-out).
+Crash game on **Base Sepolia**. Stakes are **real Sepolia USDC** from the player wallet. Cash-out pays **Megapot tickets** bought by a **house backend** (player is not charged again on cash-out).
 
 ## Option A (current)
 
-| Action | Who pays / signs |
-|--------|------------------|
-| Connect | Player wallet → Base Sepolia |
-| Stake / buy entry | Player signs **USDC transfer** → `HOUSE_TREASURY` |
-| Cancel queued | House backend **refunds** USDC to player |
-| Cash out | House backend buys Megapot tickets for player |
-| Claim lottery wins | Player signs `claimWinnings` |
+| Action             | Who pays / signs                                  |
+| ------------------ | ------------------------------------------------- |
+| Connect            | Player wallet → Base Sepolia                      |
+| Stake / buy entry  | Player signs **USDC transfer** → `HOUSE_TREASURY` |
+| Cancel queued      | House backend **refunds** USDC to player          |
+| Cash out           | House backend buys Megapot tickets for player     |
+| Claim lottery wins | Player signs `claimWinnings`                      |
 
 **No paper balance. No fake tickets.**
 
@@ -45,20 +45,19 @@ Fund house with **Sepolia ETH + USDC**. See `house/README.md`.
 
 ## Contracts (Base Sepolia)
 
-| Contract | Address |
-|----------|---------|
-| Jackpot | `0x465dA3c859f193A3807386387bEE941B2A4c3279` |
-| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| Contract    | Address                                      |
+| ----------- | -------------------------------------------- |
+| Jackpot     | `0x465dA3c859f193A3807386387bEE941B2A4c3279` |
+| USDC        | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 | RandomBuyer | `0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746` |
-| Batch | `0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c` |
-| TicketNFT | `0x45084829ac63f9dC6a3D4981A46FA896f9180ECd` |
+| Batch       | `0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c` |
+| TicketNFT   | `0x45084829ac63f9dC6a3D4981A46FA896f9180ECd` |
 
 Source tag: `keccak256('megapush')`.
 
-
 ## Vercel
 
-Set env **HOUSE_PRIVATE_KEY** in the Vercel project (never commit it).
+Set env **HOUSE\_PRIVATE\_KEY** in the Vercel project (never commit it).
 
 Serverless route: `POST /api/cashout` — house buys tickets for the player.
 
