@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-clearcrash">
+<meta name="megapush-build" content="20260810-copy">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -1551,19 +1551,19 @@ function crash(){
   document.body.classList.add('crashed-bg');
   const label=m<1.5?'BUSTED':m<3?'FLEW AWAY':'GONE';
   $('bustMain').textContent=label;
-  $('bustSub').textContent='Ended at '+m.toFixed(2)+'× · provably fair';
+  $('bustSub').textContent='Ended at '+m.toFixed(2)+'×';
   if(globalRound && globalRound.serverSeedHash){
     const short = String(globalRound.serverSeedHash).slice(0,10)+'…';
-    $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · commit '+short;
+    $('status').textContent = 'Crashed at '+m.toFixed(2)+'×;
     // async verify in background
     verifyFairRound(globalRound).then(v=>{
       // Do not fight the post-crash timer — only update if still on crash screen
       if(!$('hero') || !$('hero').classList.contains('crashed')) return;
       if(Date.now() >= crashUiUntil) return;
       if(v && v.ok){
-        $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · fair ✓ verified';
+        $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
       }else if(v && !v.ok){
-        $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · fair check: '+(v.error||'failed');
+        $('status').textContent = 'Crashed at '+m.toFixed(2)+'×;
       }
     }).catch(()=>{});
   }
@@ -1652,7 +1652,7 @@ function onGlobalPhase(phase, g){
     if(lastPhase==='crashed' || lastPhase==='flying' || lastPhase===null || roundChanged){
       reset();
       if(phase==='intermission'){
-        $('status').textContent='Stake for next climb · fair seed revealed';
+        $('status').textContent='Stake for the next climb';
       }
     }
   }
@@ -1701,7 +1701,7 @@ function globalFrame(){
 
   // ═══ HARD GUARANTEE: leave Flew Away after crashUiUntil ═══
   if(crashUiUntil > 0 && nowWall >= crashUiUntil){
-    clearCrashUI('Stake for next climb · next round loading…');
+    clearCrashUI('Next round loading…');
     fetchGlobalRound();
   }
 
@@ -1744,7 +1744,7 @@ function globalFrame(){
     running=false;
     m=1;
     if($('hero') && $('hero').classList.contains('crashed')){
-      clearCrashUI(phase==='intermission' ? 'Stake for next climb · fair seed revealed' : 'Global round · stake to join the next climb');
+      clearCrashUI(phase==='intermission' ? 'Stake for the next climb' : 'Global round · stake to join the next climb');
     }else{
       paint();
     }
@@ -1756,7 +1756,7 @@ function globalFrame(){
     // Double safety with server resultEnd
     const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt!=null ? g.crashAt+(Number(g.resultMs)||3200) : null);
     if(re!=null && now>=re){
-      clearCrashUI('Stake for next climb · fair seed revealed');
+      clearCrashUI('Stake for the next climb');
     }
   }
 
