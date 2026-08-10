@@ -1138,9 +1138,8 @@ button:focus:not(:focus-visible){outline:none}
     <div class="bank-history" id="bankHistory">
       <div class="bh-hist-head">
         <strong>Transaction history</strong>
-        <a id="bankExplorerLink" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer">Wallet on BaseScan ↗</a>
       </div>
-      <p style="font-size:11px;color:var(--mid);font-weight:600;margin:0 0 8px">Tap a row for details · on-chain txs open on BaseScan</p>
+      <p style="font-size:11px;color:var(--mid);font-weight:600;margin:0 0 8px">Tap a row to open that transaction on BaseScan</p>
       <div class="bh-hist-list" id="bankHistoryList">
         <div class="bh-empty">Connect wallet to see deposits &amp; withdrawals</div>
       </div>
@@ -1148,15 +1147,14 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
-<!-- Transaction history detail -->
+<!-- Transaction history detail (internal / no hash only) -->
 <div class="modal-bg" id="txDetailBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="txDetailTitle">
     <h2 id="txDetailTitle">Transaction</h2>
     <p id="txDetailSub">Play balance activity</p>
     <div class="tx-detail-rows" id="txDetailRows"></div>
     <div class="tx-detail-actions">
-      <a class="go" id="txDetailBaseScan" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">View on BaseScan ↗</a>
-      <a class="go secondary" id="txDetailWalletScan" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none;display:block">Wallet history on BaseScan ↗</a>
+      <a class="go" id="txDetailBaseScan" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">View this transaction on BaseScan ↗</a>
       <button type="button" class="go secondary" id="txDetailClose">Close</button>
     </div>
   </div>
@@ -4519,11 +4517,19 @@ function openTxDetail(row){
   const txHash = row.txHash ? String(row.txHash) : '';
   const entryId = row.entryId != null ? String(row.entryId) : '';
 
+  // Prefer deep-link straight to this tx on BaseScan (not wallet history)
+  if(txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)){
+    try{
+      window.open(BASESCAN_TX + txHash, '_blank', 'noopener,noreferrer');
+    }catch(_){
+      location.href = BASESCAN_TX + txHash;
+    }
+    return;
+  }
+
   if($('txDetailTitle')) $('txDetailTitle').textContent = histTypeLabel(type);
   if($('txDetailSub')){
-    $('txDetailSub').textContent = txHash
-      ? 'On-chain transaction · Base Sepolia'
-      : 'Internal play-balance activity (no chain tx)';
+    $('txDetailSub').textContent = 'Internal play-balance activity (no on-chain transaction hash)';
   }
 
   const rows = [
@@ -4533,7 +4539,6 @@ function openTxDetail(row){
     ['Balance after', bal],
   ];
   if(entryId) rows.push(['Entry', entryId.length > 28 ? entryId.slice(0, 12) + '…' + entryId.slice(-8) : entryId]);
-  if(txHash) rows.push(['Tx hash', shortTx(txHash)]);
 
   const host = $('txDetailRows');
   if(host){
@@ -4543,20 +4548,7 @@ function openTxDetail(row){
   }
 
   const txBtn = $('txDetailBaseScan');
-  if(txBtn){
-    if(txHash){
-      txBtn.href = BASESCAN_TX + txHash;
-      txBtn.style.display = '';
-      txBtn.textContent = 'View transaction on BaseScan ↗';
-    }else{
-      txBtn.style.display = 'none';
-    }
-  }
-  const wBtn = $('txDetailWalletScan');
-  if(wBtn){
-    wBtn.href = account ? (BASESCAN_ADDR + account) : 'https://sepolia.basescan.org';
-    wBtn.textContent = account ? 'Wallet history on BaseScan ↗' : 'BaseScan ↗';
-  }
+  if(txBtn) txBtn.style.display = 'none';
 
   $('txDetailBg')?.classList.add('show');
 }
@@ -4565,13 +4557,6 @@ function closeTxDetail(){
 }
 function renderBankHistory(list){
   const el = $('bankHistoryList');
-  const link = $('bankExplorerLink');
-  if(link){
-    link.href = account
-      ? (BASESCAN_ADDR + account)
-      : 'https://sepolia.basescan.org';
-    link.textContent = account ? 'Wallet on BaseScan ↗' : 'BaseScan ↗';
-  }
   if(!el) return;
   if(!account){
     el.innerHTML = '<div class="bh-empty">Connect wallet to see deposits &amp; withdrawals</div>';
@@ -4588,17 +4573,18 @@ function renderBankHistory(list){
     const type = String(row.type || 'tx').toLowerCase();
     const when = fmtHistTime(row.at);
     const bal = row.balance != null ? ('Bal $' + Number(row.balance).toFixed(Number(row.balance) % 1 ? 2 : 0)) : '';
-    const hint = row.txHash ? 'BaseScan' : 'Details';
+    const hasTx = !!(row.txHash && /^0x[a-fA-F0-9]{64}$/i.test(String(row.txHash)));
+    const hint = hasTx ? 'Tx on BaseScan' : 'Internal';
     return (
-      '<button type="button" class="bh-row" data-hist-idx="'+idx+'" aria-label="View '+histTypeLabel(type)+' details">'+
+      '<button type="button" class="bh-row" data-hist-idx="'+idx+'" aria-label="'+(hasTx ? 'Open transaction on BaseScan' : 'View '+histTypeLabel(type)+' details')+'">'+
         '<div class="bh-type '+type+'">'+histTypeLabel(type)+'</div>'+
         '<div class="bh-amt '+(neg?'neg':'pos')+'">'+text+'</div>'+
-        '<div class="bh-meta"><span>'+when+(bal ? ' · '+bal : '')+'</span><span class="bh-open">'+hint+' ↗</span></div>'+
+        '<div class="bh-meta"><span>'+when+(bal ? ' · '+bal : '')+'</span><span class="bh-open">'+hint+(hasTx?' ↗':'')+'</span></div>'+
       '</button>'
     );
   }).join('');
 }
-// Click history row → detail + BaseScan
+// Click history row → that transaction on BaseScan (or internal detail)
 document.getElementById('bankHistoryList')?.addEventListener('click', (e)=>{
   const btn = e.target.closest?.('[data-hist-idx]');
   if(!btn) return;
