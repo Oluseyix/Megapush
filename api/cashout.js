@@ -427,8 +427,6 @@ module.exports = async function handler(req, res) {
       }
 
       const beforeCount = await countPlayerTickets();
-      let txHash;
-
       // Always RandomBuyer in chunks of ≤10 (reliable immediate NFT mint to player)
       const buyTxs = [];
       let remaining = tickets;
