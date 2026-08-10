@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-wallet">
+<meta name="megapush-build" content="20260810-wallets">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -860,30 +860,13 @@ button:focus:not(:focus-visible){outline:none}
 </div>
 
 
-<!-- Wallet connect sheet -->
+<!-- Wallet connect sheet — multi-wallet (EIP-6963 + any injected) -->
 <div class="modal-bg" id="walletSheetBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletSheetTitle">
     <h2 id="walletSheetTitle">Connect wallet</h2>
-    <p id="walletSheetSub">Choose how to connect on Base Sepolia</p>
-    <div class="wallet-sheet">
-      <button type="button" class="ws-opt" id="wsInjected" hidden>
-        <div><b id="wsInjectedLabel">Browser wallet</b><span>MetaMask, Rabby, Coinbase extension…</span></div>
-        <span aria-hidden="true">→</span>
-      </button>
-      <button type="button" class="ws-opt" id="wsMetaMask">
-        <div><b>MetaMask</b><span>Open this game in the MetaMask app</span></div>
-        <span aria-hidden="true">→</span>
-      </button>
-      <button type="button" class="ws-opt" id="wsCoinbase">
-        <div><b>Coinbase Wallet</b><span>Open in Coinbase Wallet browser</span></div>
-        <span aria-hidden="true">→</span>
-      </button>
-      <button type="button" class="ws-opt" id="wsRetry">
-        <div><b>I already connected</b><span>Retry detect wallet on this page</span></div>
-        <span aria-hidden="true">↻</span>
-      </button>
-      <p class="ws-hint">On phone: open MegaPush inside your wallet’s browser (MetaMask → Browser), or use the buttons above.</p>
-    </div>
+    <p id="walletSheetSub">Pick any installed wallet · Base Sepolia</p>
+    <div class="wallet-sheet" id="wsList"></div>
+    <p class="ws-hint" id="wsHint">MetaMask, Coinbase, Rabby, Brave, Trust, Rainbow, OKX, Phantom (EVM), Bitget — any EIP-1193 wallet.</p>
     <button type="button" class="go secondary" id="walletSheetClose" style="margin-top:14px">Cancel</button>
   </div>
 </div>
@@ -2393,42 +2376,6 @@ document.addEventListener('input',e=>{
 });
 
 
-/* Bridge: if user taps Connect before module finishes loading */
-(function bridgeWalletBtn(){
-  const b = document.getElementById('walletBtn');
-  if(!b || b.dataset.bridge === '1') return;
-  b.dataset.bridge = '1';
-  b.addEventListener('click', function early(ev){
-    if(window.Megapot && typeof window.Megapot.connectWallet === 'function'){
-      // Module owns the real handler; if it already bound, this is a second listener.
-      // Module handler is registered later — only act if module not ready.
-      return;
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-    b.textContent = 'Loading…';
-    b.disabled = true;
-    let tries = 0;
-    const t = setInterval(()=>{
-      tries++;
-      if(window.Megapot && typeof window.Megapot.connectWallet === 'function'){
-        clearInterval(t);
-        b.disabled = false;
-        b.textContent = 'Connect';
-        try{ window.Megapot.connectWallet(); }catch(e){ console.error(e); }
-        return;
-      }
-      if(tries > 40){
-        clearInterval(t);
-        b.disabled = false;
-        b.textContent = 'Connect';
-        alert('Wallet module failed to load. Check your connection and refresh.');
-      }
-    }, 250);
-  }, true); // capture — runs before module handler if both exist; module-ready path returns early only when Megapot exists... 
-  // Problem: once Megapot exists, capture still runs first and returns without stop — module handler also fires. OK.
-})();
-
 bets.forEach(paintBet);paint();startGlobalSync();
 })();
 </script>
@@ -2544,27 +2491,75 @@ function fmtUsd(raw, dec=6){
 }
 function isMobile(){ return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || ''); }
 
-function pickFromProvidersList(list){
-  if(!list?.length) return null;
-  const rank = (p) => {
-    if(p.isMetaMask) return 0;
-    if(p.isCoinbaseWallet || p.isBase) return 1;
-    if(p.isRabby) return 2;
-    return 9;
+function listAllInjectedProviders(){
+  // Discover EVERY installed EIP-1193 wallet — no single-brand preference.
+  const out = [];
+  const seen = new WeakSet();
+  const add = (provider, name, rdns, icon) => {
+    if(!provider || typeof provider.request !== 'function') return;
+    try{ if(seen.has(provider)) return; seen.add(provider); }catch(_){}
+    out.push({
+      provider,
+      name: name || 'Browser wallet',
+      rdns: rdns || '',
+      icon: icon || '',
+      id: (rdns || name || 'wallet') + '-' + out.length,
+    });
   };
-  return [...list].sort((a,b) => rank(a) - rank(b))[0];
+
+  for(const p of eip6963Providers){
+    add(p.provider, p.info?.name || 'Wallet', p.info?.rdns || '', p.info?.icon || '');
+  }
+
+  const eth = window.ethereum;
+  if(eth?.providers && Array.isArray(eth.providers)){
+    for(const p of eth.providers){
+      let name = 'Browser wallet';
+      if(p.isRabby) name = 'Rabby';
+      else if(p.isCoinbaseWallet || p.isBase) name = 'Coinbase Wallet';
+      else if(p.isBraveWallet) name = 'Brave Wallet';
+      else if(p.isTrust || p.isTrustWallet) name = 'Trust Wallet';
+      else if(p.isOkxWallet || p.isOKExWallet) name = 'OKX Wallet';
+      else if(p.isPhantom) name = 'Phantom';
+      else if(p.isRainbow) name = 'Rainbow';
+      else if(p.isFrame) name = 'Frame';
+      else if(p.isTokenPocket) name = 'TokenPocket';
+      else if(p.isBitKeep || p.isBitget) name = 'Bitget Wallet';
+      else if(p.isMetaMask && !p.isRabby) name = 'MetaMask';
+      add(p, name, '', '');
+    }
+  }else if(eth){
+    let name = 'Browser wallet';
+    if(eth.isRabby) name = 'Rabby';
+    else if(eth.isCoinbaseWallet || eth.isBase) name = 'Coinbase Wallet';
+    else if(eth.isBraveWallet) name = 'Brave Wallet';
+    else if(eth.isTrust || eth.isTrustWallet) name = 'Trust Wallet';
+    else if(eth.isOkxWallet || eth.isOKExWallet) name = 'OKX Wallet';
+    else if(eth.isPhantom) name = 'Phantom';
+    else if(eth.isMetaMask && !eth.isRabby) name = 'MetaMask';
+    add(eth, name, '', '');
+  }
+
+  if(window.coinbaseWalletExtension) add(window.coinbaseWalletExtension, 'Coinbase Wallet', 'com.coinbase.wallet', '');
+  if(window.okxwallet) add(window.okxwallet, 'OKX Wallet', 'com.okex.wallet', '');
+  if(window.rabby) add(window.rabby, 'Rabby', 'io.rabby', '');
+  if(window.phantom?.ethereum) add(window.phantom.ethereum, 'Phantom', 'app.phantom', '');
+  if(window.trustwallet) add(window.trustwallet, 'Trust Wallet', 'com.trustwallet.app', '');
+  if(window.bitkeep?.ethereum) add(window.bitkeep.ethereum, 'Bitget Wallet', 'com.bitget.web3', '');
+
+  return out;
 }
 
 function getInjectedProviderSync(){
-  if(eip6963Providers.length){
-    const mm = eip6963Providers.find(p => /metamask/i.test(p.info?.name || p.info?.rdns || ''));
-    return (mm || eip6963Providers[0]).provider;
-  }
-  const eth = window.ethereum;
-  if(eth?.providers?.length) return pickFromProvidersList(eth.providers) || eth.providers[0];
-  if(eth) return eth;
-  if(window.coinbaseWalletExtension) return window.coinbaseWalletExtension;
-  return null;
+  const list = listAllInjectedProviders();
+  try{
+    const last = localStorage.getItem('mp_wallet_rdns') || localStorage.getItem('mp_wallet_name');
+    if(last){
+      const hit = list.find(w => w.rdns === last || w.name === last);
+      if(hit) return hit.provider;
+    }
+  }catch(_){}
+  return list[0]?.provider || null;
 }
 
 function waitForInjectedProvider(timeoutMs = 2500){
@@ -2573,7 +2568,11 @@ function waitForInjectedProvider(timeoutMs = 2500){
   return new Promise((resolve) => {
     let done = false;
     const finish = (p) => { if(done) return; done = true; cleanup(); resolve(p || getInjectedProviderSync()); };
-    const onEth = () => finish(getInjectedProviderSync());
+    const onEth = () => {
+      try{ window.dispatchEvent(new Event('eip6963:requestProvider')); }catch(_){}
+      const p = getInjectedProviderSync();
+      if(p) finish(p);
+    };
     const cleanup = () => {
       window.removeEventListener('ethereum#initialized', onEth);
       window.removeEventListener('eip6963:announceProvider', onEth);
@@ -2582,20 +2581,15 @@ function waitForInjectedProvider(timeoutMs = 2500){
     window.addEventListener('ethereum#initialized', onEth, { once: true });
     window.addEventListener('eip6963:announceProvider', onEth);
     try{ window.dispatchEvent(new Event('eip6963:requestProvider')); }catch(_){}
-    const poll = setInterval(() => { const p = getInjectedProviderSync(); if(p) finish(p); }, 100);
+    const poll = setInterval(onEth, 150);
     const timer = setTimeout(() => finish(getInjectedProviderSync()), timeoutMs);
   });
 }
 
 function ensureTopLevelWindow(){
-  // Prefer top-level browsing context (wallet inject often blocked in iframes),
-  // but never hard-block connect — break out best-effort then continue.
   try{
     if(window.top && window.top !== window.self){
-      try{ window.top.location.href = location.href; }catch(_){
-        try{ window.open(location.href, '_blank', 'noopener,noreferrer'); }catch(__){}
-      }
-      // Still allow connect in case breakout failed or user stays here
+      try{ window.top.location.href = location.href; }catch(_){}
     }
   }catch(_){}
   return true;
@@ -2606,45 +2600,119 @@ function isMobileUa(){
 }
 
 function dappUrlForWallet(){
-  // Full URL without hash (wallet browsers handle path best)
-  try{
-    return location.origin + location.pathname + location.search;
-  }catch(_){
-    return 'https://megapush.pages.dev/game';
-  }
+  try{ return location.origin + location.pathname + location.search; }
+  catch(_){ return 'https://megapush.pages.dev/game'; }
 }
-
 function openMetaMaskDapp(){
   const hostPath = (location.host + location.pathname + location.search).replace(/^\/+/, '');
-  const deep = 'https://link.metamask.io/dapp/' + hostPath;
-  location.href = deep;
+  location.href = 'https://link.metamask.io/dapp/' + hostPath;
+}
+function openCoinbaseDapp(){
+  location.href = 'https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(dappUrlForWallet());
+}
+function openTrustDapp(){
+  location.href = 'https://link.trustwallet.com/open_url?coin_id=60&url=' + encodeURIComponent(dappUrlForWallet());
 }
 
-function openCoinbaseDapp(){
-  const u = encodeURIComponent(dappUrlForWallet());
-  location.href = 'https://go.cb-w.com/dapp?cb_url=' + u;
+let _walletChoices = [];
+
+function escapeHtml(str){
+  return String(str||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderWalletList(){
+  const host = $('wsList');
+  if(!host) return;
+  try{ window.dispatchEvent(new Event('eip6963:requestProvider')); }catch(_){}
+  _walletChoices = listAllInjectedProviders();
+  const parts = [];
+
+  if(_walletChoices.length){
+    _walletChoices.forEach((w, i) => {
+      const icon = w.icon
+        ? '<img src="'+w.icon+'" alt="" width="28" height="28" style="border-radius:8px;flex:none" onerror="this.style.display=\'none\'"/>'
+        : '<span style="width:28px;height:28px;border-radius:8px;background:var(--ink);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:none">'+(w.name||'W').slice(0,1)+'</span>';
+      parts.push(
+        '<button type="button" class="ws-opt" data-ws-idx="'+i+'">'+
+        '<div style="display:flex;align-items:center;gap:10px;min-width:0">'+icon+
+        '<div style="min-width:0"><b>'+escapeHtml(w.name)+'</b><span>Connect with this wallet</span></div></div>'+
+        '<span aria-hidden="true">→</span></button>'
+      );
+    });
+  }else{
+    parts.push(
+      '<button type="button" class="ws-opt" data-ws-action="any">'+
+      '<div><b>Browser wallet</b><span>Use any wallet injected in this browser</span></div>'+
+      '<span aria-hidden="true">→</span></button>'
+    );
+    parts.push(
+      '<button type="button" class="ws-opt" data-ws-action="refresh">'+
+      '<div><b>Scan again</b><span>Re-detect wallets on this page</span></div>'+
+      '<span aria-hidden="true">↻</span></button>'
+    );
+  }
+
+  // Optional mobile deep-links (not exclusive)
+  if(isMobileUa() || !_walletChoices.length){
+    if(_walletChoices.length){
+      parts.push(
+        '<button type="button" class="ws-opt" data-ws-action="refresh">'+
+        '<div><b>Scan again</b><span>Re-detect wallets</span></div>'+
+        '<span aria-hidden="true">↻</span></button>'
+      );
+    }
+    parts.push(
+      '<button type="button" class="ws-opt" data-ws-action="mm">'+
+      '<div><b>Open in MetaMask app</b><span>Optional mobile helper</span></div>'+
+      '<span aria-hidden="true">↗</span></button>'
+    );
+    parts.push(
+      '<button type="button" class="ws-opt" data-ws-action="cb">'+
+      '<div><b>Open in Coinbase Wallet app</b><span>Optional mobile helper</span></div>'+
+      '<span aria-hidden="true">↗</span></button>'
+    );
+    parts.push(
+      '<button type="button" class="ws-opt" data-ws-action="trust">'+
+      '<div><b>Open in Trust Wallet app</b><span>Optional mobile helper</span></div>'+
+      '<span aria-hidden="true">↗</span></button>'
+    );
+  }
+
+  host.innerHTML = parts.join('');
+  host.querySelectorAll('[data-ws-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = +btn.getAttribute('data-ws-idx');
+      const w = _walletChoices[i];
+      if(w) connectWithProvider(w.provider, w);
+    });
+  });
+  host.querySelectorAll('[data-ws-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.getAttribute('data-ws-action');
+      if(act === 'mm') return openMetaMaskDapp();
+      if(act === 'cb') return openCoinbaseDapp();
+      if(act === 'trust') return openTrustDapp();
+      if(act === 'refresh'){ renderWalletList(); return; }
+      if(act === 'any'){
+        const p = getInjectedProviderSync() || await waitForInjectedProvider(2500);
+        if(!p){
+          if($('walletSheetSub')) $('walletSheetSub').textContent = 'No wallet found — install an extension or open this site inside your wallet browser';
+          return;
+        }
+        connectWithProvider(p, { name: 'Browser wallet' });
+      }
+    });
+  });
 }
 
 function showWalletSheet(opts){
   opts = opts || {};
   const bg = $('walletSheetBg');
   if(!bg) return;
-  const has = !!(getInjectedProviderSync() || window.ethereum);
-  const inj = $('wsInjected');
-  if(inj){
-    inj.hidden = !has;
-    const lab = $('wsInjectedLabel');
-    if(lab) lab.textContent = has ? 'Connect browser wallet' : 'Browser wallet';
+  if($('walletSheetSub')){
+    $('walletSheetSub').textContent = opts.message || 'Pick any installed wallet · Base Sepolia';
   }
-  const sub = $('walletSheetSub');
-  if(sub){
-    sub.textContent = opts.message
-      || (has
-        ? 'Tap below to approve the connection'
-        : (isMobileUa()
-          ? 'No wallet detected in this browser — open inside MetaMask or Coinbase Wallet'
-          : 'Install a wallet extension, or open this page in a wallet browser'));
-  }
+  renderWalletList();
   bg.classList.add('show');
 }
 
@@ -2788,59 +2856,36 @@ async function refreshTicketPrice(){
   }catch(e){}
 }
 
-async function connectWallet(opts = {}){
-  const { silent = false, forceSheet = false } = opts;
+async function connectWithProvider(provider, meta = {}){
   const btn = $('walletBtn');
+  if(!provider || typeof provider.request !== 'function'){
+    showWalletSheet({ message: 'That wallet is unavailable' });
+    return null;
+  }
   try{
-    ensureTopLevelWindow();
-    if(!silent && btn){ btn.disabled = true; btn.textContent = '…'; }
-
-    // Wait longer on interactive connect (extensions inject late on mobile)
-    eip1193 = getInjectedProviderSync() || await waitForInjectedProvider(silent ? 900 : 4500);
-
-    if(!eip1193 || forceSheet){
-      if(btn){ btn.disabled = false; btn.textContent = account ? short(account) : 'Connect'; }
-      if(!silent){
-        showWalletSheet({
-          message: forceSheet
-            ? 'Pick a wallet to continue'
-            : undefined,
-        });
-      }
-      return null;
-    }
+    if(btn){ btn.disabled = true; btn.textContent = '…'; }
+    eip1193 = provider;
 
     let accounts = [];
-    try{ accounts = await eip1193.request({ method: 'eth_accounts' }) || []; }catch(_){}
-
+    try{ accounts = await provider.request({ method: 'eth_accounts' }) || []; }catch(_){}
     if(!accounts.length){
-      if(silent){
-        if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
-        return null;
-      }
-      // Prefer eth_requestAccounts first — wallet_requestPermissions hangs on some wallets
-      try{
-        accounts = await eip1193.request({ method: 'eth_requestAccounts' }) || [];
-      }catch(reqErr){
-        if(reqErr?.code === 4001) throw reqErr;
-        try{
-          await eip1193.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
-          accounts = await eip1193.request({ method: 'eth_requestAccounts' }) || [];
-        }catch(e2){
-          if(e2?.code === 4001) throw e2;
-          throw reqErr;
-        }
-      }
+      accounts = await provider.request({ method: 'eth_requestAccounts' }) || [];
     }
-
     const addr = accounts?.[0];
     if(!addr) throw new Error('No account returned');
 
-    try{ await ensureBaseSepolia(eip1193, { interactive: !silent }); }catch(e){ console.warn('chain switch', e); }
+    try{ await ensureBaseSepolia(provider, { interactive: true }); }catch(e){ console.warn('chain switch', e); }
 
     account = addr;
-    walletClient = createWalletClient({ account: addr, chain: CHAIN, transport: custom(eip1193) });
-    bindProviderListeners(eip1193);
+    walletClient = createWalletClient({ account: addr, chain: CHAIN, transport: custom(provider) });
+    providerListenersBound = false;
+    bindProviderListeners(provider);
+
+    try{
+      if(meta.rdns) localStorage.setItem('mp_wallet_rdns', meta.rdns);
+      if(meta.name) localStorage.setItem('mp_wallet_name', meta.name);
+    }catch(_){}
+
     hideWalletSheet();
     if(btn){
       btn.disabled = false;
@@ -2848,27 +2893,63 @@ async function connectWallet(opts = {}){
       btn.classList.add('on');
       btn.title = 'Tap to disconnect';
     }
-    if($('status') && !silent){
-      $('status').textContent = 'Wallet connected · '+short(addr);
-    }
+    if($('status')) $('status').textContent = 'Connected · ' + short(addr);
     await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
     return addr;
   }catch(e){
-    console.error('connectWallet', e);
+    console.error('connectWithProvider', e);
     if(btn){
       btn.disabled = false;
       btn.textContent = account ? short(account) : 'Connect';
       if(!account) btn.title = 'Connect wallet';
     }
-    if(!silent){
-      const msg = e?.shortMessage || e?.message || String(e);
-      if(/rejected|denied|4001/i.test(msg)){
-        if($('status')) $('status').textContent = 'Connection rejected in wallet';
-      }else{
-        if($('status')) $('status').textContent = 'Wallet connect failed · try again';
-        showWalletSheet({ message: 'Could not connect — try another wallet option' });
-      }
+    const msg = e?.shortMessage || e?.message || String(e);
+    if(/rejected|denied|4001/i.test(msg)){
+      if($('status')) $('status').textContent = 'Connection rejected in wallet';
+    }else{
+      if($('status')) $('status').textContent = 'Connect failed · try another wallet';
+      showWalletSheet({ message: 'Could not connect — pick another wallet' });
     }
+    return null;
+  }
+}
+
+async function connectWallet(opts = {}){
+  const { silent = false, provider = null } = opts;
+  try{
+    ensureTopLevelWindow();
+    if(provider) return connectWithProvider(provider, {});
+
+    if(silent){
+      const p = getInjectedProviderSync() || await waitForInjectedProvider(1200);
+      if(!p) return null;
+      let accounts = [];
+      try{ accounts = await p.request({ method: 'eth_accounts' }) || []; }catch(_){}
+      if(!accounts.length) return null;
+      eip1193 = p;
+      account = accounts[0];
+      walletClient = createWalletClient({ account, chain: CHAIN, transport: custom(p) });
+      providerListenersBound = false;
+      bindProviderListeners(p);
+      const btn = $('walletBtn');
+      if(btn){
+        btn.disabled = false;
+        btn.textContent = short(account);
+        btn.classList.add('on');
+        btn.title = 'Tap to disconnect';
+      }
+      await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
+      return account;
+    }
+
+    // Interactive: always open multi-wallet picker
+    showWalletSheet();
+    setTimeout(() => { if($('walletSheetBg')?.classList.contains('show')) renderWalletList(); }, 400);
+    setTimeout(() => { if($('walletSheetBg')?.classList.contains('show')) renderWalletList(); }, 1200);
+    return null;
+  }catch(e){
+    console.error('connectWallet', e);
+    if(!silent) showWalletSheet({ message: 'Connect failed — try again' });
     return null;
   }
 }
@@ -3268,21 +3349,7 @@ function onWalletBtnClick(){
     if(ok) disconnectWallet();
     return;
   }
-  // Always offer sheet on mobile when no provider yet; desktop tries inject first
-  const has = !!(getInjectedProviderSync() || window.ethereum);
-  if(!has && isMobileUa()){
-    showWalletSheet();
-    // Still try detect in background
-    waitForInjectedProvider(3000).then(p=>{
-      if(p && !account){
-        eip1193 = p;
-        const inj=$('wsInjected');
-        if(inj) inj.hidden = false;
-      }
-    });
-    return;
-  }
-  connectWallet();
+  showWalletSheet();
 }
 
 window.Megapot = {
@@ -3317,43 +3384,23 @@ setBalUi(null);
 const btn = $('walletBtn');
 if(btn){
   btn.disabled = false;
-  btn.addEventListener('click', (e) => {
+  btn.onclick = (e) => {
     e.preventDefault();
-    e.stopPropagation();
     onWalletBtnClick();
-  });
+  };
 }
-// Sheet actions
 $('walletSheetClose')?.addEventListener('click', () => hideWalletSheet());
 $('walletSheetBg')?.addEventListener('click', (e) => {
   if(e.target === $('walletSheetBg')) hideWalletSheet();
 });
-$('wsInjected')?.addEventListener('click', () => {
-  hideWalletSheet();
-  connectWallet({ silent: false });
-});
-$('wsMetaMask')?.addEventListener('click', () => openMetaMaskDapp());
-$('wsCoinbase')?.addEventListener('click', () => openCoinbaseDapp());
-$('wsRetry')?.addEventListener('click', async () => {
-  hideWalletSheet();
-  eip1193 = getInjectedProviderSync() || await waitForInjectedProvider(4000);
-  if(!eip1193){
-    showWalletSheet({ message: 'Still no wallet detected on this page' });
-    return;
-  }
-  await connectWallet({ silent: false });
-});
 
-// Silent reconnect if already authorized
-waitForInjectedProvider(2000).then((p) => {
+// Silent reconnect only if already authorized
+waitForInjectedProvider(1800).then((p) => {
   if(!p) return;
-  eip1193 = p;
   connectWallet({ silent: true });
 }).catch(()=>{});
 
-// Mark module ready for early-click bridge
 window.__megapushWalletReady = true;
-try{ window.dispatchEvent(new Event('megapush-wallet-ready')); }catch(_){}
 
 const claimBtn = $('claimAll');
 if(claimBtn){
