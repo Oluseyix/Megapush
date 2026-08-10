@@ -1,6 +1,7 @@
 /**
  * Provably fair global rounds — Cloudflare worker.
- * Phases: betting → flying → crashed (short) → intermission → next cycle
+ * Multiple hands per UTC slot so early crashes don't freeze the UI at 1.00×.
+ * Phases per hand: betting → flying → crashed (short) → next hand
  */
 
 function json(data, status = 200) {
@@ -23,9 +24,11 @@ function envGet(env, ...keys) {
 }
 
 const CYCLE_MS = 48_000;
-const BET_MS = 4_500;
-const RESULT_MS = 3_200;
+const BET_MS = 4_000;
+const RESULT_MS = 2_800;
 const GROWTH_PER_MS = 0.00018;
+const MAX_FLIGHT_MS = 28_000;
+const MAX_HANDS = 24;
 
 async function sha256Hex(input) {
   const data = new TextEncoder().encode(String(input));
@@ -33,8 +36,8 @@ async function sha256Hex(input) {
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function serverSeedForRound(masterSecret, roundId) {
-  return sha256Hex(`${masterSecret}:megapush:round:${roundId}`);
+async function serverSeedForHand(masterSecret, slotId, hand) {
+  return sha256Hex(`${masterSecret}:megapush:slot:${slotId}:hand:${hand}`);
 }
 
 function crashFromSeed(serverSeedHex) {
@@ -57,30 +60,141 @@ function elapsedForMult(mult) {
   return Math.log(mult) / GROWTH_PER_MS;
 }
 
-async function getRoundStateSafe(nowMs, masterSecret) {
-  const roundId = Math.floor(nowMs / CYCLE_MS);
-  const roundStart = roundId * CYCLE_MS;
-  const elapsed = nowMs - roundStart;
-
-  const serverSeed = await serverSeedForRound(masterSecret, roundId);
+async function handTiming(slotId, hand, handStart, slotEnd, masterSecret) {
+  const serverSeed = await serverSeedForHand(masterSecret, slotId, hand);
   const serverSeedHash = await sha256Hex(serverSeed);
   let crashMult = crashFromSeed(serverSeed);
 
-  const maxFlightMs = CYCLE_MS - BET_MS - RESULT_MS;
   let flightMs = elapsedForMult(crashMult);
-  if (flightMs > maxFlightMs) {
-    flightMs = maxFlightMs;
+  if (flightMs > MAX_FLIGHT_MS) {
+    flightMs = MAX_FLIGHT_MS;
     crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
   }
 
-  const flyStart = roundStart + BET_MS;
+  const remaining = slotEnd - handStart;
+  const minNeed = BET_MS + RESULT_MS + 250;
+  if (remaining < minNeed) {
+    return { fits: false, serverSeed, serverSeedHash, crashMult };
+  }
+
+  const maxFlightThisHand = remaining - BET_MS - RESULT_MS;
+  if (flightMs > maxFlightThisHand) {
+    flightMs = Math.max(0, maxFlightThisHand);
+    crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
+    if (crashMult < 1) crashMult = 1;
+  }
+
+  const flyStart = handStart + BET_MS;
   const crashAt = flyStart + flightMs;
-  const resultEnd = Math.min(crashAt + RESULT_MS, cycleEndOf(roundStart));
-  const cycleEnd = cycleEndOf(roundStart);
+  const resultEnd = crashAt + RESULT_MS;
+
+  return {
+    fits: true,
+    serverSeed,
+    serverSeedHash,
+    crashMult,
+    flightMs,
+    handStart,
+    flyStart,
+    crashAt,
+    resultEnd,
+    handEnd: resultEnd,
+  };
+}
+
+async function getRoundStateSafe(nowMs, masterSecret) {
+  const slotId = Math.floor(nowMs / CYCLE_MS);
+  const slotStart = slotId * CYCLE_MS;
+  const slotEnd = slotStart + CYCLE_MS;
+
+  let handStart = slotStart;
+  let hand = 0;
+  let timing = null;
+
+  while (hand < MAX_HANDS) {
+    timing = await handTiming(slotId, hand, handStart, slotEnd, masterSecret);
+    if (!timing.fits) {
+      return {
+        ok: true,
+        global: true,
+        provablyFair: true,
+        platform: 'cloudflare-pages-worker',
+        serverNow: nowMs,
+        roundId: slotId * 1000 + hand,
+        slotId,
+        hand,
+        phase: 'intermission',
+        mult: 1,
+        crashMult: null,
+        serverSeedHash: timing.serverSeedHash,
+        serverSeed: null,
+        fair: {
+          scheme: 'commit-reveal + Bustabit-style crash from SHA-256(serverSeed)',
+          commit: timing.serverSeedHash,
+          reveal: null,
+          verify: 'Seed revealed after crash',
+        },
+        roundStart: handStart,
+        bettingEndsAt: null,
+        flyStart: null,
+        crashAt: null,
+        resultEnd: null,
+        cycleEnd: slotEnd,
+        slotEnd,
+        nextRoundId: (slotId + 1) * 1000,
+        nextRoundStart: slotEnd,
+        growthPerMs: GROWTH_PER_MS,
+        cycleMs: CYCLE_MS,
+        betMs: BET_MS,
+        resultMs: RESULT_MS,
+      };
+    }
+
+    if (nowMs < timing.handEnd) break;
+
+    handStart = timing.handEnd;
+    hand += 1;
+  }
+
+  if (!timing || !timing.fits) {
+    return {
+      ok: true,
+      global: true,
+      provablyFair: true,
+      platform: 'cloudflare-pages-worker',
+      serverNow: nowMs,
+      roundId: slotId * 1000 + hand,
+      slotId,
+      hand,
+      phase: 'intermission',
+      mult: 1,
+      crashMult: null,
+      serverSeedHash: null,
+      serverSeed: null,
+      fair: { scheme: 'commit-reveal', commit: null, reveal: null, verify: null },
+      roundStart: handStart,
+      bettingEndsAt: null,
+      flyStart: null,
+      crashAt: null,
+      resultEnd: null,
+      cycleEnd: slotEnd,
+      slotEnd,
+      nextRoundId: (slotId + 1) * 1000,
+      nextRoundStart: slotEnd,
+      growthPerMs: GROWTH_PER_MS,
+      cycleMs: CYCLE_MS,
+      betMs: BET_MS,
+      resultMs: RESULT_MS,
+    };
+  }
+
+  const { serverSeed, serverSeedHash, crashMult, flyStart, crashAt, resultEnd, handStart: hs } =
+    timing;
+  const roundId = slotId * 1000 + hand;
 
   let phase;
   let mult;
-  if (elapsed < BET_MS) {
+  if (nowMs < flyStart) {
     phase = 'betting';
     mult = 1;
   } else if (nowMs < crashAt) {
@@ -96,6 +210,10 @@ async function getRoundStateSafe(nowMs, masterSecret) {
 
   const revealed = phase === 'crashed' || phase === 'intermission';
 
+  const nextProbe = await handTiming(slotId, hand + 1, resultEnd, slotEnd, masterSecret);
+  const nextRoundStart = nextProbe.fits ? resultEnd : slotEnd;
+  const nextRoundId = nextProbe.fits ? roundId + 1 : (slotId + 1) * 1000;
+
   const base = {
     ok: true,
     global: true,
@@ -103,6 +221,8 @@ async function getRoundStateSafe(nowMs, masterSecret) {
     platform: 'cloudflare-pages-worker',
     serverNow: nowMs,
     roundId,
+    slotId,
+    hand,
     phase,
     mult,
     serverSeedHash,
@@ -116,24 +236,39 @@ async function getRoundStateSafe(nowMs, masterSecret) {
         ? 'SHA256(serverSeed)===serverSeedHash && crashFromSeed(serverSeed)===crashMult'
         : 'Seed revealed after crash',
     },
-    roundStart,
+    roundStart: hs,
     bettingEndsAt: flyStart,
     flyStart,
     crashAt: revealed ? crashAt : null,
     resultEnd: revealed ? resultEnd : null,
-    cycleEnd,
-    nextRoundId: roundId + 1,
-    nextRoundStart: cycleEnd,
+    cycleEnd: nextRoundStart,
+    slotEnd,
+    nextRoundId,
+    nextRoundStart,
     growthPerMs: GROWTH_PER_MS,
     cycleMs: CYCLE_MS,
     betMs: BET_MS,
     resultMs: RESULT_MS,
   };
-  return base;
-}
 
-function cycleEndOf(roundStart) {
-  return roundStart + CYCLE_MS;
+  if (phase === 'flying') {
+    return {
+      ...base,
+      crashAt: null,
+      crashMult: null,
+      serverSeed: null,
+      resultEnd: null,
+    };
+  }
+  if (phase === 'betting') {
+    return {
+      ...base,
+      crashAt: null,
+      crashMult: null,
+      serverSeed: null,
+    };
+  }
+  return base;
 }
 
 export async function handleRound(request, env) {

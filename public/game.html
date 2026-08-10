@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-unstuck">
+<meta name="megapush-build" content="20260810-flow">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -1075,19 +1075,30 @@ async function fetchGlobalRound(){
 
 function phaseAt(g, now){
   if(!g) return 'betting';
-  // Prefer server phase (authoritative)
+  // Past this hand/slot end → force next (don't freeze on stale poll)
+  const endAt = g.cycleEnd!=null ? g.cycleEnd : g.nextRoundStart;
+  if(endAt!=null && now >= endAt + 50){
+    return 'betting'; // next hand; poll will replace packet
+  }
+  // Prefer server phase while timestamps still valid
   if(g.phase==='intermission') return 'intermission';
   if(g.phase==='crashed'){
-    // Local end of "flew away" display even if poll is late
     if(g.resultEnd!=null && now >= g.resultEnd) return 'intermission';
     if(g.crashAt!=null && g.resultMs!=null && now >= g.crashAt + Number(g.resultMs)) return 'intermission';
     return 'crashed';
   }
-  if(g.phase==='flying') return 'flying';
-  if(g.phase==='betting') return 'betting';
+  if(g.phase==='flying'){
+    // If we somehow have crashAt and passed it, show crash locally
+    if(g.crashAt!=null && now >= g.crashAt) return 'crashed';
+    return 'flying';
+  }
+  if(g.phase==='betting'){
+    if(g.flyStart!=null && now >= g.flyStart) return 'flying';
+    return 'betting';
+  }
   // Fallbacks from timestamps
   if(g.crashAt!=null && now >= g.crashAt){
-    const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt + (Number(g.resultMs)||3200));
+    const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt + (Number(g.resultMs)||2800));
     return now >= re ? 'intermission' : 'crashed';
   }
   if(g.flyStart!=null && now >= g.flyStart) return 'flying';
@@ -1097,18 +1108,16 @@ function phaseAt(g, now){
 
 function multAt(g, now){
   if(!g) return 1;
-  if(g.phase==='intermission' || g.phase==='betting') return 1;
-  if(g.phase==='crashed' && g.crashMult!=null) return Number(g.crashMult);
+  const ph = phaseAt(g, now);
+  if(ph==='intermission' || ph==='betting') return 1;
+  if(ph==='crashed' && g.crashMult!=null) return Number(g.crashMult);
   const growth=Number(g.growthPerMs)||0.00018;
   if(g.flyStart==null || now < g.flyStart) return 1;
-  // Climb with public growth curve; crash moment only known after server reveal
   let end = now;
   if(g.crashAt!=null) end = Math.min(now, g.crashAt);
   const raw=Math.exp(growth * Math.max(0, end - g.flyStart));
-  // Soft-cap to last server mult if server is behind (avoid overshooting crash)
   let m = Math.round(raw*100)/100;
-  if(g.phase==='flying' && g.mult!=null && Number(g.mult)>0){
-    // Allow local interpolate up to ~1.15× server sample so UI is smooth between polls
+  if(ph==='flying' && g.mult!=null && Number(g.mult)>0){
     const cap = Number(g.mult) * 1.2 + 0.05;
     if(m > cap) m = Math.round(cap*100)/100;
   }
@@ -1714,21 +1723,23 @@ function globalFrame(){
     fetchGlobalRound();
   }
 
-  // Keep polling server
+  // Keep polling server — especially across hand boundaries
   if(g && !g._fetching){
-    const needFast = g.phase==='flying' || g.phase==='crashed' || (g.cycleEnd!=null && now>=g.cycleEnd-500);
-    // fetch handled by intervals; also pull if past cycle
-    if(g.cycleEnd!=null && now>=g.cycleEnd && (g.roundId===lastRoundId || lastRoundId==null)){
+    const endAt = g.cycleEnd!=null ? g.cycleEnd : g.nextRoundStart;
+    const nearEnd = endAt!=null && now >= endAt - 400;
+    const pastEnd = endAt!=null && now >= endAt;
+    if(pastEnd || nearEnd || g.phase==='crashed' || g.phase==='intermission'){
       g._fetching=true;
       fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
     }
   }
 
-  if(!g || g.flyStart==null){
-    if(!g) fetchGlobalRound();
+  if(!g){
+    fetchGlobalRound();
     globalRaf=requestAnimationFrame(globalFrame);
     return;
   }
+  // flyStart may be null during short end-of-slot intermission — still drive UI + poll
 
   const phase = phaseAt(g, now);
 
@@ -1779,10 +1790,10 @@ function startGlobalSync(){
   });
   // Poll often enough to never sit on one crash mult across rounds
   // Fast polls while flying so crash is detected quickly without leaking crashAt
-  globalPollTimer=setInterval(fetchGlobalRound, 800);
+  globalPollTimer=setInterval(fetchGlobalRound, 500);
   setInterval(()=>{
     const ph = globalRound && globalRound.phase;
-    if(ph==='flying' || ph==='crashed') fetchGlobalRound();
+    if(ph==='flying' || ph==='crashed' || ph==='intermission' || ph==='betting') fetchGlobalRound();
   }, 250);
 }
 

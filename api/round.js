@@ -4,24 +4,27 @@
  * Commit–reveal: serverSeedHash during betting/flying; serverSeed after crash.
  * Bustabit-style crash from SHA-256(serverSeed).
  *
- * Phases:
- *  betting → flying → crashed (short RESULT_MS) → intermission (stake / wait)
- * Never sit on "flew away" for the entire remaining cycle.
+ * Multiple hands per UTC slot so early crashes do NOT leave a long dead
+ * "intermission" at 1.00×. Flow per hand:
+ *   betting → flying → crashed (short RESULT_MS) → next hand immediately
+ * Only the leftover time at the end of a slot is idle intermission.
  */
 
 const crypto = require('crypto');
 
 const CYCLE_MS = 48_000;
-const BET_MS = 4_500;
-const RESULT_MS = 3_200; // how long to show "flew away" before clearing
+const BET_MS = 4_000;
+const RESULT_MS = 2_800;
 const GROWTH_PER_MS = 0.00018;
+const MAX_FLIGHT_MS = 28_000;
+const MAX_HANDS = 24;
 
 function sha256Hex(input) {
   return crypto.createHash('sha256').update(String(input), 'utf8').digest('hex');
 }
 
-function serverSeedForRound(masterSecret, roundId) {
-  return sha256Hex(`${masterSecret}:megapush:round:${roundId}`);
+function serverSeedForHand(masterSecret, slotId, hand) {
+  return sha256Hex(`${masterSecret}:megapush:slot:${slotId}:hand:${hand}`);
 }
 
 function crashFromSeed(serverSeedHex) {
@@ -44,30 +47,143 @@ function elapsedForMult(mult) {
   return Math.log(mult) / GROWTH_PER_MS;
 }
 
-function getRoundState(nowMs, masterSecret) {
-  const roundId = Math.floor(nowMs / CYCLE_MS);
-  const roundStart = roundId * CYCLE_MS;
-  const elapsed = nowMs - roundStart;
-
-  const serverSeed = serverSeedForRound(masterSecret, roundId);
+function handTiming(slotId, hand, handStart, slotEnd, masterSecret) {
+  const serverSeed = serverSeedForHand(masterSecret, slotId, hand);
   const serverSeedHash = sha256Hex(serverSeed);
   let crashMult = crashFromSeed(serverSeed);
 
-  const maxFlightMs = CYCLE_MS - BET_MS - RESULT_MS;
   let flightMs = elapsedForMult(crashMult);
-  if (flightMs > maxFlightMs) {
-    flightMs = maxFlightMs;
+  if (flightMs > MAX_FLIGHT_MS) {
+    flightMs = MAX_FLIGHT_MS;
     crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
   }
 
-  const flyStart = roundStart + BET_MS;
+  const remaining = slotEnd - handStart;
+  // Need room for bet + at least a tiny flight window + result
+  const minNeed = BET_MS + RESULT_MS + 250;
+  if (remaining < minNeed) {
+    return { fits: false, serverSeed, serverSeedHash, crashMult };
+  }
+
+  const maxFlightThisHand = remaining - BET_MS - RESULT_MS;
+  if (flightMs > maxFlightThisHand) {
+    flightMs = Math.max(0, maxFlightThisHand);
+    crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
+    if (crashMult < 1) crashMult = 1;
+  }
+
+  const flyStart = handStart + BET_MS;
   const crashAt = flyStart + flightMs;
-  const resultEnd = Math.min(crashAt + RESULT_MS, roundStart + CYCLE_MS);
-  const cycleEnd = roundStart + CYCLE_MS;
+  const resultEnd = crashAt + RESULT_MS;
+
+  return {
+    fits: true,
+    serverSeed,
+    serverSeedHash,
+    crashMult,
+    flightMs,
+    handStart,
+    flyStart,
+    crashAt,
+    resultEnd,
+    handEnd: resultEnd,
+  };
+}
+
+function getRoundState(nowMs, masterSecret) {
+  const slotId = Math.floor(nowMs / CYCLE_MS);
+  const slotStart = slotId * CYCLE_MS;
+  const slotEnd = slotStart + CYCLE_MS;
+
+  let handStart = slotStart;
+  let hand = 0;
+  let timing = null;
+
+  while (hand < MAX_HANDS) {
+    timing = handTiming(slotId, hand, handStart, slotEnd, masterSecret);
+    if (!timing.fits) {
+      // Remainder of slot — idle until next slot
+      return {
+        ok: true,
+        global: true,
+        provablyFair: true,
+        serverNow: nowMs,
+        roundId: slotId * 1000 + hand,
+        slotId,
+        hand,
+        phase: 'intermission',
+        mult: 1,
+        crashMult: null,
+        serverSeedHash: timing.serverSeedHash,
+        serverSeed: null,
+        fair: {
+          scheme: 'commit-reveal + Bustabit-style crash from SHA-256(serverSeed)',
+          commit: timing.serverSeedHash,
+          reveal: null,
+          verify: 'Seed revealed after crash',
+        },
+        roundStart: handStart,
+        bettingEndsAt: null,
+        flyStart: null,
+        crashAt: null,
+        resultEnd: null,
+        cycleEnd: slotEnd,
+        nextRoundId: (slotId + 1) * 1000,
+        nextRoundStart: slotEnd,
+        growthPerMs: GROWTH_PER_MS,
+        cycleMs: CYCLE_MS,
+        betMs: BET_MS,
+        resultMs: RESULT_MS,
+      };
+    }
+
+    if (nowMs < timing.handEnd) {
+      // Active hand
+      break;
+    }
+
+    handStart = timing.handEnd;
+    hand += 1;
+  }
+
+  if (!timing || !timing.fits) {
+    // Fallback idle
+    return {
+      ok: true,
+      global: true,
+      provablyFair: true,
+      serverNow: nowMs,
+      roundId: slotId * 1000 + hand,
+      slotId,
+      hand,
+      phase: 'intermission',
+      mult: 1,
+      crashMult: null,
+      serverSeedHash: null,
+      serverSeed: null,
+      fair: { scheme: 'commit-reveal', commit: null, reveal: null, verify: null },
+      roundStart: handStart,
+      bettingEndsAt: null,
+      flyStart: null,
+      crashAt: null,
+      resultEnd: null,
+      cycleEnd: slotEnd,
+      nextRoundId: (slotId + 1) * 1000,
+      nextRoundStart: slotEnd,
+      growthPerMs: GROWTH_PER_MS,
+      cycleMs: CYCLE_MS,
+      betMs: BET_MS,
+      resultMs: RESULT_MS,
+    };
+  }
+
+  const { serverSeed, serverSeedHash, crashMult, flyStart, crashAt, resultEnd, handStart: hs } =
+    timing;
+  const roundId = slotId * 1000 + hand;
 
   let phase;
   let mult;
-  if (elapsed < BET_MS) {
+  if (nowMs < flyStart) {
     phase = 'betting';
     mult = 1;
   } else if (nowMs < crashAt) {
@@ -77,12 +193,17 @@ function getRoundState(nowMs, masterSecret) {
     phase = 'crashed';
     mult = crashMult;
   } else {
-    // After short result window — clear "flew away", accept stakes until next cycle climb
+    // Should not happen (we break when now < handEnd)
     phase = 'intermission';
     mult = 1;
   }
 
   const revealed = phase === 'crashed' || phase === 'intermission';
+
+  // Next hand starts at resultEnd if it fits; else next slot
+  const nextProbe = handTiming(slotId, hand + 1, resultEnd, slotEnd, masterSecret);
+  const nextRoundStart = nextProbe.fits ? resultEnd : slotEnd;
+  const nextRoundId = nextProbe.fits ? roundId + 1 : (slotId + 1) * 1000;
 
   return {
     ok: true,
@@ -90,6 +211,8 @@ function getRoundState(nowMs, masterSecret) {
     provablyFair: true,
     serverNow: nowMs,
     roundId,
+    slotId,
+    hand,
     phase,
     mult,
     crashMult: revealed ? crashMult : null,
@@ -103,14 +226,15 @@ function getRoundState(nowMs, masterSecret) {
         ? 'SHA256(serverSeed)===serverSeedHash && crashFromSeed(serverSeed)===crashMult'
         : 'Seed revealed after crash',
     },
-    roundStart,
+    roundStart: hs,
     bettingEndsAt: flyStart,
     flyStart,
-    crashAt, // internal; stripped when flying in getRoundStateSafe
+    crashAt,
     resultEnd,
-    cycleEnd,
-    nextRoundId: roundId + 1,
-    nextRoundStart: cycleEnd,
+    cycleEnd: nextRoundStart, // client: end of THIS hand (not full 48s slot)
+    slotEnd,
+    nextRoundId,
+    nextRoundStart,
     growthPerMs: GROWTH_PER_MS,
     cycleMs: CYCLE_MS,
     betMs: BET_MS,
@@ -140,7 +264,7 @@ function getRoundStateSafe(nowMs, masterSecret) {
     };
   }
 
-  // crashed | intermission — reveal fair data; client needs crashAt for timing
+  // crashed | intermission — reveal fair data
   return {
     ...full,
     crashAt: full.crashAt,
@@ -172,4 +296,4 @@ module.exports.getRoundState = getRoundState;
 module.exports.getRoundStateSafe = getRoundStateSafe;
 module.exports.crashFromSeed = crashFromSeed;
 module.exports.sha256Hex = sha256Hex;
-module.exports.CONST = { CYCLE_MS, BET_MS, RESULT_MS, GROWTH_PER_MS };
+module.exports.CONST = { CYCLE_MS, BET_MS, RESULT_MS, GROWTH_PER_MS, MAX_FLIGHT_MS };
