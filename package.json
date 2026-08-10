@@ -4,7 +4,14 @@
   "engines": {
     "node": "20.x"
   },
+  "scripts": {
+    "cf:deploy": "wrangler pages deploy public --project-name megapush",
+    "cf:dev": "wrangler pages dev public --compatibility-flags nodejs_compat"
+  },
   "dependencies": {
     "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "wrangler": "^4.14.0"
   }
 }

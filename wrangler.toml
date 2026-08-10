@@ -1,0 +1,14 @@
+# Cloudflare Pages — MegaPush
+# Dashboard: Workers & Pages → Create → Connect Git → this repo
+# Build output directory: public
+# Root directory: (repo root)
+#
+# Secrets (Settings → Environment variables / Secrets):
+#   HOUSE_PRIVATE_KEY  (required — same key as Vercel)
+#   ROUND_SECRET       (optional)
+#   RPC_URL            (optional, default Base Sepolia public RPC)
+
+name = "megapush"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "public"
