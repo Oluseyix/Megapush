@@ -580,17 +580,42 @@ nav::-webkit-scrollbar{display:none}
 .play-bal-btn.busy{opacity:.7;pointer-events:none}
 
 /* Bank sheet */
+.bank-modal{position:relative;padding-top:28px}
+.bank-x{
+  position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:50%;
+  background:var(--wash);border:1px solid var(--line);color:var(--mid);
+  font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;z-index:1;transition:background .15s,color .15s;
+}
+.bank-x:hover{background:var(--line);color:var(--ink)}
+.bank-head{padding-right:36px}
 .bank-hero{
-  text-align:center;padding:16px 14px;border-radius:14px;
-  background:linear-gradient(145deg,#0E6F62 0%,#17A18B 55%,#1E2657 140%);
+  position:relative;overflow:hidden;text-align:left;
+  padding:18px 18px 16px;border-radius:16px;
+  background:linear-gradient(150deg,#0E6F62 0%,#17A18B 50%,#1E2657 145%);
   color:#fff;margin:0 0 14px;
+  box-shadow:0 10px 26px rgba(14,111,98,.28);
 }
-.bank-hero .bh-lab{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;opacity:.8}
+.bank-hero::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(140px 90px at 90% -10%,rgba(255,255,255,.22),transparent 70%);
+}
+.bh-top{position:relative;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.bh-icon{
+  width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.18);
+  display:flex;align-items:center;justify-content:center;flex:none;
+  font-family:'Archivo Black',sans-serif;font-size:14px;
+}
+.bh-net{
+  position:relative;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  background:rgba(255,255,255,.18);padding:4px 10px;border-radius:20px;
+}
+.bank-hero .bh-lab{position:relative;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;opacity:.8}
 .bank-hero .bh-val{
-  font-family:'Archivo Black',sans-serif;font-size:36px;line-height:1.1;
-  margin:6px 0 2px;letter-spacing:-1px;
+  position:relative;font-family:'Archivo Black',sans-serif;font-size:38px;line-height:1.1;
+  margin:6px 0 4px;letter-spacing:-1px;
 }
-.bank-hero .bh-hint{font-size:12px;font-weight:600;opacity:.85}
+.bank-hero .bh-hint{position:relative;font-size:12px;font-weight:600;opacity:.85}
 .bank-mode{
   display:grid;grid-template-columns:1fr 1fr;gap:6px;
   background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:4px;
@@ -599,15 +624,17 @@ nav::-webkit-scrollbar{display:none}
 .bank-mode button{
   border:0;background:transparent;border-radius:9px;padding:10px 8px;
   font-family:inherit;font-size:13px;font-weight:800;color:var(--mid);cursor:pointer;
+  transition:background .15s,color .15s,box-shadow .15s;
 }
 .bank-mode button.on{
   background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(15,22,38,.08);
 }
 .bank-amt-wrap{
   display:flex;align-items:center;gap:0;
-  border:1px solid var(--line);border-radius:12px;background:var(--wash);
-  overflow:hidden;margin-bottom:12px;
+  border:1.5px solid var(--line);border-radius:12px;background:var(--wash);
+  overflow:hidden;margin-bottom:10px;transition:border-color .15s,box-shadow .15s;
 }
+.bank-amt-wrap:focus-within{border-color:var(--teal-2);box-shadow:0 0 0 3px rgba(23,161,139,.14);background:#fff}
 .bank-amt-wrap .cur{
   padding:0 4px 0 14px;font-family:'Archivo Black',sans-serif;font-size:18px;color:var(--mid);
 }
@@ -622,19 +649,29 @@ nav::-webkit-scrollbar{display:none}
   font-family:inherit;cursor:pointer;flex:none;
 }
 .bank-amt-wrap .bank-max[hidden]{display:none!important}
-.bank-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.bank-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .bank-pills .pill{
   flex:1;min-width:56px;padding:10px 8px;border-radius:10px;
   border:1px solid var(--line);background:#fff;font-weight:800;font-size:13px;
-  font-family:inherit;cursor:pointer;color:var(--ink);
+  font-family:inherit;cursor:pointer;color:var(--ink);transition:background .15s,color .15s,border-color .15s;
 }
 .bank-pills .pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.bank-status{
-  min-height:18px;font-size:12.5px;font-weight:700;color:var(--mid);
-  text-align:center;margin:0 0 10px;
+.bank-info{
+  font-size:11.5px;color:var(--mid);font-weight:600;text-align:center;margin:0 0 12px;
 }
-.bank-status.err{color:var(--red)}
-.bank-status.ok{color:var(--green)}
+.bank-status{
+  font-size:12.5px;font-weight:700;color:var(--mid);
+  text-align:center;margin:0;border-radius:10px;transition:background .15s,margin .15s;
+}
+.bank-status:not(:empty){padding:9px 12px;background:var(--wash);margin:0 0 10px}
+.bank-status.err{color:var(--red);background:rgba(232,58,46,.09)}
+.bank-status.ok{color:#0B8B41;background:rgba(20,190,92,.12)}
+.bank-tx-link{
+  display:block;text-align:center;font-size:12px;font-weight:800;color:var(--blue);
+  margin:-2px 0 10px;text-decoration:none;
+}
+.bank-tx-link:hover{text-decoration:underline}
+.bank-tx-link[hidden]{display:none!important}
 .bank-actions{display:flex;flex-direction:column;gap:8px}
 .bank-actions .go:disabled{opacity:.55;cursor:not-allowed}
 .wallet-btn{
@@ -912,15 +949,11 @@ button:focus:not(:focus-visible){outline:none}
     <div class="card" style="padding:6px 2px">
       <table class="lb">
         <thead><tr><th>#</th><th>Player</th><th>Highest</th><th>Tickets</th></tr></thead>
-        <tbody>
-          <tr><td class="rk">1</td><td>0x55…aa</td><td class="num">47.2×</td><td>312</td></tr>
-          <tr><td class="rk">2</td><td>0x7a…f2</td><td class="num">28.4×</td><td>198</td></tr>
-          <tr class="you"><td class="rk">YOU</td><td id="lbYou">—</td><td class="num" id="lbMult">—</td><td id="lbTix">0</td></tr>
-          <tr><td class="rk">4</td><td>0x3c…91</td><td class="num">11.1×</td><td>74</td></tr>
-          <tr><td class="rk">5</td><td>0x1d…c8</td><td class="num">9.6×</td><td>61</td></tr>
-          <tr><td class="rk">6</td><td>0x8f…b4</td><td class="num">8.2×</td><td>48</td></tr>
+        <tbody id="lbBody">
+          <tr class="you"><td class="rk">—</td><td>YOU</td><td class="num">—</td><td>0</td></tr>
         </tbody>
       </table>
+      <div id="lbEmpty" style="display:none;padding:16px;text-align:center;color:var(--mid);font-size:13px">Nobody's cashed out yet — be the first on the board</div>
     </div>
     <div class="card">
       <div class="card-lab">Invite</div>
@@ -970,11 +1003,18 @@ button:focus:not(:focus-visible){outline:none}
 
 <!-- Play balance sheet -->
 <div class="modal-bg" id="bankSheetBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
-    <h2 id="bankSheetTitle">Play balance</h2>
-    <p id="bankSheetSub">Fund once, then stake without wallet popups. Lottery prizes are on Winnings.</p>
+  <div class="modal bank-modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
+    <button type="button" class="bank-x" id="bankSheetClose" aria-label="Close">✕</button>
+    <div class="bank-head">
+      <h2 id="bankSheetTitle">Play balance</h2>
+      <p id="bankSheetSub">Fund once, then stake without wallet popups. Lottery prizes are on Winnings.</p>
+    </div>
 
     <div class="bank-hero">
+      <div class="bh-top">
+        <span class="bh-icon" aria-hidden="true">$</span>
+        <span class="bh-net">Base Sepolia</span>
+      </div>
       <div class="bh-lab">Available to stake</div>
       <div class="bh-val" id="bankSheetBal">$0</div>
       <div class="bh-hint" id="bankHeroHint">Deposit Sepolia USDC to start</div>
@@ -998,11 +1038,13 @@ button:focus:not(:focus-visible){outline:none}
       <button type="button" class="bank-max" id="bankMaxBtn" hidden>Max</button>
     </div>
 
+    <div class="bank-info" id="bankInfo">Instant · no wallet popup on future stakes</div>
+
     <div class="bank-status" id="bankStatus" role="status"></div>
+    <a class="bank-tx-link" id="bankTxLink" href="#" target="_blank" rel="noreferrer" hidden>View transaction ↗</a>
 
     <div class="bank-actions">
       <button type="button" class="go" id="bankPrimaryBtn">Deposit USDC</button>
-      <button type="button" class="go secondary" id="bankSheetClose">Close</button>
     </div>
   </div>
 </div>
@@ -1105,7 +1147,6 @@ function playStart(){ beep(520,.08,'sine',.05); setTimeout(()=>beep(700,.12,'sin
 function playTicket(){ beep(920,.04,'sine',.04) }
 
 const feed=[['valeriohq','bought','5 TICKETS'],['hailesilassie','won','$197.80'],['ada.r','cashed out','6.20×'],['smooth-yellow','bought','1 TICKET'],['tunde.o','won','$42.00'],['kemi.a','cashed out','11.80×']];
-$('tk').innerHTML=feed.map(([n,v,x])=>`<span class="ti"><i></i><b>${n}</b> ${v} <span class="${v==='won'?'money':'tix'}">${x}</span></span>`).join('').repeat(2);
 
 /* ticket helpers — 5 normals (1-30) + bonus (1-15) */
 function rndNums(){
@@ -1129,13 +1170,17 @@ function wholeTickets(n){
   const t = Math.floor(Number(n) || 0);
   return Number.isFinite(t) && t > 0 ? t : 0;
 }
+function fmtUsdShort(n){
+  const v = Math.max(0, Number(n) || 0);
+  return Math.abs(v - Math.round(v)) < 1e-9 ? '$'+Math.round(v) : '$'+v.toFixed(2);
+}
 
 let cashoutsToday=0;
 const MISSION_GOAL=3;
 function syncTixUI(){
   if($('tixBal')) $('tixBal').textContent=ticketCount;
   if($('tixCount')) $('tixCount').textContent=ticketCount;
-  const lb=$('lbTix'); if(lb) lb.textContent=ticketCount;
+  if(typeof renderLeaderboard === 'function') renderLeaderboard();
 }
 function syncMission(){
   const pct=Math.min(100,(cashoutsToday/MISSION_GOAL)*100);
@@ -1146,6 +1191,54 @@ function syncMission(){
   if(cashoutsToday>=MISSION_GOAL && $('missionReward')) $('missionReward').textContent='Done';
 }
 syncTixUI(); syncMission();
+
+/* ═══ Leaderboard + live activity — real data from /api/leaderboard, ═══
+   with an honest empty state instead of fabricated players. */
+function fmtAddr(a){ return a ? (a.slice(0,4)+'…'+a.slice(-3)) : '—'; }
+
+let lbTop=[], lbActivity=[], myBestMult=0;
+
+function renderLeaderboard(){
+  const body=$('lbBody'), empty=$('lbEmpty');
+  if(!body) return;
+  const acct = (window.Megapot && window.Megapot.account) ? String(window.Megapot.account).toLowerCase() : null;
+  const top = lbTop.slice(0, 10);
+  const rows = top.map((row,i)=>{
+    const isYou = !!(acct && row.address === acct);
+    return '<tr'+(isYou?' class="you"':'')+'><td class="rk">'+(i+1)+'</td><td>'+(isYou?'YOU':fmtAddr(row.address))+
+      '</td><td class="num">'+((Number(row.bestMult)||0).toFixed(2))+'×</td><td>'+Math.max(0,Math.floor(Number(row.tickets)||0))+'</td></tr>';
+  });
+  const inTop = !!(acct && top.some(r=>r.address===acct));
+  if(acct && !inTop){
+    rows.push('<tr class="you"><td class="rk">—</td><td>YOU</td><td class="num">'+(myBestMult?myBestMult.toFixed(2)+'×':'—')+'</td><td>'+ticketCount+'</td></tr>');
+  }else if(!acct){
+    rows.push('<tr class="you"><td class="rk">—</td><td>YOU</td><td class="num">—</td><td>0</td></tr>');
+  }
+  body.innerHTML = rows.join('');
+  if(empty) empty.style.display = lbTop.length ? 'none' : '';
+}
+
+function renderActivityFeed(){
+  const real = lbActivity.slice(0, 8).map(e=>[fmtAddr(e.address), 'cashed out', (Number(e.mult)||0).toFixed(2)+'×']);
+  const merged = (real.length ? real.concat(feed) : feed).slice(0, 10);
+  const el = $('tk');
+  if(el) el.innerHTML = merged.map(([n,v,x])=>`<span class="ti"><i></i><b>${n}</b> ${v} <span class="${v==='won'?'money':'tix'}">${x}</span></span>`).join('').repeat(2);
+}
+
+async function refreshLeaderboard(){
+  try{
+    const r = await fetch('/api/leaderboard?t='+Date.now(), { cache:'no-store' });
+    const j = await r.json().catch(()=>({}));
+    lbTop = (j && j.ok && Array.isArray(j.top)) ? j.top : [];
+    lbActivity = (j && j.ok && Array.isArray(j.activity)) ? j.activity : [];
+  }catch(e){ console.warn('leaderboard', e); }
+  renderLeaderboard();
+  renderActivityFeed();
+}
+renderLeaderboard();
+renderActivityFeed();
+refreshLeaderboard();
+setInterval(refreshLeaderboard, 20000);
 
 const ticketData=[]; // filled only from on-chain getUserTickets
 function renderTickets(){
@@ -1197,6 +1290,8 @@ window.MegaPushUI = {
   },
   syncTixUI,
   renderTickets,
+  renderLeaderboard,
+  refreshLeaderboard,
 };
 renderTickets();
 // Instant restore of last session tickets (survives refresh until chain reloads)
@@ -1807,19 +1902,20 @@ async function cashOut(b){
       b.payoutFailed = true;
       b.ticketsBought = null;
       paintBet(b);
-      const err = res?.error || 'House buy failed';
-      if(res?.refundTxHash){
-        $('status').textContent = 'Tickets failed · stake back in play balance';
-        if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+      const refundedAmt = fmtUsdShort(stakeAmt);
+      if(res?.refundToBank){
+        // Server already credited the play balance for this entry.
+        if(window.Megapot.refreshPlayBalance) await window.Megapot.refreshPlayBalance();
+        $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · tickets failed · '+refundedAmt+' back in your play balance';
       }else{
-        // API should refund; frontend backup refund if stake was taken
+        // Server couldn't confirm a refund (e.g. network dropped before its
+        // response arrived) — the client makes sure the stake still comes back.
         if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
           const rf = await window.Megapot.refundStake(entryId, stakeAmt);
           if(rf?.ok){
-            $('status').textContent = 'Tickets failed · stake back in play balance';
-            if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+            $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · tickets failed · '+refundedAmt+' back in your play balance';
           }else{
-            $('status').textContent = 'Tickets failed · check refund';
+            $('status').textContent = 'Tickets failed · refund pending — check your play balance shortly';
           }
         }else{
           $('status').textContent = 'Tickets failed · try again';
@@ -1832,6 +1928,8 @@ async function cashOut(b){
     b.ticketsBought = bought;
     b.payoutFailed = false;
     paintBet(b);
+    myBestMult = Math.max(myBestMult, at);
+    renderLeaderboard();
 
     // Load tickets immediately (await)
     try{
@@ -1870,18 +1968,17 @@ async function cashOut(b){
     b.payoutFailed = true;
     b.ticketsBought = null;
     paintBet(b);
-    const msg = err?.message || String(err);
     if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
       try{
         const rf = await window.Megapot.refundStake(entryId, stakeAmt);
         if(rf?.ok){
-          $('status').textContent = 'Tickets failed · stake back in play balance';
+          $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · tickets failed · '+fmtUsdShort(stakeAmt)+' back in your play balance';
           if(window.Megapot.refreshPlayBalance) await window.Megapot.refreshPlayBalance();
           return;
         }
       }catch(_){}
     }
-    $('status').textContent = 'Tickets failed · try again';
+    $('status').textContent = 'Tickets failed · refund pending — check your play balance shortly';
   }
 }
 
@@ -2194,10 +2291,7 @@ function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null } = {}){
     wdClaim.textContent = has ? 'Go to Tickets to claim' : '';
   }
 
-  const lbYou = $('lbYou');
-  if(lbYou && address) lbYou.textContent = address.slice(0,4)+'…'+address.slice(-3);
-  const lbTix = $('lbTix');
-  if(lbTix) lbTix.textContent = String(typeof ticketCount === 'number' ? ticketCount : 0);
+  renderLeaderboard();
 }
 
 if($('wdClaimBtn')){
@@ -2219,8 +2313,7 @@ window.setWinningsFromWallet = function(_usdcRaw, address){
   // Keep address display only; amounts come from setUnclaimedWinnings / loadWins
   const addrEl = $('addr');
   if(addrEl) addrEl.value = address || '';
-  const lbYou = $('lbYou');
-  if(lbYou) lbYou.textContent = address ? (address.slice(0,4)+'…'+address.slice(-3)) : '—';
+  renderLeaderboard();
 };
 window.setUnclaimedWinnings = setUnclaimedWinnings;
 setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
@@ -3068,7 +3161,9 @@ async function connectWithProvider(provider, meta = {}){
       btn.title = 'Tap to disconnect';
     }
     if($('status')) $('status').textContent = 'Connected · ' + short(addr);
+    window.MegaPushUI?.renderLeaderboard?.();
     await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins(), refreshPlayBalance()]);
+    window.MegaPushUI?.refreshLeaderboard?.();
     return addr;
   }catch(e){
     console.error('connectWithProvider', e);
@@ -3112,7 +3207,9 @@ async function connectWallet(opts = {}){
         btn.classList.add('on');
         btn.title = 'Tap to disconnect';
       }
+      window.MegaPushUI?.renderLeaderboard?.();
       await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins(), refreshPlayBalance()]);
+      window.MegaPushUI?.refreshLeaderboard?.();
       return account;
     }
 
@@ -3177,9 +3274,21 @@ let bankSheetMode = 'deposit';
 function setBankStatus(msg, kind){
   const el = $('bankStatus');
   if(!el) return;
-  el.textContent = msg || '';
+  el.textContent = msg ? ((kind === 'ok' ? '✓ ' : kind === 'err' ? '⚠ ' : '') + msg) : '';
   el.classList.remove('err','ok');
   if(kind) el.classList.add(kind);
+}
+
+function setBankTxLink(hash){
+  const a = $('bankTxLink');
+  if(!a) return;
+  if(hash){
+    a.href = 'https://sepolia.basescan.org/tx/' + hash;
+    a.hidden = false;
+  }else{
+    a.hidden = true;
+    a.href = '#';
+  }
 }
 
 function setBankMode(mode){
@@ -3197,6 +3306,12 @@ function setBankMode(mode){
     primary.textContent = bankSheetMode === 'withdraw' ? 'Withdraw to wallet' : 'Deposit USDC';
     primary.disabled = bankSheetMode === 'withdraw' && !(playBalance > 0);
   }
+  const info = $('bankInfo');
+  if(info){
+    info.textContent = bankSheetMode === 'withdraw'
+      ? 'Sent straight to your connected wallet · one transaction'
+      : 'Instant · no wallet popup on future stakes';
+  }
   if(bankSheetMode === 'withdraw' && playBalance > 0){
     if($('bankAmt')) $('bankAmt').value = String(Math.floor(playBalance) || playBalance);
     document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
@@ -3207,6 +3322,7 @@ function setBankMode(mode){
     }
   }
   setBankStatus('');
+  setBankTxLink(null);
 }
 
 function openBankSheet(mode){
@@ -3407,17 +3523,22 @@ async function houseBuyTickets(count, recipient, meta = {}){
     return { ok: false, error: 'Ticket recipient cannot be the house address' };
   }
   let lastErr = 'House buy failed';
-  let lastRefund = null;
+  let lastRefundToBank = false;
+  let lastPlayBalance = null;
+  let lastAlreadyRefunded = false;
   for(let attempt=0; attempt<2; attempt++){
     try{
       const controller = new AbortController();
       const timer = setTimeout(()=>controller.abort(), 55000);
+      // Same entryId on every attempt: the server treats it as one logical
+      // cash-out, so a retry after a refund is rejected instead of buying
+      // "free" tickets on top of a stake that already came back.
       const r = await fetch(HOUSE_BUY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          entryId: (meta.entryId || '') + (attempt?('-r'+attempt):''),
+          entryId: meta.entryId || '',
           stake: meta.stake,
           multiplier: meta.multiplier,
           recipient: to,
@@ -3432,6 +3553,7 @@ async function houseBuyTickets(count, recipient, meta = {}){
         const bought = Math.max(1, Math.floor(Number(j.tickets) || count) || count);
         if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
         loadUserTickets({ expectAtLeast: 1, retries: 8, delayMs: 400, lookback: 10 }).catch(()=>{});
+        if(window.MegaPushUI?.refreshLeaderboard) setTimeout(()=>window.MegaPushUI.refreshLeaderboard(), 1200);
         return {
           ok: true,
           onchain: true,
@@ -3443,15 +3565,25 @@ async function houseBuyTickets(count, recipient, meta = {}){
         };
       }
       lastErr = j.error || ('HTTP '+r.status);
-      lastRefund = j.refundTxHash || null;
-      if(lastRefund) break;
+      lastRefundToBank = !!j.refundToBank;
+      lastPlayBalance = j.playBalance != null ? j.playBalance : lastPlayBalance;
+      lastAlreadyRefunded = !!j.alreadyRefunded;
+      // Already refunded (this attempt or a prior one) — stop retrying,
+      // a further attempt would just be rejected by the server anyway.
+      if(lastRefundToBank || lastAlreadyRefunded) break;
       await new Promise(res=>setTimeout(res, 800));
     }catch(e){
       lastErr = e?.name==='AbortError' ? 'Ticket buy timed out' : (e?.message || String(e));
       await new Promise(res=>setTimeout(res, 800));
     }
   }
-  return { ok: false, error: lastErr, recipient: to, refundTxHash: lastRefund };
+  return {
+    ok: false,
+    error: lastErr,
+    recipient: to,
+    refundToBank: lastRefundToBank || lastAlreadyRefunded,
+    playBalance: lastPlayBalance,
+  };
 }
 
 function ticketCacheKey(addr){
@@ -3702,6 +3834,7 @@ function disconnectWallet(){
   // Clear live UI but keep localStorage cache so refresh can restore
   clearTicketsUi({ dropCache: false });
   if($('status')) $('status').textContent = 'Wallet disconnected';
+  window.MegaPushUI?.renderLeaderboard?.();
   return true;
 }
 
@@ -3802,6 +3935,7 @@ async function runBankPrimary(){
   const btn = $('bankPrimaryBtn');
   const chip = $('playBalChip');
   let amt = Math.floor(Number($('bankAmt')?.value) || 0);
+  setBankTxLink(null);
 
   if(bankSheetMode === 'deposit'){
     if(!(amt > 0)){ setBankStatus('Enter an amount to deposit', 'err'); return; }
@@ -3818,12 +3952,13 @@ async function runBankPrimary(){
       if(res?.ok){
         setPlayBalUi(res.balance ?? playBalance);
         setBankStatus('Deposited ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance), 'ok');
+        setBankTxLink(res.tx || null);
         if($('status')) $('status').textContent = 'Play balance ' + fmtPlayUsd(playBalance) + ' · stake with no popups';
         if(btn) btn.textContent = 'Deposited';
         setTimeout(() => {
           if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
           chip?.classList.remove('busy');
-        }, 1000);
+        }, 1200);
       }else{
         setBankStatus(res?.error || 'Deposit failed', 'err');
         if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC'; }
@@ -3846,18 +3981,23 @@ async function runBankPrimary(){
     if(!account){ setBankStatus('Connect wallet first', 'err'); return; }
   }
   if(btn){ btn.disabled = true; btn.textContent = 'Withdrawing…'; }
-  setBankStatus('Sending USDC to your wallet…');
+  setBankStatus('Sending ' + fmtPlayUsd(amt) + ' to your wallet…');
   try{
     const res = await withdrawFromPlayBalance(amt);
     if(res?.ok){
       setPlayBalUi(res.balance ?? playBalance);
-      setBankStatus('Sent ' + fmtPlayUsd(amt) + ' to wallet', 'ok');
+      setBankStatus('Sent ' + fmtPlayUsd(amt) + ' to your wallet', 'ok');
+      setBankTxLink(res.txHash || null);
       if($('status')) $('status').textContent = 'Withdrew ' + fmtPlayUsd(amt) + ' · balance ' + fmtPlayUsd(playBalance);
       if(btn) btn.textContent = 'Sent';
+      // Reset the form for another withdrawal, but keep the receipt + link
+      // visible — a refund the player can't see is a refund that "feels"
+      // like it didn't happen.
       setTimeout(() => {
-        setBankMode('withdraw');
+        if($('bankAmt')) $('bankAmt').value = String(Math.max(0, Math.floor(playBalance)));
+        document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
         if(btn){ btn.disabled = !(playBalance > 0); btn.textContent = 'Withdraw to wallet'; }
-      }, 1000);
+      }, 900);
     }else{
       setBankStatus(res?.error || 'Withdraw failed', 'err');
       if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
