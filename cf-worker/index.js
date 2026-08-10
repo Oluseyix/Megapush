@@ -7,7 +7,6 @@ import { handleRefund } from './refund.js';
 import { handleHealth } from './health.js';
 import { handleRound } from './round.js';
 import { handleBank } from './bank.js';
-import { handleLeaderboard } from './leaderboard.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -67,9 +66,6 @@ export default {
         }
         if (path === '/api/bank') {
           return handleBank(request, env);
-        }
-        if (path === '/api/leaderboard') {
-          return handleLeaderboard(request, env);
         }
         return json({ ok: false, error: 'Unknown API route', path }, 404);
       } catch (e) {

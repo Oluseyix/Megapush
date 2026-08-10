@@ -16,8 +16,6 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
-import { creditPlayBank, isEntryRefunded } from './bank.js';
-import { recordCashout } from './leaderboard.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -287,27 +285,6 @@ export async function handleCashout(request, env) {
   // Keep buys small enough to land reliably (still chunk if larger)
   if (tickets > 50) tickets = 50;
 
-  // If this exact entry was already refunded to the play bank (e.g. a prior
-  // attempt for the same entryId failed and paid the stake back), refuse to
-  // buy tickets for it now — otherwise a retry could hand out free tickets
-  // on top of a stake that's already been returned.
-  if (entryId) {
-    try {
-      if (await isEntryRefunded(env, recipient, entryId)) {
-        return json(
-          {
-            ok: false,
-            error: 'This cash-out was already refunded to your play balance — start a new stake.',
-            recipient,
-            entryId,
-            alreadyRefunded: true,
-          },
-          409,
-        );
-      }
-    } catch (_) {}
-  }
-
   try {
     const result = await withHouseLock(async () => {
       const clients = makeClients(env);
@@ -401,13 +378,6 @@ export async function handleCashout(request, env) {
       };
     });
 
-    // Best-effort leaderboard + activity record — never blocks the response.
-    if (Number.isFinite(multiplier) && multiplier > 0) {
-      try {
-        await recordCashout(env, recipient, multiplier, result.delivered || result.tickets);
-      } catch (_) {}
-    }
-
     return json(result, 200);
   } catch (e) {
     console.error('cashout error', e?.shortMessage || e?.message || e);
@@ -415,7 +385,8 @@ export async function handleCashout(request, env) {
     let refundToBank = null;
     if (Number.isFinite(stake) && stake > 0 && isAddr(recipient)) {
       try {
-        refundToBank = await creditPlayBank(env, recipient, stake, entryId);
+        const { creditPlayBank } = await import('./bank.js');
+        refundToBank = await creditPlayBank(recipient, stake, entryId);
       } catch (re) {
         console.error('bank refund failed', re?.message || re);
       }

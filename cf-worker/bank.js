@@ -1,13 +1,6 @@
 /**
  * Play bank — deposit USDC once, stake many times without wallet popups.
- *
- * Balance is stored in Cloudflare KV (env.MEGAPUSH_KV) when that binding is
- * configured — durable and consistent across every edge location. If the
- * binding is absent (not yet set up in the Pages dashboard), this falls back
- * to the Worker Cache API, which is best-effort and scoped per colo, so a
- * balance change made by one request may not be visible to the very next
- * request if it lands on a different edge node. Add a KV namespace binding
- * named MEGAPUSH_KV in Cloudflare Pages → Settings → Functions to upgrade.
+ * Balance is stored in the Worker Cache API (best-effort durable for CF).
  *
  * POST /api/bank
  *   { action: 'deposit', player, txHash }
@@ -59,56 +52,30 @@ function bankCacheKey(player) {
   return new Request('https://megapush.bank.internal/v1/' + String(player).toLowerCase());
 }
 
-function bankKvKey(player) {
-  return 'bank:' + String(player).toLowerCase();
-}
-
-function normalizeBank(j) {
-  if (!j || typeof j !== 'object') return null;
-  return {
-    balance: Math.max(0, Number(j.balance) || 0),
-    usedTx: Array.isArray(j.usedTx) ? j.usedTx : [],
-    entries: j.entries && typeof j.entries === 'object' ? j.entries : {},
-  };
-}
-
-async function loadBank(env, player) {
-  if (env?.MEGAPUSH_KV) {
-    try {
-      const raw = await env.MEGAPUSH_KV.get(bankKvKey(player));
-      const parsed = raw ? normalizeBank(JSON.parse(raw)) : null;
-      if (parsed) return parsed;
-      if (raw == null) return { balance: 0, usedTx: [], entries: {} };
-    } catch (e) {
-      console.warn('bank KV load failed, falling back to cache', e?.message || e);
-    }
-  }
-  // Cache API fallback — best-effort only, used when KV isn't bound yet.
+async function loadBank(player) {
   try {
     const hit = await caches.default.match(bankCacheKey(player));
     if (hit) {
-      const parsed = normalizeBank(await hit.json());
-      if (parsed) return parsed;
+      const j = await hit.json();
+      if (j && typeof j === 'object') {
+        return {
+          balance: Math.max(0, Number(j.balance) || 0),
+          usedTx: Array.isArray(j.usedTx) ? j.usedTx : [],
+          entries: j.entries && typeof j.entries === 'object' ? j.entries : {},
+        };
+      }
     }
   } catch (_) {}
   return { balance: 0, usedTx: [], entries: {} };
 }
 
-async function saveBank(env, player, data) {
+async function saveBank(player, data) {
   const body = {
     balance: Math.max(0, Math.round((Number(data.balance) || 0) * 100) / 100),
     usedTx: (data.usedTx || []).slice(-200),
     entries: data.entries || {},
     updatedAt: Date.now(),
   };
-  if (env?.MEGAPUSH_KV) {
-    try {
-      await env.MEGAPUSH_KV.put(bankKvKey(player), JSON.stringify(body));
-      return body;
-    } catch (e) {
-      console.warn('bank KV save failed, falling back to cache', e?.message || e);
-    }
-  }
   try {
     await caches.default.put(
       bankCacheKey(player),
@@ -149,7 +116,7 @@ async function creditFromDepositTx(env, player, txHash) {
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
     return { ok: false, error: 'Invalid tx hash', status: 400 };
   }
-  const bank = await loadBank(env, player);
+  const bank = await loadBank(player);
   if (bank.usedTx.includes(txHash.toLowerCase())) {
     return { ok: true, balance: bank.balance, already: true, credited: 0 };
   }
@@ -194,16 +161,16 @@ async function creditFromDepositTx(env, player, txHash) {
   credited = Math.round(credited * 100) / 100;
   bank.balance = Math.round((bank.balance + credited) * 100) / 100;
   bank.usedTx.push(txHash.toLowerCase());
-  const saved = await saveBank(env, player, bank);
+  const saved = await saveBank(player, bank);
   return { ok: true, balance: saved.balance, credited, already: false };
 }
 
 /** Credit play balance (used by cashout/refund paths — never send USDC to wallet). */
-export async function creditPlayBank(env, player, stakeUsd, entryId) {
+export async function creditPlayBank(player, stakeUsd, entryId) {
   if (!isAddr(player)) return { ok: false, error: 'bad player' };
   const stake = Math.floor(Number(stakeUsd) || 0);
   if (!(stake > 0)) return { ok: false, error: 'bad stake' };
-  const bank = await loadBank(env, player);
+  const bank = await loadBank(player);
   if (entryId && bank.entries[entryId]?.status === 'refunded') {
     return { ok: true, already: true, balance: bank.balance, toBank: true };
   }
@@ -216,19 +183,8 @@ export async function creditPlayBank(env, player, stakeUsd, entryId) {
       at: Date.now(),
     };
   }
-  const saved = await saveBank(env, player, bank);
+  const saved = await saveBank(player, bank);
   return { ok: true, balance: saved.balance, credited: stake, toBank: true };
-}
-
-/** True once `entryId`'s stake has already been refunded to the play bank. */
-export async function isEntryRefunded(env, player, entryId) {
-  if (!entryId || !isAddr(player)) return false;
-  try {
-    const bank = await loadBank(env, player);
-    return bank.entries[entryId]?.status === 'refunded';
-  } catch (_) {
-    return false;
-  }
 }
 
 export async function handleBank(request, env) {
@@ -237,7 +193,7 @@ export async function handleBank(request, env) {
   if (request.method === 'GET') {
     const player = url.searchParams.get('player') || '';
     if (!isAddr(player)) return json({ ok: false, error: 'player required' }, 400);
-    const bank = await loadBank(env, player);
+    const bank = await loadBank(player);
     return json({ ok: true, player: player.toLowerCase(), balance: bank.balance });
   }
 
@@ -255,7 +211,7 @@ export async function handleBank(request, env) {
   if (!isAddr(player)) return json({ ok: false, error: 'Valid player required' }, 400);
 
   if (action === 'balance') {
-    const bank = await loadBank(env, player);
+    const bank = await loadBank(player);
     return json({ ok: true, player: player.toLowerCase(), balance: bank.balance });
   }
 
@@ -279,7 +235,7 @@ export async function handleBank(request, env) {
     if (!entryId || !entryId.toLowerCase().startsWith(player.toLowerCase())) {
       return json({ ok: false, error: 'entryId must start with player address' }, 403);
     }
-    const bank = await loadBank(env, player);
+    const bank = await loadBank(player);
     if (bank.entries[entryId]) {
       return json({
         ok: true,
@@ -300,7 +256,7 @@ export async function handleBank(request, env) {
     }
     bank.balance = Math.round((bank.balance - stake) * 100) / 100;
     bank.entries[entryId] = { stake, at: Date.now(), status: 'open' };
-    const saved = await saveBank(env, player, bank);
+    const saved = await saveBank(player, bank);
     return json({
       ok: true,
       entryId,
@@ -315,7 +271,7 @@ export async function handleBank(request, env) {
     const stake = Math.floor(Number(body.stake) || 0);
     const entryId = body.entryId != null ? String(body.entryId) : '';
     if (!(stake > 0)) return json({ ok: false, error: 'Invalid stake' }, 400);
-    const bank = await loadBank(env, player);
+    const bank = await loadBank(player);
     if (entryId && bank.entries[entryId]?.status === 'refunded') {
       return json({ ok: true, already: true, balance: bank.balance });
     }
@@ -328,7 +284,7 @@ export async function handleBank(request, env) {
         at: Date.now(),
       };
     }
-    const saved = await saveBank(env, player, bank);
+    const saved = await saveBank(player, bank);
     return json({
       ok: true,
       balance: saved.balance,
@@ -343,7 +299,7 @@ export async function handleBank(request, env) {
     if (body.amount === 'max' || body.max === true) amount = Infinity;
     amount = Math.floor(Number(amount) || 0);
 
-    const bank = await loadBank(env, player);
+    const bank = await loadBank(player);
     if (!(bank.balance > 0)) {
       return json({ ok: false, error: 'Nothing to withdraw', balance: 0 }, 400);
     }
@@ -409,7 +365,7 @@ export async function handleBank(request, env) {
 
       // Debit first (idempotent-ish: if transfer fails, re-credit)
       bank.balance = Math.round((bank.balance - amount) * 100) / 100;
-      await saveBank(env, player, bank);
+      await saveBank(player, bank);
 
       try {
         const nonce = await publicClient.getTransactionCount({
@@ -443,7 +399,7 @@ export async function handleBank(request, env) {
       } catch (txErr) {
         // Restore balance if chain transfer failed
         bank.balance = Math.round((bank.balance + amount) * 100) / 100;
-        await saveBank(env, player, bank);
+        await saveBank(player, bank);
         return json({
           ok: false,
           error: txErr?.shortMessage || txErr?.message || String(txErr),

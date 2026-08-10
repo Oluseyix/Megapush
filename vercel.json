@@ -1,0 +1,11 @@
+{
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
+}
