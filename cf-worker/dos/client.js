@@ -49,8 +49,8 @@ export async function doFetch(stub, path, init = {}) {
   }
 }
 
-/** Register stake on RoundDO (no-op passthrough if binding missing — Pages fallback). */
-export async function roundDoRegisterStake(env, { stake, entryId, player }) {
+/** Register stake on RoundDO (no-op if binding missing). */
+export async function roundDoRegisterStake(env, { stake, entryId, player, autoMult }) {
   if (!env?.ROUND_DO) {
     return { ok: true, skipped: true, reason: 'no ROUND_DO binding' };
   }
@@ -60,6 +60,7 @@ export async function roundDoRegisterStake(env, { stake, entryId, player }) {
       stakeUsdc: stake,
       entryId,
       player,
+      autoMult: autoMult != null ? Number(autoMult) : undefined,
     }),
   });
 }

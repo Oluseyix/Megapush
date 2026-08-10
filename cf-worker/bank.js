@@ -67,7 +67,21 @@ function bankKvKey(player) {
 }
 
 function emptyBank() {
-  return { balance: 0, usedTx: [], entries: {}, history: [] };
+  return {
+    /** Withdrawable: deposits never staked (or stake returned before tickets). */
+    deposited: 0,
+    /** Legacy alias of deposited for older clients */
+    balance: 0,
+    /** Fractional ticket dollars; never withdrawable as USDC */
+    progressUsdc: 0,
+    usedTx: [],
+    entries: {},
+    history: [],
+  };
+}
+
+function money2(n) {
+  return Math.max(0, Math.round((Number(n) || 0) * 100) / 100);
 }
 
 function normalizeHistory(list) {
@@ -76,34 +90,51 @@ function normalizeHistory(list) {
     .filter((h) => h && typeof h === 'object')
     .map((h) => ({
       type: String(h.type || 'tx'),
-      amount: Math.round((Number(h.amount) || 0) * 100) / 100,
+      amount: money2(h.amount),
       txHash: h.txHash ? String(h.txHash).toLowerCase() : null,
       entryId: h.entryId != null ? String(h.entryId) : null,
       at: Number(h.at) || Date.now(),
-      balance: h.balance != null ? Math.round((Number(h.balance) || 0) * 100) / 100 : null,
+      balance: h.balance != null ? money2(h.balance) : null,
+      deposited: h.deposited != null ? money2(h.deposited) : null,
+      progressUsdc: h.progressUsdc != null ? money2(h.progressUsdc) : null,
     }))
     .slice(0, 100);
 }
 
 function normalizeBank(j) {
   if (!j || typeof j !== 'object') return emptyBank();
+  // Migrate legacy single balance → deposited (withdrawable)
+  const legacy = Number(j.balance) || 0;
+  const deposited = j.deposited != null ? Number(j.deposited) : legacy;
+  const d = money2(deposited);
   return {
-    balance: Math.max(0, Number(j.balance) || 0),
+    deposited: d,
+    balance: d,
+    progressUsdc: money2(j.progressUsdc),
     usedTx: Array.isArray(j.usedTx) ? j.usedTx.map((t) => String(t).toLowerCase()) : [],
     entries: j.entries && typeof j.entries === 'object' ? j.entries : {},
     history: normalizeHistory(j.history),
   };
 }
 
+function syncDeposited(bank) {
+  bank.deposited = money2(bank.deposited);
+  bank.balance = bank.deposited;
+  bank.progressUsdc = money2(bank.progressUsdc);
+  return bank;
+}
+
 function pushHistory(bank, entry) {
   if (!bank.history) bank.history = [];
   const row = {
     type: String(entry.type || 'tx'),
-    amount: Math.round((Number(entry.amount) || 0) * 100) / 100,
+    amount: money2(entry.amount),
     txHash: entry.txHash ? String(entry.txHash).toLowerCase() : null,
     entryId: entry.entryId != null ? String(entry.entryId) : null,
     at: Number(entry.at) || Date.now(),
-    balance: Math.round((Number(bank.balance) || 0) * 100) / 100,
+    balance: money2(bank.deposited),
+    deposited: money2(bank.deposited),
+    progressUsdc: money2(bank.progressUsdc),
   };
   // Dedupe same on-chain tx of same type
   if (row.txHash) {
@@ -156,8 +187,11 @@ async function loadBank(player, env) {
 /** Durable write: KV + Cache. */
 async function saveBank(player, data, env) {
   const p = String(player).toLowerCase();
+  const deposited = money2(data.deposited != null ? data.deposited : data.balance);
   const body = {
-    balance: Math.max(0, Math.round((Number(data.balance) || 0) * 100) / 100),
+    deposited,
+    balance: deposited,
+    progressUsdc: money2(data.progressUsdc),
     usedTx: (data.usedTx || []).map((t) => String(t).toLowerCase()).slice(-500),
     entries: data.entries || {},
     history: normalizeHistory(data.history),
@@ -425,7 +459,8 @@ async function creditFromDepositTx(env, player, txHash, expectedAmount) {
     };
   }
 
-  bank2.balance = Math.round((bank2.balance + credited) * 100) / 100;
+  bank2.deposited = money2(bank2.deposited + credited);
+  syncDeposited(bank2);
   bank2.usedTx.push(txLc);
   const hist = pushHistory(bank2, {
     type: 'deposit',
@@ -436,7 +471,7 @@ async function creditFromDepositTx(env, player, txHash, expectedAmount) {
   const saved = await saveBank(player, bank2, env);
   return {
     ok: true,
-    balance: saved.balance,
+    ...bankPublicView(saved),
     credited,
     already: false,
     durable: !!(env?.BANK_KV),
@@ -528,23 +563,34 @@ async function reconcileDepositsFromChain(env, player, { lookbackBlocks = 4000 }
     scanned: byTx.size,
     lookbackBlocks: lookback,
     totalNew: Math.round(totalNew * 100) / 100,
-    balance: bank.balance,
+    ...bankPublicView(bank),
     history: bank.history || [],
     results,
     durable: !!(env?.BANK_KV),
   };
 }
 
-/** Credit play balance (used by cashout/refund paths — never send USDC to wallet). */
+/**
+ * Return stake to deposited (withdrawable) — cancel / failed ticket buy only.
+ * Never use for cashout "winnings" (those are tickets + progress only).
+ */
 export async function creditPlayBank(player, stakeUsd, entryId, env) {
   if (!isAddr(player)) return { ok: false, error: 'bad player' };
   const stake = Math.floor(Number(stakeUsd) || 0);
   if (!(stake > 0)) return { ok: false, error: 'bad stake' };
   const bank = await loadBank(player, env);
   if (entryId && bank.entries[entryId]?.status === 'refunded') {
-    return { ok: true, already: true, balance: bank.balance, toBank: true };
+    return {
+      ok: true,
+      already: true,
+      balance: bank.deposited,
+      deposited: bank.deposited,
+      progressUsdc: bank.progressUsdc,
+      toBank: true,
+    };
   }
-  bank.balance = Math.round((bank.balance + stake) * 100) / 100;
+  bank.deposited = money2(bank.deposited + stake);
+  syncDeposited(bank);
   if (entryId) {
     bank.entries[entryId] = {
       ...(bank.entries[entryId] || {}),
@@ -564,7 +610,87 @@ export async function creditPlayBank(player, stakeUsd, entryId, env) {
     at: Date.now(),
   });
   const saved = await saveBank(player, bank, env);
-  return { ok: true, balance: saved.balance, credited: stake, toBank: true, history: saved.history };
+  return {
+    ok: true,
+    balance: saved.deposited,
+    deposited: saved.deposited,
+    progressUsdc: saved.progressUsdc,
+    credited: stake,
+    toBank: true,
+    history: saved.history,
+  };
+}
+
+/**
+ * Add cashout remainder to ticket progress (never withdrawable USDC).
+ * Does not mint tickets — use consumeProgressTickets after a successful buy.
+ */
+export async function applyTicketProgress(player, remainderUsdc, env) {
+  if (!isAddr(player)) return { ok: false, progressUsdc: 0, freeTickets: 0 };
+  const add = money2(remainderUsdc);
+  const bank = await loadBank(player, env);
+  bank.progressUsdc = money2(bank.progressUsdc + add);
+  syncDeposited(bank);
+  const freeTickets = Math.floor(bank.progressUsdc);
+  if (add > 0) {
+    pushHistory(bank, {
+      type: 'progress',
+      amount: add,
+      at: Date.now(),
+    });
+  }
+  const saved = await saveBank(player, bank, env);
+  return {
+    ok: true,
+    progressUsdc: saved.progressUsdc,
+    freeTickets,
+    deposited: saved.deposited,
+    balance: saved.deposited,
+  };
+}
+
+/** After free tickets are bought on-chain, debit progress by whole dollars. */
+export async function consumeProgressTickets(player, freeTickets, env) {
+  const n = Math.floor(Number(freeTickets) || 0);
+  if (!isAddr(player) || n <= 0) return { ok: true, progressUsdc: 0 };
+  const bank = await loadBank(player, env);
+  const take = Math.min(n, Math.floor(bank.progressUsdc));
+  bank.progressUsdc = money2(bank.progressUsdc - take);
+  syncDeposited(bank);
+  if (take > 0) {
+    pushHistory(bank, { type: 'progress_ticket', amount: take, at: Date.now() });
+  }
+  const saved = await saveBank(player, bank, env);
+  return { ok: true, progressUsdc: saved.progressUsdc, consumed: take };
+}
+
+/** Public bank snapshot for API responses */
+export function bankPublicView(bank) {
+  const deposited = money2(bank.deposited != null ? bank.deposited : bank.balance);
+  return {
+    balance: deposited,
+    deposited,
+    withdrawable: deposited,
+    progressUsdc: money2(bank.progressUsdc),
+    progressTowardTicket: money2(bank.progressUsdc),
+  };
+}
+
+/** Mark entry status after settle/lost (stake not returned to deposited). */
+export async function markEntryStatus(player, entryId, status, env) {
+  if (!isAddr(player) || !entryId) return { ok: false };
+  const bank = await loadBank(player, env);
+  if (!bank.entries[entryId]) {
+    bank.entries[entryId] = { status, at: Date.now() };
+  } else {
+    bank.entries[entryId] = {
+      ...bank.entries[entryId],
+      status: String(status || 'settled'),
+      at: Date.now(),
+    };
+  }
+  await saveBank(player, bank, env);
+  return { ok: true };
 }
 
 export async function handleBank(request, env) {
@@ -580,7 +706,7 @@ export async function handleBank(request, env) {
     return json({
       ok: true,
       player: player.toLowerCase(),
-      balance: bank.balance,
+      ...bankPublicView(bank),
       durable: !!(env?.BANK_KV),
       history: includeHistory ? bank.history : undefined,
     });
@@ -604,7 +730,7 @@ export async function handleBank(request, env) {
     return json({
       ok: true,
       player: player.toLowerCase(),
-      balance: bank.balance,
+      ...bankPublicView(bank),
       durable: !!(env?.BANK_KV),
       history: bank.history || [],
     });
@@ -650,6 +776,8 @@ export async function handleBank(request, env) {
   if (action === 'stake') {
     const stake = Math.floor(Number(body.stake) || 0);
     const entryId = body.entryId != null ? String(body.entryId) : '';
+    const autoMult =
+      body.autoMult != null && Number(body.autoMult) > 1 ? Number(body.autoMult) : null;
     if (!(stake > 0)) return json({ ok: false, error: 'Invalid stake' }, 400);
     if (!entryId || !entryId.toLowerCase().startsWith(player.toLowerCase())) {
       return json({ ok: false, error: 'entryId must start with player address' }, 403);
@@ -661,26 +789,30 @@ export async function handleBank(request, env) {
         already: true,
         entryId,
         stake,
-        balance: bank.balance,
+        ...bankPublicView(bank),
         fromBank: true,
         history: bank.history || [],
       });
     }
-    if (bank.balance + 1e-9 < stake) {
-      return json({
-        ok: false,
-        error: 'Insufficient play balance',
-        balance: bank.balance,
-        need: stake,
-      }, 400);
+    // Stake only from deposited (withdrawable) pool
+    if (bank.deposited + 1e-9 < stake) {
+      return json(
+        {
+          ok: false,
+          error: 'Insufficient deposited balance',
+          ...bankPublicView(bank),
+          need: stake,
+        },
+        400,
+      );
     }
 
-    // RoundDO: betting window + MAX_ROUND_EXPOSURE (Workers only; Pages skips)
     const { roundDoRegisterStake, roundDoReleaseStake } = await import('./dos/client.js');
     const roundReg = await roundDoRegisterStake(env, {
       stake,
       entryId,
       player: player.toLowerCase(),
+      autoMult,
     });
     if (roundReg && roundReg.ok === false && !roundReg.skipped) {
       return json(
@@ -698,13 +830,15 @@ export async function handleBank(request, env) {
       );
     }
 
-    bank.balance = Math.round((bank.balance - stake) * 100) / 100;
+    bank.deposited = money2(bank.deposited - stake);
+    syncDeposited(bank);
     bank.entries[entryId] = {
       stake,
       at: Date.now(),
       status: 'open',
       roundId: roundReg?.roundId ?? null,
       exposureAdd: roundReg?.exposureAdd ?? null,
+      autoMult,
     };
     pushHistory(bank, {
       type: 'stake',
@@ -718,7 +852,8 @@ export async function handleBank(request, env) {
         ok: true,
         entryId,
         stake,
-        balance: saved.balance,
+        autoMult,
+        ...bankPublicView(saved),
         fromBank: true,
         history: saved.history,
         roundId: roundReg?.roundId,
@@ -726,7 +861,6 @@ export async function handleBank(request, env) {
         remainingExposureUsdc: roundReg?.remainingUsdc,
       });
     } catch (e) {
-      // Compensate RoundDO if bank write fails
       await roundDoReleaseStake(env, { entryId, reason: 'bank_save_failed' });
       throw e;
     }
@@ -747,9 +881,15 @@ export async function handleBank(request, env) {
     if (!(stake > 0)) return json({ ok: false, error: 'Invalid stake' }, 400);
     const bank = await loadBank(player, env);
     if (entryId && bank.entries[entryId]?.status === 'refunded') {
-      return json({ ok: true, already: true, balance: bank.balance, history: bank.history || [] });
+      return json({
+        ok: true,
+        already: true,
+        ...bankPublicView(bank),
+        history: bank.history || [],
+      });
     }
-    bank.balance = Math.round((bank.balance + stake) * 100) / 100;
+    bank.deposited = money2(bank.deposited + stake);
+    syncDeposited(bank);
     if (entryId) {
       bank.entries[entryId] = {
         ...(bank.entries[entryId] || {}),
@@ -771,7 +911,7 @@ export async function handleBank(request, env) {
     const saved = await saveBank(player, bank, env);
     return json({
       ok: true,
-      balance: saved.balance,
+      ...bankPublicView(saved),
       credited: stake,
       toBank: true,
       history: saved.history,
@@ -779,23 +919,27 @@ export async function handleBank(request, env) {
   }
 
   if (action === 'withdraw') {
-    // Send play balance USDC back to player wallet (house pays)
+    // Only deposited-unstaked USDC may leave. Progress / staked value cannot.
     let amount = Number(body.amount != null ? body.amount : body.stake);
     if (body.amount === 'max' || body.max === true) amount = Infinity;
     amount = Math.floor(Number(amount) || 0);
 
     const bank = await loadBank(player, env);
-    if (!(bank.balance > 0)) {
-      return json({ ok: false, error: 'Nothing to withdraw', balance: 0 }, 400);
-    }
-    if (!(amount > 0) || amount === Infinity) {
-      amount = Math.floor(bank.balance);
-    }
-    if (amount > bank.balance + 1e-9) {
+    if (!(bank.deposited > 0)) {
       return json({
         ok: false,
-        error: 'Amount exceeds play balance',
-        balance: bank.balance,
+        error: 'Nothing withdrawable (only deposited funds can leave)',
+        ...bankPublicView(bank),
+      }, 400);
+    }
+    if (!(amount > 0) || amount === Infinity) {
+      amount = Math.floor(bank.deposited);
+    }
+    if (amount > bank.deposited + 1e-9) {
+      return json({
+        ok: false,
+        error: 'Amount exceeds withdrawable deposited balance',
+        ...bankPublicView(bank),
         need: amount,
       }, 400);
     }
@@ -809,8 +953,8 @@ export async function handleBank(request, env) {
     }
 
     try {
-      // Debit first (if transfer fails, re-credit)
-      bank.balance = Math.round((bank.balance - amount) * 100) / 100;
+      bank.deposited = money2(bank.deposited - amount);
+      syncDeposited(bank);
       await saveBank(player, bank, env);
 
       try {
@@ -845,26 +989,26 @@ export async function handleBank(request, env) {
           ok: true,
           player: player.toLowerCase(),
           withdrawn: amount,
-          balance: saved.balance,
+          ...bankPublicView(saved),
           txHash: hash,
           toWallet: true,
           history: saved.history,
         });
       } catch (txErr) {
-        // Restore balance if chain transfer failed
-        bank.balance = Math.round((bank.balance + amount) * 100) / 100;
+        bank.deposited = money2(bank.deposited + amount);
+        syncDeposited(bank);
         await saveBank(player, bank, env);
         return json({
           ok: false,
           error: txErr?.shortMessage || txErr?.message || String(txErr),
-          balance: bank.balance,
+          ...bankPublicView(bank),
         }, 500);
       }
     } catch (e) {
       return json({
         ok: false,
         error: e?.shortMessage || e?.message || String(e),
-        balance: bank.balance,
+        ...bankPublicView(bank),
       }, 500);
     }
   }

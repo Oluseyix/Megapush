@@ -8,7 +8,7 @@ Escrow-backed play bank. Real USDC locked in-contract; per-hand debits require E
 |----------|-----|---------|
 | `deposit(amount)` | Player | Lock USDC; credit `balanceOf[player]` |
 | `settleBatch(intents[], sigs[])` | House | Debit signed hand intents; send USDC to house |
-| `requestWithdraw()` | Player | Start 1h challenge window; blocks new deposits |
+| `requestWithdraw()` | Player | Start 5m challenge window; blocks new deposits |
 | `cancelWithdraw()` | Player | Cancel pending exit |
 | `withdraw()` | Player | After delay, pull remaining balance |
 

@@ -34,7 +34,8 @@ contract MegaPushEscrow is EIP712, ReentrancyGuard {
         "HandIntent(address player,bytes32 entryId,uint256 amount,uint256 balanceNonce,uint256 deadline)"
     );
 
-    uint256 public constant WITHDRAW_DELAY = 1 hours;
+    /// @dev Short challenge window so players are not stuck waiting; house should settle open hands promptly.
+    uint256 public constant WITHDRAW_DELAY = 5 minutes;
     uint256 public immutable minDeposit;
     uint256 public immutable maxDeposit;
 

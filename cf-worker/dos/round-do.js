@@ -17,6 +17,7 @@ import {
   BET_MS,
   FAIR_SCHEME,
 } from '../hand-timing.js';
+import { elapsedForMult } from '../crash-curve.js';
 
 const KEY = {
   hand: 'hand', // durable snapshot of current hand + exposure
@@ -105,7 +106,11 @@ export class RoundDO {
 
   async alarm() {
     try {
-      await this.ensure(Date.now());
+      const now = Date.now();
+      await this.ensure(now);
+      await this.processAutoBanks(now);
+      const hand = (await this.state.storage.get(KEY.hand)) || {};
+      await this.scheduleAlarm(hand, Date.now());
     } catch (e) {
       console.error('RoundDO alarm', e?.message || e);
     }
@@ -200,12 +205,22 @@ export class RoundDO {
     if (hand.flyStart != null && nowMs < hand.flyStart) targets.push(hand.flyStart);
     if (hand.crashAt != null && nowMs < hand.crashAt) targets.push(hand.crashAt);
     if (hand.resultEnd != null && nowMs < hand.resultEnd + 50) targets.push(hand.resultEnd + 50);
-    // Fallback poll while betting so late stakers see window close
     if (hand.phase === 'betting' && hand.flyStart != null) {
       targets.push(Math.min(nowMs + 1000, hand.flyStart));
     } else if (hand.phase === 'flying' && hand.crashAt != null) {
       targets.push(Math.min(nowMs + 2000, hand.crashAt));
     }
+    // Server auto-bank: fire at flyStart + elapsedForMult(autoMult) for each open entry
+    try {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      if (hand.flyStart != null) {
+        for (const e of Object.values(entries)) {
+          if (!e || e.status !== 'open' || !(Number(e.autoMult) > 1)) continue;
+          const t = hand.flyStart + elapsedForMult(Number(e.autoMult));
+          if (t > nowMs && (hand.crashAt == null || t < hand.crashAt)) targets.push(t);
+        }
+      }
+    } catch (_) {}
     const next = targets.filter((t) => t > nowMs).sort((a, b) => a - b)[0];
     if (next != null) {
       try {
@@ -214,6 +229,55 @@ export class RoundDO {
         console.warn('setAlarm', e?.message || e);
       }
     }
+  }
+
+  /**
+   * Server-side auto-bank: when curve mult reaches player's autoMult, execute cashout.
+   */
+  async processAutoBanks(nowMs) {
+    const hand = (await this.state.storage.get(KEY.hand)) || {};
+    if (hand.phase !== 'flying' || hand.flyStart == null) return;
+    let entries = (await this.state.storage.get(KEY.entries)) || {};
+    let changed = false;
+
+    for (const id of Object.keys(entries)) {
+      const e = entries[id];
+      if (!e || e.status !== 'open' || !(Number(e.autoMult) > 1) || !e.player) continue;
+      const targetAt = hand.flyStart + elapsedForMult(Number(e.autoMult));
+      if (nowMs + 50 < targetAt) continue;
+      if (hand.crashAt != null && nowMs >= hand.crashAt) continue;
+
+      e.status = 'auto_pending';
+      entries[id] = e;
+      await this.state.storage.put(KEY.entries, entries);
+      changed = true;
+
+      try {
+        const { executeCashoutSettlement } = await import('../cashout.js');
+        const result = await executeCashoutSettlement(this.env, {
+          recipient: e.player,
+          stake: e.stakeUsdc,
+          entryId: e.entryId || id,
+          arrivalMs: Math.min(nowMs, Math.max(targetAt, hand.flyStart + 1)),
+          auto: true,
+        });
+        // settle-entry / release handled inside cashout
+        if (result?.ok || result?.lost) {
+          // re-read entries after cashout
+          entries = (await this.state.storage.get(KEY.entries)) || {};
+        } else {
+          e.status = 'open';
+          entries[id] = e;
+          await this.state.storage.put(KEY.entries, entries);
+        }
+      } catch (err) {
+        console.error('auto-bank', err?.message || err);
+        e.status = 'open';
+        entries[id] = e;
+        await this.state.storage.put(KEY.entries, entries);
+      }
+    }
+    return changed;
   }
 
   publicFields(hand) {
@@ -373,6 +437,9 @@ export class RoundDO {
       );
     }
 
+    const autoMult =
+      body.autoMult != null && Number(body.autoMult) > 1 ? Number(body.autoMult) : null;
+
     entries[entryId] = {
       entryId,
       player,
@@ -380,6 +447,7 @@ export class RoundDO {
       exposureAdd,
       status: 'open',
       roundId: hand.roundId,
+      autoMult,
       at: now,
     };
     // Cap entry map
@@ -395,12 +463,16 @@ export class RoundDO {
     await this.state.storage.put(KEY.entries, entries);
     await this.state.storage.put(KEY.hand, hand);
 
+    // Reschedule alarms so auto-bank fires at target mult
+    await this.scheduleAlarm(hand, now);
+
     return json({
       ok: true,
       do: 'RoundDO',
       entryId,
       stake,
       exposureAdd,
+      autoMult,
       roundId: hand.roundId,
       phase: hand.phase,
       exposureUsdc: hand.exposureUsdc,
