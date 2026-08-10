@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-copy">
+<meta name="megapush-build" content="20260810-unstuck">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -1554,7 +1554,7 @@ function crash(){
   $('bustSub').textContent='Ended at '+m.toFixed(2)+'×';
   if(globalRound && globalRound.serverSeedHash){
     const short = String(globalRound.serverSeedHash).slice(0,10)+'…';
-    $('status').textContent = 'Crashed at '+m.toFixed(2)+'×;
+    $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
     // async verify in background
     verifyFairRound(globalRound).then(v=>{
       // Do not fight the post-crash timer — only update if still on crash screen
@@ -1563,7 +1563,7 @@ function crash(){
       if(v && v.ok){
         $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
       }else if(v && !v.ok){
-        $('status').textContent = 'Crashed at '+m.toFixed(2)+'×;
+        $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
       }
     }).catch(()=>{});
   }
@@ -1597,7 +1597,15 @@ function crash(){
   }).join('');
   bets.forEach(b=>{if(b.state==='live'){b.state='lost';paintBet(b)}});
   const host=$('particles');if(host) host.innerHTML='';
-  // Next round is driven by global clock — no local setTimeout(start)
+  // HARD: always leave Flew Away after 3s even if global sync stalls
+  try{ if(window.__crashLeaveTimer) clearTimeout(window.__crashLeaveTimer); }catch(_){}
+  window.__crashLeaveTimer = setTimeout(function(){
+    // clear whenever crash UI is still active (do not re-check wall clock — timer IS the clock)
+    if(crashUiUntil > 0 || ($('hero') && $('hero').classList.contains('crashed'))){
+      clearCrashUI('Next round loading…');
+      try{ fetchGlobalRound(); }catch(_){}
+    }
+  }, 3000);
 }
 
 function reset(){
@@ -1674,6 +1682,7 @@ function onGlobalPhase(phase, g){
 
 function clearCrashUI(reason){
   crashUiUntil = 0;
+  try{ if(window.__crashLeaveTimer){ clearTimeout(window.__crashLeaveTimer); window.__crashLeaveTimer=null; } }catch(_){}
   if($('hero') && $('hero').classList.contains('crashed')){
     reset();
   }else{
