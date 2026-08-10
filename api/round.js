@@ -1,39 +1,47 @@
 /**
- * GET /api/round — global synchronized crash round.
- * Same mult everywhere at the same wall-clock time (UTC).
+ * GET /api/round — global synchronized + provably fair crash rounds.
  *
- * Deterministic: roundId = floor(serverNow / CYCLE_MS)
- * Crash point derived from ROUND_SECRET + roundId (not Math.random per client).
+ * Provably fair (commit–reveal):
+ * - serverSeed = SHA256(ROUND_SECRET + ":megapush:round:" + roundId)
+ * - During betting/flying: only serverSeedHash = SHA256(serverSeed) is published
+ * - After crash: serverSeed is revealed; anyone can verify:
+ *     SHA256(serverSeed) === serverSeedHash
+ *     crashFromSeed(serverSeed) === crashMult
+ *
+ * Crash formula: Bustabit-style from first 52 bits of serverSeed hex.
+ * Growth allows high multipliers (not clamped to ~2×).
  */
 
-const CYCLE_MS = 18_000;
-const BET_MS = 3_200;
-const RESULT_MS = 2_800;
-const GROWTH_PER_MS = 0.000072; // mult = exp(GROWTH * flyElapsedMs)
+const crypto = require('crypto');
 
-function sleep() {
-  /* no-op helper placeholder */
+// Long enough for high mults: ~2× in ~4s, ~10× in ~13s, ~50× in ~26s, cap ~120×
+const CYCLE_MS = 48_000;
+const BET_MS = 4_500;
+const RESULT_MS = 4_000;
+const GROWTH_PER_MS = 0.00018;
+
+function sha256Hex(input) {
+  return crypto.createHash('sha256').update(String(input), 'utf8').digest('hex');
 }
 
-function hashRound(secret, roundId) {
-  // FNV-1a 32-bit
-  const s = String(secret) + ':' + String(roundId);
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0) / 4294967296; // [0,1)
+function serverSeedForRound(masterSecret, roundId) {
+  return sha256Hex(`${masterSecret}:megapush:round:${roundId}`);
 }
 
-/** Same distribution as the old client game */
-function crashMultForRound(roundId, secret) {
-  const r = hashRound(secret, roundId);
-  let m;
-  if (r < 0.55) m = 1.01 + (r / 0.55) * 3.5;
-  else if (r < 0.85) m = 4 + ((r - 0.55) / 0.3) * 8;
-  else m = Math.min(80, 8 + ((r - 0.85) / 0.15) * 40);
-  return Math.round(m * 100) / 100;
+/**
+ * Bustabit-style crash point from 64-char hex seed.
+ * ~3% chance of instant 1.00×; otherwise heavy-tailed distribution.
+ */
+function crashFromSeed(serverSeedHex) {
+  const h = String(serverSeedHex).replace(/^0x/, '').toLowerCase();
+  const n = parseInt(h.slice(0, 13), 16);
+  if (!Number.isFinite(n)) return 1.01;
+  const e = 2 ** 52;
+  // Instant crash ~1/33
+  if (n % 33 === 0) return 1.0;
+  const raw = Math.floor((100 * e - n) / (e - n)) / 100;
+  // Cap display/runtime at 1000× for UI safety
+  return Math.min(1000, Math.max(1, Math.round(raw * 100) / 100));
 }
 
 function multAtElapsed(flyElapsedMs) {
@@ -46,15 +54,19 @@ function elapsedForMult(mult) {
   return Math.log(mult) / GROWTH_PER_MS;
 }
 
-function getRoundState(nowMs, secret) {
+function getRoundState(nowMs, masterSecret) {
   const roundId = Math.floor(nowMs / CYCLE_MS);
   const roundStart = roundId * CYCLE_MS;
   const elapsed = nowMs - roundStart;
 
-  const maxFlightMs = CYCLE_MS - BET_MS - RESULT_MS;
-  let crashMult = crashMultForRound(roundId, secret);
+  const serverSeed = serverSeedForRound(masterSecret, roundId);
+  const serverSeedHash = sha256Hex(serverSeed);
+  let crashMult = crashFromSeed(serverSeed);
+
+  const maxFlightMs = CYCLE_MS - BET_MS - RESULT_MS; // ~39.5s → high mults reachable
   let flightMs = elapsedForMult(crashMult);
   if (flightMs > maxFlightMs) {
+    // Physically can't reach that mult this cycle — crash at max climb
     flightMs = maxFlightMs;
     crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
   }
@@ -76,19 +88,36 @@ function getRoundState(nowMs, secret) {
     mult = crashMult;
   }
 
+  const revealed = phase === 'crashed';
+
   return {
     ok: true,
     global: true,
+    provablyFair: true,
     serverNow: nowMs,
     roundId,
     phase,
     mult,
-    crashMult: phase === 'crashed' ? crashMult : null,
-    // Timings (UTC ms) so every client can interpolate the same curve
+    // Never leak seed before crash
+    crashMult: revealed ? crashMult : null,
+    serverSeedHash,
+    serverSeed: revealed ? serverSeed : null,
+    // How to verify (client can recompute)
+    fair: {
+      scheme: 'commit-reveal + Bustabit-style crash from SHA-256(serverSeed)',
+      commit: serverSeedHash,
+      reveal: revealed ? serverSeed : null,
+      verify: revealed
+        ? 'SHA256(serverSeed)===serverSeedHash && crashFromSeed(serverSeed)===crashMult'
+        : 'Seed revealed after crash',
+    },
     roundStart,
     bettingEndsAt: flyStart,
     flyStart,
-    crashAt,
+    crashAt: revealed || phase === 'flying' ? crashAt : null, // hide exact crash time during betting only
+    // During flying we expose crashAt for sync; seed still hidden so crash mult not known without brute-forcing hash
+    // Actually exposing crashAt allows reverse-engineering mult from growth curve!
+    // CRITICAL: do NOT send crashAt until crashed — client must poll or receive mult from server only during flight
     cycleEnd,
     nextRoundId: roundId + 1,
     nextRoundStart: cycleEnd,
@@ -96,6 +125,38 @@ function getRoundState(nowMs, secret) {
     cycleMs: CYCLE_MS,
     betMs: BET_MS,
     resultMs: RESULT_MS,
+  };
+}
+
+// During flying, client needs mult but NOT crashAt (would leak crash point via inverse of exp growth).
+// So we only send current mult from server during flying; crashAt only after crash.
+function getRoundStateSafe(nowMs, masterSecret) {
+  const full = getRoundState(nowMs, masterSecret);
+  if (full.phase === 'betting') {
+    return {
+      ...full,
+      crashAt: null, // unknown
+      // Client holds mult at 1.00 during betting
+    };
+  }
+  if (full.phase === 'flying') {
+    return {
+      ...full,
+      crashAt: null, // CRITICAL: hide — else mult curve leaks crash
+      crashMult: null,
+      serverSeed: null,
+      // Send mult from server clock; client can interpolate briefly between polls
+      mult: full.mult,
+      flyStart: full.flyStart,
+      growthPerMs: full.growthPerMs,
+    };
+  }
+  // crashed — full reveal for verification
+  return {
+    ...full,
+    crashAt: full.crashAt,
+    crashMult: full.crashMult,
+    serverSeed: full.serverSeed,
   };
 }
 
@@ -110,13 +171,18 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Use GET' });
   }
 
-  const secret =
-    (process.env.ROUND_SECRET || process.env.HOUSE_PRIVATE_KEY || 'megapush-global-v1').trim();
+  const secret = (
+    process.env.ROUND_SECRET ||
+    process.env.HOUSE_PRIVATE_KEY ||
+    'megapush-global-v1'
+  ).trim();
   const now = Date.now();
-  const state = getRoundState(now, secret);
+  const state = getRoundStateSafe(now, secret);
   return res.status(200).json(state);
 };
 
-// Exported for tests / reuse
 module.exports.getRoundState = getRoundState;
+module.exports.getRoundStateSafe = getRoundStateSafe;
+module.exports.crashFromSeed = crashFromSeed;
+module.exports.sha256Hex = sha256Hex;
 module.exports.CONST = { CYCLE_MS, BET_MS, RESULT_MS, GROWTH_PER_MS };

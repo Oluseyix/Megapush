@@ -1,3 +1,8 @@
+/**
+ * Provably fair global rounds for Cloudflare Pages worker.
+ * Commit–reveal: hash during flight, seed after crash. Bustabit-style crash.
+ */
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -17,28 +22,29 @@ function envGet(env, ...keys) {
   return '';
 }
 
-const CYCLE_MS = 18_000;
-const BET_MS = 3_200;
-const RESULT_MS = 2_800;
-const GROWTH_PER_MS = 0.000072;
+const CYCLE_MS = 48_000;
+const BET_MS = 4_500;
+const RESULT_MS = 4_000;
+const GROWTH_PER_MS = 0.00018;
 
-function hashRound(secret, roundId) {
-  const s = String(secret) + ':' + String(roundId);
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0) / 4294967296;
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(String(input));
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function crashMultForRound(roundId, secret) {
-  const r = hashRound(secret, roundId);
-  let m;
-  if (r < 0.55) m = 1.01 + (r / 0.55) * 3.5;
-  else if (r < 0.85) m = 4 + ((r - 0.55) / 0.3) * 8;
-  else m = Math.min(80, 8 + ((r - 0.85) / 0.15) * 40);
-  return Math.round(m * 100) / 100;
+async function serverSeedForRound(masterSecret, roundId) {
+  return sha256Hex(`${masterSecret}:megapush:round:${roundId}`);
+}
+
+function crashFromSeed(serverSeedHex) {
+  const h = String(serverSeedHex).replace(/^0x/, '').toLowerCase();
+  const n = parseInt(h.slice(0, 13), 16);
+  if (!Number.isFinite(n)) return 1.01;
+  const e = 2 ** 52;
+  if (n % 33 === 0) return 1.0;
+  const raw = Math.floor((100 * e - n) / (e - n)) / 100;
+  return Math.min(1000, Math.max(1, Math.round(raw * 100) / 100));
 }
 
 function multAtElapsed(flyElapsedMs) {
@@ -51,20 +57,26 @@ function elapsedForMult(mult) {
   return Math.log(mult) / GROWTH_PER_MS;
 }
 
-function getRoundState(nowMs, secret) {
+async function getRoundStateSafe(nowMs, masterSecret) {
   const roundId = Math.floor(nowMs / CYCLE_MS);
   const roundStart = roundId * CYCLE_MS;
   const elapsed = nowMs - roundStart;
+
+  const serverSeed = await serverSeedForRound(masterSecret, roundId);
+  const serverSeedHash = await sha256Hex(serverSeed);
+  let crashMult = crashFromSeed(serverSeed);
+
   const maxFlightMs = CYCLE_MS - BET_MS - RESULT_MS;
-  let crashMult = crashMultForRound(roundId, secret);
   let flightMs = elapsedForMult(crashMult);
   if (flightMs > maxFlightMs) {
     flightMs = maxFlightMs;
     crashMult = Math.round(multAtElapsed(flightMs) * 100) / 100;
   }
+
   const flyStart = roundStart + BET_MS;
   const crashAt = flyStart + flightMs;
   const cycleEnd = roundStart + CYCLE_MS;
+
   let phase;
   let mult;
   if (elapsed < BET_MS) {
@@ -77,19 +89,33 @@ function getRoundState(nowMs, secret) {
     phase = 'crashed';
     mult = crashMult;
   }
-  return {
+
+  const revealed = phase === 'crashed';
+  const base = {
     ok: true,
     global: true,
+    provablyFair: true,
     platform: 'cloudflare-pages-worker',
     serverNow: nowMs,
     roundId,
     phase,
     mult,
-    crashMult: phase === 'crashed' ? crashMult : null,
+    serverSeedHash,
+    crashMult: revealed ? crashMult : null,
+    serverSeed: revealed ? serverSeed : null,
+    fair: {
+      scheme: 'commit-reveal + Bustabit-style crash from SHA-256(serverSeed)',
+      commit: serverSeedHash,
+      reveal: revealed ? serverSeed : null,
+      verify: revealed
+        ? 'SHA256(serverSeed)===serverSeedHash && crashFromSeed(serverSeed)===crashMult'
+        : 'Seed revealed after crash',
+    },
     roundStart,
     bettingEndsAt: flyStart,
     flyStart,
-    crashAt,
+    // Hide crashAt until crashed — otherwise growth curve leaks the crash point
+    crashAt: revealed ? crashAt : null,
     cycleEnd,
     nextRoundId: roundId + 1,
     nextRoundStart: cycleEnd,
@@ -98,9 +124,12 @@ function getRoundState(nowMs, secret) {
     betMs: BET_MS,
     resultMs: RESULT_MS,
   };
+  return base;
 }
 
 export async function handleRound(request, env) {
-  const secret = envGet(env, 'ROUND_SECRET', 'HOUSE_PRIVATE_KEY') || 'megapush-global-v1';
-  return json(getRoundState(Date.now(), secret));
+  const secret =
+    envGet(env, 'ROUND_SECRET', 'HOUSE_PRIVATE_KEY') || 'megapush-global-v1';
+  const state = await getRoundStateSafe(Date.now(), secret);
+  return json(state);
 }

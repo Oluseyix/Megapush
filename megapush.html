@@ -1071,18 +1071,58 @@ async function fetchGlobalRound(){
 
 function phaseAt(g, now){
   if(!g) return 'betting';
-  if(now < g.bettingEndsAt) return 'betting';
-  if(now < g.crashAt) return 'flying';
-  return 'crashed';
+  // Prefer server phase (provably fair: crashAt hidden until crash)
+  if(g.phase==='crashed') return 'crashed';
+  if(g.phase==='betting' || (g.bettingEndsAt!=null && now < g.bettingEndsAt)) return 'betting';
+  if(g.phase==='flying') return 'flying';
+  if(g.crashAt!=null && now >= g.crashAt) return 'crashed';
+  if(g.flyStart!=null && now >= g.flyStart) return 'flying';
+  return 'betting';
 }
 
 function multAt(g, now){
   if(!g) return 1;
-  const growth=Number(g.growthPerMs)||0.000072;
-  if(now < g.flyStart) return 1;
-  const end=Math.min(now, g.crashAt);
+  if(g.phase==='crashed' && g.crashMult!=null) return Number(g.crashMult);
+  const growth=Number(g.growthPerMs)||0.00018;
+  if(g.flyStart==null || now < g.flyStart) return 1;
+  // Climb with public growth curve; crash moment only known after server reveal
+  let end = now;
+  if(g.crashAt!=null) end = Math.min(now, g.crashAt);
   const raw=Math.exp(growth * Math.max(0, end - g.flyStart));
-  return Math.round(raw*100)/100;
+  // Soft-cap to last server mult if server is behind (avoid overshooting crash)
+  let m = Math.round(raw*100)/100;
+  if(g.phase==='flying' && g.mult!=null && Number(g.mult)>0){
+    // Allow local interpolate up to ~1.15× server sample so UI is smooth between polls
+    const cap = Number(g.mult) * 1.2 + 0.05;
+    if(m > cap) m = Math.round(cap*100)/100;
+  }
+  return m;
+}
+
+/** Client-side verify of commit–reveal (Web Crypto) */
+async function verifyFairRound(g){
+  if(!g || !g.serverSeed || !g.serverSeedHash || g.crashMult==null) return { ok:false, error:'Missing reveal' };
+  try{
+    const data = new TextEncoder().encode(g.serverSeed);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    const hex = [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    if(hex !== g.serverSeedHash) return { ok:false, error:'Seed hash mismatch' };
+    // Bustabit-style recompute
+    const h = g.serverSeed.replace(/^0x/,'').toLowerCase();
+    const n = parseInt(h.slice(0,13), 16);
+    const e = Math.pow(2,52);
+    let crash = 1.0;
+    if(n % 33 !== 0){
+      crash = Math.floor((100*e - n)/(e - n))/100;
+      crash = Math.min(1000, Math.max(1, Math.round(crash*100)/100));
+    }
+    if(Math.abs(crash - Number(g.crashMult)) > 0.001){
+      return { ok:false, error:'Crash mult mismatch', expected:crash, got:g.crashMult };
+    }
+    return { ok:true, crash, seedHash:hex };
+  }catch(e){
+    return { ok:false, error:e.message||String(e) };
+  }
 }
 
 function paintBet(b){
@@ -1493,7 +1533,19 @@ function crash(){
   document.body.classList.add('crashed-bg');
   const label=m<1.5?'BUSTED':m<3?'FLEW AWAY':'GONE';
   $('bustMain').textContent=label;
-  $('bustSub').textContent='Ended at '+m.toFixed(2)+'× · global round';
+  $('bustSub').textContent='Ended at '+m.toFixed(2)+'× · provably fair';
+  if(globalRound && globalRound.serverSeedHash){
+    const short = String(globalRound.serverSeedHash).slice(0,10)+'…';
+    $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · commit '+short;
+    // async verify in background
+    verifyFairRound(globalRound).then(v=>{
+      if(v && v.ok){
+        $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · fair ✓ verified';
+      }else if(v && !v.ok){
+        $('status').textContent = 'Crashed @ '+m.toFixed(2)+'× · fair check: '+(v.error||'failed');
+      }
+    }).catch(()=>{});
+  }
   lastAutoMiss=null;
   bets.forEach(b=>{
     if(b.state==='live'&&b.autoOn&&m-b.auto<0.35&&m>b.auto){
@@ -1663,7 +1715,19 @@ function startGlobalSync(){
     if(!globalRaf) globalRaf=requestAnimationFrame(globalFrame);
   });
   // Poll often enough to never sit on one crash mult across rounds
-  globalPollTimer=setInterval(fetchGlobalRound, 1000);
+  // Fast polls while flying so crash is detected quickly without leaking crashAt
+  globalPollTimer=setInterval(()=>{
+    const ph = globalRound && globalRound.phase;
+    fetchGlobalRound();
+    // tighter loop while climbing
+    if(ph==='flying' && globalPollTimer){
+      /* interval stays 400ms via separate timer */
+    }
+  }, 1000);
+  // High-frequency poll during flight
+  setInterval(()=>{
+    if(globalRound && globalRound.phase==='flying') fetchGlobalRound();
+  }, 280);
 }
 
 /* Winnings = lottery unclaimed wins (NOT wallet USDC balance) */
