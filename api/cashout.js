@@ -364,8 +364,8 @@ module.exports = async function handler(req, res) {
       }
 
       // 5) Approve correct spender (RandomBuyer OR Batch)
-      const spender = tickets <= 10 ? RANDOM_BUYER : BATCH;
-      const mode = tickets <= 10 ? 'randomBuyer' : 'batch';
+      const spender = RANDOM_BUYER;
+      const mode = 'randomBuyer_chunked';
 
       let allowance = await publicClient.readContract({
         address: USDC,
@@ -429,91 +429,28 @@ module.exports = async function handler(req, res) {
       const beforeCount = await countPlayerTickets();
       let txHash;
 
-      if (tickets <= 10) {
-        // 3) RandomBuyer — immediate mint to recipient (PLAYER)
-        txHash = await sendAndWait({
+      // Always RandomBuyer in chunks of ≤10 (reliable immediate NFT mint to player)
+      const buyTxs = [];
+      let remaining = tickets;
+      while (remaining > 0) {
+        const chunk = Math.min(10, remaining);
+        const hash = await sendAndWait({
           address: RANDOM_BUYER,
           abi: megapotAbi,
           functionName: 'buyTickets',
-          args: [
-            BigInt(tickets),
-            recipient,
-            [REFERRER],
-            [PRECISE_UNIT],
-            SOURCE,
-          ],
+          args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
         });
-      } else {
-        // 4) Batch ≥11 — create order for recipient (PLAYER)
-        const active = await publicClient.readContract({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'hasActiveBatchOrder',
-          args: [recipient],
-        });
-        if (active) {
-          const err = new Error('Player already has an active batch order — try again shortly');
-          err.statusCode = 409;
-          throw err;
-        }
-        txHash = await sendAndWait({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'createBatchOrder',
-          args: [
-            recipient,
-            BigInt(tickets),
-            [],
-            [REFERRER],
-            [PRECISE_UNIT],
-            SOURCE,
-          ],
-        });
-
-        // Poll until batch no longer active OR tickets appear
-        for (let i = 0; i < 20; i++) {
-          await sleep(750);
-          let stillActive = false;
-          try {
-            stillActive = await publicClient.readContract({
-              address: BATCH,
-              abi: megapotAbi,
-              functionName: 'hasActiveBatchOrder',
-              args: [recipient],
-            });
-          } catch (_) {}
-          const after = await countPlayerTickets();
-          if (
-            !stillActive ||
-            (beforeCount != null && after != null && after >= beforeCount + 1)
-          ) {
-            break;
-          }
-        }
+        buyTxs.push(hash);
+        remaining -= chunk;
       }
+      const txHash = buyTxs[buyTxs.length - 1];
 
-      // Verify tickets moved to PLAYER (best-effort)
+      // Best-effort ticket count (do not block or fail the cash-out)
       let afterCount = beforeCount;
-      for (let i = 0; i < 8; i++) {
-        await sleep(350 + i * 100);
+      for (let i = 0; i < 4; i++) {
+        await sleep(300);
         afterCount = await countPlayerTickets();
-        if (
-          beforeCount == null ||
-          afterCount == null ||
-          afterCount > beforeCount ||
-          (tickets <= 10 && afterCount >= beforeCount + tickets)
-        ) {
-          if (
-            beforeCount != null &&
-            afterCount != null &&
-            afterCount >= beforeCount + (tickets <= 10 ? tickets : 1)
-          ) {
-            break;
-          }
-          if (tickets <= 10 && beforeCount != null && afterCount != null && afterCount > beforeCount) {
-            break;
-          }
-        }
+        if (beforeCount != null && afterCount != null && afterCount > beforeCount) break;
       }
 
       const delivered =
@@ -521,17 +458,11 @@ module.exports = async function handler(req, res) {
           ? Math.max(0, afterCount - beforeCount)
           : tickets;
 
-      // For immediate RandomBuyer path, require at least some tickets on player
-      if (mode === 'randomBuyer' && beforeCount != null && afterCount != null && delivered < 1) {
-        throw new Error(
-          'Buy tx succeeded but player ticket balance did not increase — will refund',
-        );
-      }
-
+      // Trust buy txHash. Ticket index lag must NOT mark a win as failed / refund.
       const payload = {
         ok: true,
         txHash,
-        tickets: mode === 'randomBuyer' && delivered > 0 ? delivered : tickets,
+        tickets: delivered > 0 ? delivered : tickets,
         recipient, // 9) always log/return player address
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,

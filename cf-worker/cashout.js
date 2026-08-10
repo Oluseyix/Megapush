@@ -246,8 +246,8 @@ export async function handleCashout(request, env) {
         throw err;
       }
 
-      const spender = tickets <= 10 ? RANDOM_BUYER : BATCH;
-      const mode = tickets <= 10 ? 'randomBuyer' : 'batch';
+      const spender = RANDOM_BUYER;
+      const mode = 'randomBuyer_chunked';
 
       let allowance = await publicClient.readContract({
         address: USDC,
@@ -302,72 +302,37 @@ export async function handleCashout(request, env) {
       const beforeCount = await countPlayerTickets();
       let txHash;
 
-      if (tickets <= 10) {
-        txHash = await sendAndWait({
+      // Always RandomBuyer in chunks of ≤10 (reliable immediate NFT mint to player)
+      const buyTxs = [];
+      let remaining = tickets;
+      while (remaining > 0) {
+        const chunk = Math.min(10, remaining);
+        const hash = await sendAndWait({
           address: RANDOM_BUYER,
           abi: megapotAbi,
           functionName: 'buyTickets',
-          args: [BigInt(tickets), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
+          args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
         });
-      } else {
-        const active = await publicClient.readContract({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'hasActiveBatchOrder',
-          args: [recipient],
-        });
-        if (active) {
-          const err = new Error('Player already has an active batch order — try again shortly');
-          err.statusCode = 409;
-          throw err;
-        }
-        txHash = await sendAndWait({
-          address: BATCH,
-          abi: megapotAbi,
-          functionName: 'createBatchOrder',
-          args: [recipient, BigInt(tickets), [], [REFERRER], [PRECISE_UNIT], SOURCE],
-        });
-        for (let i = 0; i < 16; i++) {
-          await sleep(750);
-          let stillActive = false;
-          try {
-            stillActive = await publicClient.readContract({
-              address: BATCH,
-              abi: megapotAbi,
-              functionName: 'hasActiveBatchOrder',
-              args: [recipient],
-            });
-          } catch (_) {}
-          const after = await countPlayerTickets();
-          if (!stillActive || (beforeCount != null && after != null && after > beforeCount)) break;
-        }
+        buyTxs.push(hash);
+        remaining -= chunk;
       }
+      const txHash = buyTxs[buyTxs.length - 1];
 
       let afterCount = beforeCount;
-      for (let i = 0; i < 8; i++) {
-        await sleep(350 + i * 100);
+      for (let i = 0; i < 4; i++) {
+        await sleep(300);
         afterCount = await countPlayerTickets();
-        if (
-          beforeCount != null &&
-          afterCount != null &&
-          afterCount >= beforeCount + (tickets <= 10 ? Math.min(tickets, 1) : 1)
-        ) {
-          break;
-        }
+        if (beforeCount != null && afterCount != null && afterCount > beforeCount) break;
       }
 
       const delivered =
         beforeCount != null && afterCount != null ? Math.max(0, afterCount - beforeCount) : tickets;
 
-      if (mode === 'randomBuyer' && beforeCount != null && afterCount != null && delivered < 1) {
-        throw new Error('Buy tx succeeded but player ticket balance did not increase — will refund');
-      }
-
       return {
         ok: true,
         platform: 'cloudflare-pages-worker',
         txHash,
-        tickets: mode === 'randomBuyer' && delivered > 0 ? delivered : tickets,
+        tickets: delivered > 0 ? delivered : tickets,
         recipient,
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,

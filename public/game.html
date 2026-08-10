@@ -1052,18 +1052,19 @@ function serverNow(){ return Date.now() + clockOffset; }
 
 async function fetchGlobalRound(){
   try{
-    const r=await fetch('/api/round',{cache:'no-store'});
+    const r=await fetch('/api/round?t='+Date.now(),{cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const j=await r.json();
     if(j && j.serverNow){
-      // blend offset so one slow response does not jump the mult
-      const sample=j.serverNow - Date.now();
-      clockOffset = clockOffset ? (clockOffset*0.7 + sample*0.3) : sample;
+      // Snap clock to server (avoid sticky desync that freezes mult)
+      clockOffset = j.serverNow - Date.now();
     }
     globalRound=j;
+    if(globalRound) globalRound._fetching=false;
     return j;
   }catch(e){
     console.warn('global round', e);
+    if(globalRound) globalRound._fetching=false;
     return null;
   }
 }
@@ -1340,7 +1341,10 @@ async function cashOut(b){
   if(b.state!=='live') return;
   const at = m;
   // tickets = floor(stake × mult) — whole product; server recomputes if needed
-  const tickets = Math.max(0, Math.floor((Number(b.amt) || 0) * (Number(at) || 0)));
+  const _stakeN = Number(b.amt) || 0;
+  const _multN = Number(at) || 0;
+  let tickets = Math.floor(_stakeN * _multN);
+  if(_stakeN >= 1 && _multN >= 1 && tickets < 1) tickets = 1;
   const player = window.Megapot?.account || null;
   const entryId = b.entryId || ((player || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
   const stakeAmt = Number(b.amt) || 0;
@@ -1431,9 +1435,9 @@ async function cashOut(b){
     try{
       if(typeof window.Megapot.loadUserTickets === 'function'){
         await window.Megapot.loadUserTickets({
-          expectAtLeast: bought,
-          retries: 10,
-          delayMs: 400,
+          expectAtLeast: 1,
+          retries: 6,
+          delayMs: 350,
           lookback: 10,
         });
       }
@@ -1545,24 +1549,47 @@ function reset(){
 }
 
 function start(){
-  // Promote queued entries into the live global flight (same for everyone)
-  if(running) return;
+  // Always start a new flight (do not block on previous running flag)
+  if($('pot')){
+    const potEl=$('pot');
+    potEl.classList.remove('launch','kick','flying','climbing');
+    potEl.style.transform='';
+    potEl.style.opacity='';
+    potEl.style.transition='';
+    potFlyingOn=false;
+  }
+  $('hero').classList.remove('crashed');
+  document.body.classList.remove('crashed-bg','intense','danger');
   const joined=bets.filter(b=>b.state==='queued');
   m=1;
   running=true;
   joined.forEach(b=>{b.state='live';paintBet(b)});
-  $('hero').classList.remove('crashed');
-  document.body.classList.remove('crashed-bg');
   $('status').textContent=joined.length?'Climbing · cash out before it flies':'Global climb in progress';
-  $('status').classList.remove('won');
+  $('status').classList.remove('won','hot');
   playStart();
   paint();
 }
 
 function onGlobalPhase(phase, g){
   const rid=g && g.roundId;
-  if(phase==='flying' && lastPhase!=='flying'){
+  const roundChanged = rid!=null && rid!==lastRoundId;
+
+  // New round always clears crash UI first
+  if(roundChanged && lastRoundId!=null){
+    if(lastPhase==='crashed' || lastPhase==='flying'){
+      // soft clear without wiping live bet state mid-flight of NEW round
+    }
+  }
+
+  if(phase==='betting'){
+    if(lastPhase==='crashed' || lastPhase==='flying' || lastPhase===null || roundChanged){
+      reset();
+    }
+  }
+  if(phase==='flying' && (lastPhase!=='flying' || roundChanged)){
     crashHandledForRound=null;
+    // Ensure we left crashed visuals
+    if(lastPhase==='crashed') reset();
     start();
   }
   if(phase==='crashed' && crashHandledForRound!==rid){
@@ -1572,27 +1599,35 @@ function onGlobalPhase(phase, g){
     paint();
     crash();
   }
-  if(phase==='betting' && (lastPhase==='crashed' || lastPhase==='flying')){
-    reset();
-  }
-  if(phase==='betting' && lastPhase===null){
-    $('status').textContent='Global round · stake to join the next climb';
-    paint();
-  }
   lastPhase=phase;
   if(rid!=null) lastRoundId=rid;
 }
 
 function globalFrame(){
-  const g=globalRound;
+  let g=globalRound;
   const now=serverNow();
+
+  // Past cycle end → fetch next round aggressively (prevents sticky 2.xx crash mult)
   if(g && g.cycleEnd!=null && now>=g.cycleEnd){
-    // Pull next round params as soon as the cycle rolls
-    if(!globalRound._fetching){
-      globalRound._fetching=true;
+    if(!g._fetching){
+      g._fetching=true;
       fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
     }
+    // While waiting, show idle 1.00× instead of frozen crash number
+    if(!globalRound || globalRound.roundId===g.roundId){
+      running=false;
+      if(m!==1){ m=1; }
+      // keep crashed hero until new round arrives, but don't look "stuck climbing"
+      if($('status') && lastPhase==='crashed'){
+        $('status').textContent='Next global round starting…';
+      }
+      paint();
+      globalRaf=requestAnimationFrame(globalFrame);
+      return;
+    }
+    g=globalRound;
   }
+
   if(g && g.flyStart!=null && g.crashAt!=null){
     const phase=phaseAt(g, now);
     if(phase!==lastPhase || (g.roundId!=null && g.roundId!==lastRoundId)){
@@ -1611,9 +1646,11 @@ function globalFrame(){
       m=1;
       paint();
     }else{
+      // crashed — show crash mult only until cycle ends
       running=false;
-      m=multAt(g, g.crashAt);
-      if(g.crashMult!=null) m=Number(g.crashMult)||m;
+      let cm=multAt(g, g.crashAt);
+      if(g.crashMult!=null) cm=Number(g.crashMult)||cm;
+      m=cm;
       paint();
     }
   }
@@ -1625,7 +1662,8 @@ function startGlobalSync(){
   fetchGlobalRound().then(()=>{
     if(!globalRaf) globalRaf=requestAnimationFrame(globalFrame);
   });
-  globalPollTimer=setInterval(fetchGlobalRound, 2000);
+  // Poll often enough to never sit on one crash mult across rounds
+  globalPollTimer=setInterval(fetchGlobalRound, 1000);
 }
 
 /* Winnings = lottery unclaimed wins (NOT wallet USDC balance) */
@@ -2489,12 +2527,13 @@ async function houseBuyTickets(count, recipient, meta = {}){
     // Immediately refresh on-chain tickets for player
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
     if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
-    await loadUserTickets({
-      expectAtLeast: Math.max(before + 1, before + bought),
-      retries: 10,
+    // Non-blocking for success: refresh list but never fail the cash-out
+    loadUserTickets({
+      expectAtLeast: before + 1,
+      retries: 6,
       delayMs: 400,
       lookback: 10,
-    });
+    }).catch(()=>{});
     return {
       ok: true,
       onchain: true,
