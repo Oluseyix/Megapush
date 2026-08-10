@@ -293,5 +293,127 @@ export async function handleBank(request, env) {
     });
   }
 
-  return json({ ok: false, error: 'Unknown action (deposit|stake|credit|balance)' }, 400);
+  if (action === 'withdraw') {
+    // Send play balance USDC back to player wallet (house pays)
+    let amount = Number(body.amount != null ? body.amount : body.stake);
+    if (body.amount === 'max' || body.max === true) amount = Infinity;
+    amount = Math.floor(Number(amount) || 0);
+
+    const bank = await loadBank(player);
+    if (!(bank.balance > 0)) {
+      return json({ ok: false, error: 'Nothing to withdraw', balance: 0 }, 400);
+    }
+    if (!(amount > 0) || amount === Infinity) {
+      amount = Math.floor(bank.balance);
+    }
+    if (amount > bank.balance + 1e-9) {
+      return json({
+        ok: false,
+        error: 'Amount exceeds play balance',
+        balance: bank.balance,
+        need: amount,
+      }, 400);
+    }
+
+    const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
+    if (!key) {
+      return json({
+        ok: false,
+        error: 'HOUSE_PRIVATE_KEY not configured — cannot withdraw',
+      }, 500);
+    }
+
+    try {
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const {
+        createPublicClient,
+        createWalletClient,
+        http,
+        parseAbi,
+        parseUnits,
+        formatUnits,
+      } = await import('viem');
+      const { baseSepolia } = await import('viem/chains');
+
+      const pk = key.startsWith('0x') ? key : `0x${key}`;
+      const houseAccount = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
+      const RPC = envGet(env, 'RPC_URL') || 'https://sepolia.base.org';
+      const publicClient = createPublicClient({ chain: baseSepolia, transport: http(RPC) });
+      const walletClient = createWalletClient({
+        account: houseAccount,
+        chain: baseSepolia,
+        transport: http(RPC),
+      });
+      const usdcAbi = parseAbi([
+        'function balanceOf(address account) view returns (uint256)',
+        'function transfer(address to, uint256 amount) returns (bool)',
+      ]);
+      const raw = parseUnits(String(amount), 6);
+      const houseBal = await publicClient.readContract({
+        address: USDC,
+        abi: usdcAbi,
+        functionName: 'balanceOf',
+        args: [houseAccount.address],
+      });
+      if (houseBal < raw) {
+        return json({
+          ok: false,
+          error: `House USDC low for withdraw: have ${formatUnits(houseBal, 6)}, need ${formatUnits(raw, 6)}`,
+          balance: bank.balance,
+        }, 400);
+      }
+
+      // Debit first (idempotent-ish: if transfer fails, re-credit)
+      bank.balance = Math.round((bank.balance - amount) * 100) / 100;
+      await saveBank(player, bank);
+
+      try {
+        const nonce = await publicClient.getTransactionCount({
+          address: houseAccount.address,
+          blockTag: 'pending',
+        });
+        const hash = await walletClient.writeContract({
+          address: USDC,
+          abi: usdcAbi,
+          functionName: 'transfer',
+          args: [/** @type {`0x${string}`} */ (player), raw],
+          account: houseAccount,
+          chain: baseSepolia,
+          nonce,
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({
+          hash,
+          confirmations: 1,
+        });
+        if (receipt.status !== 'success') {
+          throw new Error('Withdraw transfer reverted');
+        }
+        return json({
+          ok: true,
+          player: player.toLowerCase(),
+          withdrawn: amount,
+          balance: bank.balance,
+          txHash: hash,
+          toWallet: true,
+        });
+      } catch (txErr) {
+        // Restore balance if chain transfer failed
+        bank.balance = Math.round((bank.balance + amount) * 100) / 100;
+        await saveBank(player, bank);
+        return json({
+          ok: false,
+          error: txErr?.shortMessage || txErr?.message || String(txErr),
+          balance: bank.balance,
+        }, 500);
+      }
+    } catch (e) {
+      return json({
+        ok: false,
+        error: e?.shortMessage || e?.message || String(e),
+        balance: bank.balance,
+      }, 500);
+    }
+  }
+
+  return json({ ok: false, error: 'Unknown action (deposit|stake|credit|withdraw|balance)' }, 400);
 }

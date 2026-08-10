@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-deposit">
+<meta name="megapush-build" content="20260810-withdraw">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -870,13 +870,13 @@ button:focus:not(:focus-visible){outline:none}
 
 
 
-<!-- Play balance / deposit (one wallet confirm, many stakes) -->
+<!-- Play balance: deposit / withdraw stake capital (not lottery winnings) -->
 <div class="modal-bg" id="bankSheetBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
     <h2 id="bankSheetTitle">Play balance</h2>
-    <p id="bankSheetSub">Deposit once. Stakes and refunds stay in this balance — not your wallet.</p>
+    <p id="bankSheetSub">Stake capital for the climb. Lottery wins are claimed separately under Winnings / Tickets.</p>
     <div class="receipt-bits" style="margin-bottom:12px">
-      <div class="rb-row"><span>Balance</span><b id="bankSheetBal">$0</b></div>
+      <div class="rb-row"><span>Balance</span><b id="bankSheetBal">Empty</b></div>
     </div>
     <div class="pills" id="bankPills" style="margin-bottom:12px">
       <button type="button" class="pill" data-bank="5">$5</button>
@@ -885,10 +885,11 @@ button:focus:not(:focus-visible){outline:none}
       <button type="button" class="pill" data-bank="50">$50</button>
     </div>
     <div class="amt" style="margin-bottom:12px">
-      <input id="bankAmt" value="25" inputmode="decimal" placeholder="Amount" aria-label="Deposit amount" style="width:100%;text-align:center;font-weight:800;font-size:18px;padding:12px;border:1px solid var(--line);border-radius:12px">
+      <input id="bankAmt" value="25" inputmode="decimal" placeholder="Amount" aria-label="Amount" style="width:100%;text-align:center;font-weight:800;font-size:18px;padding:12px;border:1px solid var(--line);border-radius:12px">
     </div>
-    <button type="button" class="go" id="bankDepositBtn">Deposit USDC to play</button>
-    <p class="ws-hint" style="margin-top:10px">One wallet confirmation per deposit. Stakes and cancelled bets return here. Cash-out never needs your signature.</p>
+    <button type="button" class="go" id="bankDepositBtn">Deposit</button>
+    <button type="button" class="go secondary" id="bankWithdrawBtn" style="margin-top:8px">Withdraw to wallet</button>
+    <p class="ws-hint" style="margin-top:10px">Deposit = one wallet confirm, then free stakes. Withdraw = USDC back to your wallet. <b>Winnings</b> tab is for lottery prize claims, not this balance.</p>
     <button type="button" class="go secondary" id="bankSheetClose" style="margin-top:10px">Close</button>
   </div>
 </div>
@@ -3039,6 +3040,11 @@ function setPlayBalUi(n){
       ? ('$' + (playBalance % 1 === 0 ? String(playBalance) : playBalance.toFixed(2)))
       : 'Empty · deposit to play';
   }
+  const wbtn = $('bankWithdrawBtn');
+  if(wbtn){
+    wbtn.disabled = !(playBalance > 0);
+    wbtn.style.opacity = playBalance > 0 ? '1' : '.5';
+  }
 }
 
 async function refreshPlayBalance(){
@@ -3081,6 +3087,28 @@ async function depositToPlayBalance(amountUsd){
     await new Promise(r => setTimeout(r, 600));
   }
   return { ok: false, error: last?.error || 'Could not credit deposit', tx: res.tx };
+}
+
+/** Withdraw play balance USDC to player wallet (house sends). */
+async function withdrawFromPlayBalance(amountUsd){
+  if(!account) return { ok: false, error: 'Connect wallet first' };
+  let amt = amountUsd === 'max' || amountUsd == null
+    ? Math.floor(playBalance)
+    : Math.floor(Number(amountUsd) || 0);
+  if(!(amt > 0)) return { ok: false, error: 'Nothing to withdraw' };
+  if(amt > playBalance + 1e-9) amt = Math.floor(playBalance);
+  const j = await bankApi({
+    action: 'withdraw',
+    player: account,
+    amount: amt,
+  });
+  if(j?.ok){
+    setPlayBalUi(j.balance);
+    try{ await refreshUsdcBalance(); }catch(_){}
+    return { ok: true, ...j };
+  }
+  if(j?.balance != null) setPlayBalUi(j.balance);
+  return { ok: false, error: j?.error || 'Withdraw failed', ...j };
 }
 
 /** Stake from play balance — no wallet popup. */
@@ -3517,6 +3545,7 @@ window.Megapot = {
   stakeUsdc,
   stakeFromPlayBalance,
   depositToPlayBalance,
+  withdrawFromPlayBalance,
   refreshPlayBalance,
   refundStake,
   houseBuyTickets,
@@ -3595,14 +3624,43 @@ $('bankDepositBtn')?.addEventListener('click', async () => {
     if(res?.ok){
       if(btn) btn.textContent = 'Deposited · $' + (res.balance ?? playBalance);
       if($('status')) $('status').textContent = 'Balance $' + playBalance + ' · stake without popups';
-      setTimeout(() => { $('bankSheetBg')?.classList.remove('show'); if(btn){ btn.disabled=false; btn.textContent='Deposit USDC to play'; } }, 900);
+      setTimeout(() => {
+        if(btn){ btn.disabled=false; btn.textContent='Deposit'; }
+      }, 900);
     }else{
       alert(res?.error || 'Deposit failed');
-      if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC to play'; }
+      if(btn){ btn.disabled = false; btn.textContent = 'Deposit'; }
     }
   }catch(e){
     alert(e?.message || String(e));
-    if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC to play'; }
+    if(btn){ btn.disabled = false; btn.textContent = 'Deposit'; }
+  }
+});
+$('bankWithdrawBtn')?.addEventListener('click', async () => {
+  const btn = $('bankWithdrawBtn');
+  if(playBalance <= 0){
+    alert('Nothing to withdraw — deposit first, or your balance is empty.');
+    return;
+  }
+  let amt = Math.floor(Number($('bankAmt')?.value) || 0);
+  if(!(amt > 0) || amt > playBalance) amt = Math.floor(playBalance);
+  if(!confirm('Withdraw $' + amt + ' USDC to your wallet?')) return;
+  if(btn){ btn.disabled = true; btn.textContent = 'Withdrawing…'; }
+  try{
+    const res = await withdrawFromPlayBalance(amt);
+    if(res?.ok){
+      if(btn) btn.textContent = 'Sent · $' + amt;
+      if($('status')) $('status').textContent = 'Withdrew $' + amt + ' to wallet · balance $' + playBalance;
+      setTimeout(() => {
+        if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
+      }, 1200);
+    }else{
+      alert(res?.error || 'Withdraw failed');
+      if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
+    }
+  }catch(e){
+    alert(e?.message || String(e));
+    if(btn){ btn.disabled = false; btn.textContent = 'Withdraw to wallet'; }
   }
 });
 
