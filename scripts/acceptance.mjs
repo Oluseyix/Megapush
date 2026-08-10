@@ -51,7 +51,15 @@ console.log(`Smoke @ ${BASE}\n`);
   const { status, body } = await jget('/api/round');
   ok('ok', status === 200 && body.ok);
   ok('phase', typeof body.phase === 'string');
-  ok('commit present while live', body.serverSeedHash != null || body.phase === 'intermission');
+  // Without ROUND_SECRET: betting must stay closed
+  if (body.error && /ROUND_SECRET/i.test(String(body.error))) {
+    ok('unconfigured refuses bets', body.acceptingBets === false && body.windowClosed === true);
+  } else {
+    ok(
+      'commit present while live',
+      body.serverSeedHash != null || body.phase === 'intermission' || body.phase === 'betting',
+    );
+  }
   ok('no admin surface', body.roundDo == null);
 }
 

@@ -1,7 +1,6 @@
 /**
- * Bundle Pages Advanced fallback → public/_worker.js
- * Primary deploy is Workers (`wrangler deploy` → main cf-worker/index.js).
- * This build is only for `npm run cf:deploy:pages`.
+ * Optional local bundle of cf-worker → public/_worker.js (not the primary deploy path).
+ * Primary: `npx wrangler deploy` (Workers + Static Assets).
  */
 import * as esbuild from 'esbuild';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,15 +21,12 @@ await esbuild.build({
   target: 'es2022',
   conditions: ['worker', 'browser', 'import'],
   mainFields: ['browser', 'module', 'main'],
-  // Bundle viem into the worker (no node builtins)
   packages: 'bundle',
   logLevel: 'info',
   legalComments: 'none',
   minify: false,
 });
 
-// Advanced mode: do NOT use functions-style _routes that strip assets.
-// Remove routes file if present so _worker.js owns routing.
 try {
   rmSync(join(root, 'public', '_routes.json'));
 } catch (_) {}
@@ -38,10 +34,9 @@ try {
   rmSync(join(root, '_routes.json'));
 } catch (_) {}
 
-// Marker for deploys
 writeFileSync(
   join(root, 'public', '_worker_build.json'),
-  JSON.stringify({ builtAt: new Date().toISOString(), mode: 'advanced' }, null, 2),
+  JSON.stringify({ builtAt: new Date().toISOString(), mode: 'worker-bundle' }, null, 2),
 );
 
 console.log('Wrote', outfile);

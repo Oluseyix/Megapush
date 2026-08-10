@@ -37,9 +37,48 @@ export function envGet(env, ...keys) {
   return '';
 }
 
+/** Min length for ROUND_SECRET — no house-key fallback, no weak default. */
+export const ROUND_SECRET_MIN_LEN = 16;
+
+/**
+ * Required fairness secret. Returns '' if missing/too short.
+ * Never falls back to HOUSE_PRIVATE_KEY or a public default.
+ */
 export function masterSecret(env) {
-  // Never derive fairness secret from the house signing key.
-  return envGet(env, 'ROUND_SECRET') || 'megapush-global-v1';
+  const s = envGet(env, 'ROUND_SECRET');
+  if (!s || s.length < ROUND_SECRET_MIN_LEN) return '';
+  return s;
+}
+
+/** True only when a usable ROUND_SECRET is configured. */
+export function hasRoundSecret(env) {
+  return masterSecret(env).length >= ROUND_SECRET_MIN_LEN;
+}
+
+/** Closed-round payload when fairness secret is not configured. */
+export function unconfiguredRoundState(nowMs = Date.now()) {
+  return {
+    ok: true,
+    global: true,
+    provablyFair: false,
+    serverNow: nowMs,
+    phase: 'intermission',
+    acceptingBets: false,
+    windowClosed: true,
+    mult: 1,
+    crashMult: null,
+    serverSeedHash: null,
+    serverSeed: null,
+    roundId: null,
+    kill: false,
+    error: 'ROUND_SECRET not configured — betting closed',
+    fair: {
+      scheme: FAIR_SCHEME,
+      commit: null,
+      reveal: null,
+      verify: 'POST /api/verify after seed is revealed',
+    },
+  };
 }
 
 /** Full hand timing including crash point. */

@@ -11,6 +11,7 @@
 import {
   resolveLiveHand,
   masterSecret,
+  hasRoundSecret,
   capsFromEnv,
   exposureForStake,
   BET_MS,
@@ -80,17 +81,20 @@ export class RoundDO {
       if (request.method === 'POST' && path === '/settle-entry') {
         return this.settleEntry(request);
       }
-      // Admin-only routes require ADMIN_TOKEN (env) matching Authorization: Bearer …
+      // Admin routes exist only when ADMIN_TOKEN is set (else 404 as if absent)
       if (request.method === 'POST' && path === '/close-window') {
-        if (!adminOk(request, this.env)) return json({ ok: false, error: 'Forbidden' }, 403);
+        const gate = adminGate(request, this.env);
+        if (gate) return gate;
         return this.forceCloseWindow();
       }
       if (request.method === 'POST' && path === '/reset-exposure') {
-        if (!adminOk(request, this.env)) return json({ ok: false, error: 'Forbidden' }, 403);
+        const gate = adminGate(request, this.env);
+        if (gate) return gate;
         return this.resetExposureOnly();
       }
       if (request.method === 'POST' && path === '/kill') {
-        if (!adminOk(request, this.env)) return json({ ok: false, error: 'Forbidden' }, 403);
+        const gate = adminGate(request, this.env);
+        if (gate) return gate;
         return this.setKill(request);
       }
       return json({ ok: false, error: 'Not found' }, 404);
@@ -114,12 +118,34 @@ export class RoundDO {
    * @returns {Promise<HandState>}
    */
   async ensure(nowMs) {
+    // No ROUND_SECRET → never open a betting window (no weak default seeds).
+    if (!hasRoundSecret(this.env)) {
+      const hand = {
+        roundId: null,
+        slotId: null,
+        hand: null,
+        serverSeedHash: null,
+        flyStart: null,
+        crashAt: null,
+        resultEnd: null,
+        handStart: null,
+        phase: 'intermission',
+        windowClosed: true,
+        exposureUsdc: 0,
+        stakeCount: 0,
+        updatedAt: nowMs,
+        unconfigured: true,
+      };
+      await this.state.storage.put(KEY.hand, hand);
+      return hand;
+    }
+
     const secret = masterSecret(this.env);
     const live = await resolveLiveHand(nowMs, secret);
     let hand = (await this.state.storage.get(KEY.hand)) || null;
     let entries = (await this.state.storage.get(KEY.entries)) || {};
 
-    const rolled = !hand || hand.roundId !== live.roundId;
+    const rolled = !hand || hand.unconfigured || hand.roundId !== live.roundId;
     if (rolled) {
       entries = {};
       hand = {
@@ -136,6 +162,7 @@ export class RoundDO {
         exposureUsdc: 0,
         stakeCount: 0,
         updatedAt: nowMs,
+        unconfigured: false,
       };
     } else {
       hand.phase = live.phase;
@@ -159,6 +186,7 @@ export class RoundDO {
       hand.exposureUsdc = Math.round(exp * 100) / 100;
       hand.stakeCount = count;
       hand.updatedAt = nowMs;
+      hand.unconfigured = false;
     }
 
     await this.state.storage.put(KEY.hand, hand);
@@ -198,8 +226,9 @@ export class RoundDO {
       slotId: hand?.slotId ?? null,
       hand: hand?.hand ?? null,
       phase: hand?.phase ?? 'intermission',
-      acceptingBets: hand?.phase === 'betting' && !hand?.windowClosed,
-      windowClosed: !!hand?.windowClosed,
+      acceptingBets:
+        !hand?.unconfigured && hand?.phase === 'betting' && !hand?.windowClosed,
+      windowClosed: !!hand?.windowClosed || !!hand?.unconfigured,
       serverSeedHash: hand?.serverSeedHash ?? null,
       flyStart: hand?.flyStart ?? null,
       bettingEndsAt: hand?.flyStart ?? null,
@@ -269,6 +298,12 @@ export class RoundDO {
    */
   async recordStake(request) {
     const now = Date.now();
+    if (!hasRoundSecret(this.env)) {
+      return json(
+        { ok: false, error: 'ROUND_SECRET not configured — betting closed', windowClosed: true },
+        503,
+      );
+    }
     if (await this.state.storage.get(KEY.kill)) {
       return json({ ok: false, error: 'Round kill switch active', kill: true }, 503);
     }
@@ -287,7 +322,7 @@ export class RoundDO {
     if (!entryId) return json({ ok: false, error: 'entryId required' }, 400);
 
     const hand = await this.ensure(now);
-    if (hand.phase !== 'betting' || hand.windowClosed) {
+    if (hand.unconfigured || hand.phase !== 'betting' || hand.windowClosed) {
       return json(
         {
           ok: false,
@@ -517,13 +552,30 @@ export class RoundDO {
   }
 }
 
-function adminOk(request, env) {
+const ADMIN_TOKEN_MIN_LEN = 16;
+
+function adminConfigured(env) {
   const token = String(env?.ADMIN_TOKEN || '').trim();
-  if (!token || token.length < 16) return false;
+  return token.length >= ADMIN_TOKEN_MIN_LEN;
+}
+
+/**
+ * Admin routes: 404 when ADMIN_TOKEN unset (route does not exist);
+ * 403 when set but Authorization does not match.
+ * @returns {Response|null} error response, or null if authorized
+ */
+function adminGate(request, env) {
+  if (!adminConfigured(env)) {
+    return json({ ok: false, error: 'Not found' }, 404);
+  }
+  const token = String(env.ADMIN_TOKEN).trim();
   const auth = request.headers.get('Authorization') || '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   const hdr = request.headers.get('X-Admin-Token') || '';
-  return bearer === token || hdr === token;
+  if (bearer !== token && hdr !== token) {
+    return json({ ok: false, error: 'Forbidden' }, 403);
+  }
+  return null;
 }
 
 function json(data, status = 200) {

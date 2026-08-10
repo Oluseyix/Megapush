@@ -1,5 +1,5 @@
 /**
- * Shared house wallet + on-chain helpers (used by TxSequencerDO and Pages fallback).
+ * Shared house wallet + on-chain helpers (TxSequencerDO + in-process lock fallback).
  */
 import {
   createPublicClient,

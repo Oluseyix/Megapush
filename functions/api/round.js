@@ -94,7 +94,17 @@ export async function onRequest(context) {
   if (request.method !== 'GET' && request.method !== 'POST') {
     return json({ ok: false, error: 'Use GET' }, 405);
   }
-  const secret =
-    envGet(env, 'ROUND_SECRET', 'HOUSE_PRIVATE_KEY') || 'megapush-global-v1';
+  const secret = envGet(env, 'ROUND_SECRET');
+  if (!secret || secret.length < 16) {
+    return json({
+      ok: true,
+      phase: 'intermission',
+      acceptingBets: false,
+      windowClosed: true,
+      mult: 1,
+      error: 'ROUND_SECRET not configured — betting closed',
+      serverNow: Date.now(),
+    });
+  }
   return json(getRoundState(Date.now(), secret));
 }

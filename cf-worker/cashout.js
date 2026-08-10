@@ -20,7 +20,7 @@ function json(data, status = 200) {
 }
 
 /**
- * Run cashout buy via TxSequencerDO (Workers) or isolate lock (Pages fallback).
+ * Run cashout buy via TxSequencerDO, or isolate lock if DO unbound.
  */
 async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake }) {
   if (env?.TX_SEQUENCER_DO) {

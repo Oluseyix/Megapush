@@ -277,11 +277,19 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Use GET' });
   }
 
-  const secret = (
-    process.env.ROUND_SECRET ||
-    process.env.HOUSE_PRIVATE_KEY ||
-    'megapush-global-v1'
-  ).trim();
+  const secret = process.env.ROUND_SECRET || '';
+  if (!secret || secret.length < 16) {
+    return res.status(200).json({
+      ok: true,
+      phase: 'intermission',
+      acceptingBets: false,
+      windowClosed: true,
+      mult: 1,
+      error: 'ROUND_SECRET not configured — betting closed',
+      serverNow: Date.now(),
+    });
+  }
+
   return res.status(200).json(getRoundStateSafe(Date.now(), secret));
 };
 

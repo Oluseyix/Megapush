@@ -61,10 +61,14 @@ export class TxSequencerDO {
         });
       }
       if (request.method === 'POST' && path === '/clear') {
+        // Route exists only when ADMIN_TOKEN is configured
         const token = String(this.env?.ADMIN_TOKEN || '').trim();
+        if (token.length < 16) {
+          return json({ ok: false, error: 'Not found' }, 404);
+        }
         const auth = request.headers.get('Authorization') || '';
         const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-        if (!token || token.length < 16 || bearer !== token) {
+        if (bearer !== token) {
           return json({ ok: false, error: 'Forbidden' }, 403);
         }
         await this.state.storage.put(KEY.resultsById, {});

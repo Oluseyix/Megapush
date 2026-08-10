@@ -13,6 +13,8 @@ import {
   handTiming,
   resolveLiveHand,
   masterSecret,
+  hasRoundSecret,
+  unconfiguredRoundState,
   settlementFromArrival,
 } from './hand-timing.js';
 import { roundStub, doFetch } from './dos/client.js';
@@ -28,7 +30,7 @@ function json(data, status = 200) {
   });
 }
 
-export { handTiming, masterSecret };
+export { handTiming, masterSecret, hasRoundSecret };
 
 /**
  * Resolve public or settlement state at nowMs.
@@ -133,6 +135,13 @@ export async function getRoundStateSafe(nowMs, secret, opts = {}) {
 }
 
 export async function settleCashoutAt(env, arrivalMs = Date.now()) {
+  if (!hasRoundSecret(env)) {
+    return {
+      ok: false,
+      error: 'ROUND_SECRET not configured — cashout closed',
+      phase: 'intermission',
+    };
+  }
   const secret = masterSecret(env);
   const state = await getRoundStateSafe(arrivalMs, secret, { revealSecrets: true });
   if (!state._timing) {
@@ -228,9 +237,23 @@ async function mergeRoundDo(env, publicState) {
 }
 
 export async function handleRound(request, env) {
-  const secret = masterSecret(env);
   const url = new URL(request.url);
   const histQ = url.searchParams.get('history');
+
+  if (!hasRoundSecret(env)) {
+    if (histQ != null && histQ !== '0' && histQ !== 'false') {
+      return json({
+        ok: true,
+        serverNow: Date.now(),
+        count: 0,
+        rounds: [],
+        error: 'ROUND_SECRET not configured',
+      });
+    }
+    return json(unconfiguredRoundState(Date.now()));
+  }
+
+  const secret = masterSecret(env);
   if (histQ != null && histQ !== '0' && histQ !== 'false') {
     const limit = histQ === '1' || histQ === 'true' ? 20 : Number(histQ);
     const now = Date.now();
