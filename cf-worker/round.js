@@ -1,6 +1,6 @@
 /**
- * Provably fair global rounds for Cloudflare Pages worker.
- * Commit–reveal: hash during flight, seed after crash. Bustabit-style crash.
+ * Provably fair global rounds — Cloudflare worker.
+ * Phases: betting → flying → crashed (short) → intermission → next cycle
  */
 
 function json(data, status = 200) {
@@ -24,7 +24,7 @@ function envGet(env, ...keys) {
 
 const CYCLE_MS = 48_000;
 const BET_MS = 4_500;
-const RESULT_MS = 4_000;
+const RESULT_MS = 3_200;
 const GROWTH_PER_MS = 0.00018;
 
 async function sha256Hex(input) {
@@ -75,7 +75,8 @@ async function getRoundStateSafe(nowMs, masterSecret) {
 
   const flyStart = roundStart + BET_MS;
   const crashAt = flyStart + flightMs;
-  const cycleEnd = roundStart + CYCLE_MS;
+  const resultEnd = Math.min(crashAt + RESULT_MS, cycleEndOf(roundStart));
+  const cycleEnd = cycleEndOf(roundStart);
 
   let phase;
   let mult;
@@ -85,12 +86,16 @@ async function getRoundStateSafe(nowMs, masterSecret) {
   } else if (nowMs < crashAt) {
     phase = 'flying';
     mult = Math.round(multAtElapsed(nowMs - flyStart) * 100) / 100;
-  } else {
+  } else if (nowMs < resultEnd) {
     phase = 'crashed';
     mult = crashMult;
+  } else {
+    phase = 'intermission';
+    mult = 1;
   }
 
-  const revealed = phase === 'crashed';
+  const revealed = phase === 'crashed' || phase === 'intermission';
+
   const base = {
     ok: true,
     global: true,
@@ -114,8 +119,8 @@ async function getRoundStateSafe(nowMs, masterSecret) {
     roundStart,
     bettingEndsAt: flyStart,
     flyStart,
-    // Hide crashAt until crashed — otherwise growth curve leaks the crash point
     crashAt: revealed ? crashAt : null,
+    resultEnd: revealed ? resultEnd : null,
     cycleEnd,
     nextRoundId: roundId + 1,
     nextRoundStart: cycleEnd,
@@ -125,6 +130,10 @@ async function getRoundStateSafe(nowMs, masterSecret) {
     resultMs: RESULT_MS,
   };
   return base;
+}
+
+function cycleEndOf(roundStart) {
+  return roundStart + CYCLE_MS;
 }
 
 export async function handleRound(request, env) {

@@ -1071,12 +1071,23 @@ async function fetchGlobalRound(){
 
 function phaseAt(g, now){
   if(!g) return 'betting';
-  // Prefer server phase (provably fair: crashAt hidden until crash)
-  if(g.phase==='crashed') return 'crashed';
-  if(g.phase==='betting' || (g.bettingEndsAt!=null && now < g.bettingEndsAt)) return 'betting';
+  // Prefer server phase (authoritative)
+  if(g.phase==='intermission') return 'intermission';
+  if(g.phase==='crashed'){
+    // Local end of "flew away" display even if poll is late
+    if(g.resultEnd!=null && now >= g.resultEnd) return 'intermission';
+    if(g.crashAt!=null && g.resultMs!=null && now >= g.crashAt + Number(g.resultMs)) return 'intermission';
+    return 'crashed';
+  }
   if(g.phase==='flying') return 'flying';
-  if(g.crashAt!=null && now >= g.crashAt) return 'crashed';
+  if(g.phase==='betting') return 'betting';
+  // Fallbacks from timestamps
+  if(g.crashAt!=null && now >= g.crashAt){
+    const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt + (Number(g.resultMs)||3200));
+    return now >= re ? 'intermission' : 'crashed';
+  }
   if(g.flyStart!=null && now >= g.flyStart) return 'flying';
+  if(g.bettingEndsAt!=null && now < g.bettingEndsAt) return 'betting';
   return 'betting';
 }
 
@@ -1626,28 +1637,24 @@ function onGlobalPhase(phase, g){
   const rid=g && g.roundId;
   const roundChanged = rid!=null && rid!==lastRoundId;
 
-  // New round always clears crash UI first
-  if(roundChanged && lastRoundId!=null){
-    if(lastPhase==='crashed' || lastPhase==='flying'){
-      // soft clear without wiping live bet state mid-flight of NEW round
-    }
-  }
-
-  if(phase==='betting'){
+  // Clear "flew away" for betting / intermission / new round
+  if(phase==='betting' || phase==='intermission'){
     if(lastPhase==='crashed' || lastPhase==='flying' || lastPhase===null || roundChanged){
       reset();
+      if(phase==='intermission'){
+        $('status').textContent='Stake for next climb · fair seed revealed';
+      }
     }
   }
   if(phase==='flying' && (lastPhase!=='flying' || roundChanged)){
     crashHandledForRound=null;
-    // Ensure we left crashed visuals
-    if(lastPhase==='crashed') reset();
+    if(lastPhase==='crashed' || lastPhase==='intermission') reset();
     start();
   }
   if(phase==='crashed' && crashHandledForRound!==rid){
     crashHandledForRound=rid;
-    m=multAt(g, Math.min(serverNow(), g.crashAt));
-    if(g.crashMult!=null) m=Number(g.crashMult)||m;
+    if(g.crashMult!=null) m=Number(g.crashMult);
+    else if(g.crashAt!=null) m=multAt(g, g.crashAt);
     paint();
     crash();
   }
@@ -1659,28 +1666,16 @@ function globalFrame(){
   let g=globalRound;
   const now=serverNow();
 
-  // Past cycle end → fetch next round aggressively (prevents sticky 2.xx crash mult)
-  if(g && g.cycleEnd!=null && now>=g.cycleEnd){
+  // Always keep server state fresh near boundaries
+  if(g && g.cycleEnd!=null && now>=g.cycleEnd-200){
     if(!g._fetching){
       g._fetching=true;
       fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
     }
-    // While waiting, show idle 1.00× instead of frozen crash number
-    if(!globalRound || globalRound.roundId===g.roundId){
-      running=false;
-      if(m!==1){ m=1; }
-      // keep crashed hero until new round arrives, but don't look "stuck climbing"
-      if($('status') && lastPhase==='crashed'){
-        $('status').textContent='Next global round starting…';
-      }
-      paint();
-      globalRaf=requestAnimationFrame(globalFrame);
-      return;
-    }
-    g=globalRound;
   }
 
-  if(g && g.flyStart!=null && g.crashAt!=null){
+  // CRITICAL: do not require crashAt (hidden during flying for fairness)
+  if(g && g.flyStart!=null){
     const phase=phaseAt(g, now);
     if(phase!==lastPhase || (g.roundId!=null && g.roundId!==lastRoundId)){
       onGlobalPhase(phase, g);
@@ -1688,23 +1683,41 @@ function globalFrame(){
     if(phase==='flying'){
       running=true;
       m=multAt(g, now);
+      // Prefer live server mult sample when present
+      if(g.mult!=null && g.phase==='flying'){
+        const sm=Number(g.mult);
+        if(sm>=1) m=Math.max(m, sm); // don't go below server
+        if(m>sm*1.25) m=sm; // snap if we overshot before crash poll
+      }
       paint();
       if(Math.random()<0.08) playTick();
       bets.forEach(b=>{
         if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
       });
-    }else if(phase==='betting'){
+    }else if(phase==='betting' || phase==='intermission'){
       running=false;
       m=1;
+      // Ensure flew-away overlay is gone
+      if($('hero') && $('hero').classList.contains('crashed')){
+        reset();
+      }
       paint();
     }else{
-      // crashed — show crash mult only until cycle ends
+      // crashed — brief result window only
       running=false;
-      let cm=multAt(g, g.crashAt);
-      if(g.crashMult!=null) cm=Number(g.crashMult)||cm;
-      m=cm;
+      if(g.crashMult!=null) m=Number(g.crashMult);
       paint();
+      // Safety: if result window elapsed, force leave flew-away
+      const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt!=null ? g.crashAt+(Number(g.resultMs)||3200) : null);
+      if(re!=null && now>=re && $('hero') && $('hero').classList.contains('crashed')){
+        reset();
+        lastPhase='intermission';
+        $('status').textContent='Stake for next climb · fair seed revealed';
+      }
     }
+  }else if(!g){
+    // No round yet
+    fetchGlobalRound();
   }
   globalRaf=requestAnimationFrame(globalFrame);
 }
