@@ -8,6 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
+<meta name="megapush-build" content="20260810-clearcrash">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -152,6 +153,7 @@ nav::-webkit-scrollbar{display:none}
 
 .fly-overlay{position:absolute;left:0;right:0;top:22%;z-index:15;display:none;pointer-events:none;text-align:center}
 .crashed .fly-overlay{display:block}
+.hero:not(.crashed) .fly-overlay{display:none!important}
 .fly-stamp{display:inline-block;transform:rotate(-8deg) scale(.7);opacity:0;animation:stampIn .55s cubic-bezier(.2,1.5,.4,1) .08s both}
 @keyframes stampIn{0%{opacity:0;transform:rotate(-18deg) scale(1.4)}60%{opacity:1;transform:rotate(-6deg) scale(1.05)}100%{opacity:1;transform:rotate(-8deg) scale(1)}}
 .fly-stamp .ring{border:3.5px solid #E83A2E;border-radius:12px;padding:10px 22px 12px;background:rgba(255,255,255,.92);box-shadow:0 10px 30px rgba(232,58,46,.25);position:relative}
