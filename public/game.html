@@ -1545,7 +1545,13 @@ async function refreshLeaderboard(){
     const lines = [];
 
     if(!rows.length){
-      lines.push('<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px">No scores yet for '+lbPeriodLabel(lbPeriod).toLowerCase()+'</td></tr>');
+      // Empty board — do not pin a blank YOU row (looked like "YOU You —")
+      lines.push(
+        '<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px;line-height:1.45">'+
+        'No cash-outs on the board for '+lbPeriodLabel(lbPeriod).toLowerCase()+' yet.<br>'+
+        '<span style="font-weight:600;opacity:.9">Bank a climb to place a score.</span>'+
+        '</td></tr>'
+      );
     }else{
       for(const row of rows){
         const isYou = !!row.isYou;
@@ -1559,13 +1565,14 @@ async function refreshLeaderboard(){
       }
     }
 
-    // YOU row if connected and not already ranked
-    if(you && you.isYou && !rows.some(r => r.isYou)){
+    // YOU row only when connected AND you have a score this period but aren't in top rows
+    const youScore = you && Number(you.highest) > 0 ? Number(you.highest) : 0;
+    if(you && you.isYou && youScore > 0 && !rows.some(r => r.isYou)){
       lines.push(
         `<tr class="you">`+
-        `<td class="rk">YOU</td>`+
+        `<td class="rk">${you.rank != null ? you.rank : 'YOU'}</td>`+
         `<td>You</td>`+
-        `<td class="num">${you.highest > 0 ? Number(you.highest).toFixed(2)+'×' : '—'}</td></tr>`
+        `<td class="num">${youScore.toFixed(2)}×</td></tr>`
       );
     }
 
