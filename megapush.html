@@ -1339,18 +1339,18 @@ function maybeShare(at, tickets){
 async function cashOut(b){
   if(b.state!=='live') return;
   const at = m;
-  // Tickets = floor(stake) × floor(mult) — whole numbers only (no decimal mult)
-  // e.g. $5 @ 2× → 10, $5 @ 3× → 15, $5 @ 1.2× → 5 (floor 1.2 = 1)
-  const tickets = Math.max(0, Math.floor(Number(b.amt) || 0) * Math.floor(Number(at) || 0));
-  const entryId = b.entryId || ((window.Megapot?.account || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
+  // tickets = floor(stake × mult) — whole product; server recomputes if needed
+  const tickets = Math.max(0, Math.floor((Number(b.amt) || 0) * (Number(at) || 0)));
+  const player = window.Megapot?.account || null;
+  const entryId = b.entryId || ((player || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
   const stakeAmt = Number(b.amt) || 0;
 
-  // Pending payout — do NOT celebrate until house buys tickets for the player
+  // Pending only — never celebrate until ok && txHash
   b.at = at;
   b.payoutFailed = false;
   b.payoutPending = tickets > 0;
   b.ticketsBought = null;
-  b.state = tickets > 0 ? 'won' : 'won';
+  b.state = 'won';
   paintBet(b);
 
   if(tickets <= 0){
@@ -1364,81 +1364,97 @@ async function cashOut(b){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
-    $('status').textContent = 'Cashed out · house ticket buy unavailable';
+    $('status').textContent = 'Ticket buy failed · house module unavailable';
     return;
   }
 
-  const player = window.Megapot.account;
-  if(!player){
+  // recipient = connected wallet ONLY
+  if(!player || !/^0x[a-fA-F0-9]{40}$/i.test(player)){
     b.payoutPending = false;
     b.payoutFailed = true;
     paintBet(b);
     $('status').textContent = 'Please connect your wallet to receive tickets';
     return;
   }
-
-  $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · house buying '+tickets+' tickets for you…';
-  $('status').classList.remove('won');
-
-  async function tryRefund(reason){
-    try{
-      if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
-        const rf = await window.Megapot.refundStake(entryId, stakeAmt);
-        if(rf?.ok){
-          $('status').textContent = 'Ticket buy failed · stake refunded to your wallet';
-          if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
-          return true;
-        }
-        $('status').textContent = 'Ticket buy failed ('+reason+') · refund failed: '+(rf?.error||'unknown');
-        return false;
-      }
-    }catch(e){
-      console.warn('refund after cashout fail', e);
-    }
-    $('status').textContent = 'Ticket buy failed: '+reason;
-    return false;
+  if(window.Megapot.HOUSE_TREASURY && player.toLowerCase() === String(window.Megapot.HOUSE_TREASURY).toLowerCase()){
+    b.payoutPending = false;
+    b.payoutFailed = true;
+    paintBet(b);
+    $('status').textContent = 'Ticket buy failed · invalid recipient';
+    return;
   }
+
+  $('status').textContent = 'Entry '+(b.i+1)+' cashed · buying '+tickets+' tickets for '+player.slice(0,6)+'…';
+  $('status').classList.remove('won');
 
   try{
     const res = await window.Megapot.houseBuyTickets(tickets, player, {
       entryId,
       stake: stakeAmt,
       multiplier: at,
-      recipient: player,
+      recipient: player, // always player wallet
     });
     b.payoutPending = false;
-    if(!res || !res.ok){
+
+    // Success ONLY if ok && txHash
+    if(!res || !res.ok || !res.txHash){
       b.payoutFailed = true;
+      b.ticketsBought = null;
       paintBet(b);
-      await tryRefund(res?.error || 'unknown');
+      const err = res?.error || 'House buy failed';
+      if(res?.refundTxHash){
+        $('status').textContent = 'Ticket buy failed · stake refunded · '+err;
+        if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+      }else{
+        // API should refund; frontend backup refund if stake was taken
+        if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
+          const rf = await window.Megapot.refundStake(entryId, stakeAmt);
+          if(rf?.ok){
+            $('status').textContent = 'Ticket buy failed · stake refunded · '+err;
+            if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+          }else{
+            $('status').textContent = 'Ticket buy failed · '+err+(rf?.error?(' · refund: '+rf.error):'');
+          }
+        }else{
+          $('status').textContent = 'Ticket buy failed · '+err;
+        }
+      }
       return;
     }
 
-    // Success: house was debited, tickets minted to player
-    const bought = res.tickets ?? tickets;
+    const bought = Math.max(1, Number(res.tickets) || tickets);
     b.ticketsBought = bought;
     b.payoutFailed = false;
     paintBet(b);
 
-    // Celebrate only after real house buy
+    // Load tickets immediately (await)
+    try{
+      if(typeof window.Megapot.loadUserTickets === 'function'){
+        await window.Megapot.loadUserTickets({
+          expectAtLeast: bought,
+          retries: 10,
+          delayMs: 400,
+          lookback: 10,
+        });
+      }
+    }catch(e){ console.warn('load tickets after cashout', e); }
+
+    // Celebrate only after confirmed buy + refresh
     $('status').classList.add('won');
     playCash();
     const go = $('go'+b.i);
-    if(go && bought > 0){
+    if(go){
       const r = go.getBoundingClientRect();
       confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
       spawnTicketFlight(go, bought);
     }
-    if(bought > 0){
-      showTicketPreview(bought, at);
-      maybeShare(at, bought);
-    }
-
-    // Tickets already loading in background from houseBuyTickets — don't wait
+    showTicketPreview(bought, at);
+    maybeShare(at, bought);
     cashoutsToday++;
     syncMission();
-    const txNote = res.txHash ? (' · tx '+String(res.txHash).slice(0,10)+'…') : '';
-    $('status').textContent = 'Entry '+(b.i+1)+' cashed at '+at.toFixed(2)+'× · +'+bought+' tickets'+txNote;
+    const txNote = ' · tx '+String(res.txHash).slice(0,10)+'…';
+    const who = res.recipient ? (' → '+String(res.recipient).slice(0,6)+'…') : '';
+    $('status').textContent = 'Entry '+(b.i+1)+' cashed · +'+bought+' tickets'+who+txNote;
     const pt = $('previewTitle');
     if(pt && $('previewBg')?.classList.contains('show')){
       pt.textContent = '+'+bought+' tickets';
@@ -1448,8 +1464,20 @@ async function cashOut(b){
     console.error(err);
     b.payoutPending = false;
     b.payoutFailed = true;
+    b.ticketsBought = null;
     paintBet(b);
-    await tryRefund(err?.message || 'error');
+    const msg = err?.message || String(err);
+    if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
+      try{
+        const rf = await window.Megapot.refundStake(entryId, stakeAmt);
+        if(rf?.ok){
+          $('status').textContent = 'Ticket buy failed · stake refunded · '+msg;
+          if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
+          return;
+        }
+      }catch(_){}
+    }
+    $('status').textContent = 'Ticket buy failed · '+msg;
   }
 }
 
@@ -2397,20 +2425,25 @@ async function refundStake(entryId, amountUsd){
 }
 
 /**
- * House buys tickets for player. No player USDC.
- * Requires HOUSE_BUY_URL backend. Never invents tickets on failure.
+ * House buys Megapot tickets for the PLAYER wallet only.
+ * Success requires ok + txHash. Never invents tickets.
  */
 async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
-  if(count <= 0) return { ok: true, count: 0, tickets: 0 };
+  if(count <= 0) return { ok: false, error: 'tickets must be ≥ 1' };
   if(!HOUSE_BUY_URL){
     return { ok: false, error: 'HOUSE_BUY_URL not set' };
   }
-  // Always mint to the connected player — never the house treasury
+  // Connected wallet only — never house treasury
   const to = recipient || account;
-  if(!to) return { ok: false, error: 'Please connect your wallet to receive tickets' };
+  if(!to || !/^0x[a-fA-F0-9]{40}$/i.test(to)){
+    return { ok: false, error: 'Please connect your wallet to receive tickets' };
+  }
   if(HOUSE_TREASURY && to.toLowerCase() === HOUSE_TREASURY.toLowerCase()){
     return { ok: false, error: 'Ticket recipient cannot be the house address' };
+  }
+  if(account && to.toLowerCase() !== account.toLowerCase()){
+    return { ok: false, error: 'Recipient must be the connected wallet' };
   }
   try{
     const r = await fetch(HOUSE_BUY_URL, {
@@ -2421,6 +2454,7 @@ async function houseBuyTickets(count, recipient, meta = {}){
         stake: meta.stake,
         multiplier: meta.multiplier,
         recipient: to,
+        tickets: count,
         count,
         referrer: REFERRER,
         chainId: 84532,
@@ -2428,31 +2462,49 @@ async function houseBuyTickets(count, recipient, meta = {}){
     });
     const j = await r.json().catch(()=>({}));
     if(!r.ok || j.ok === false){
-      return { ok: false, error: j.error || ('HTTP '+r.status), ...j };
+      return {
+        ok: false,
+        error: j.error || ('HTTP '+r.status),
+        recipient: j.recipient || to,
+        refundTxHash: j.refundTxHash,
+        ...j,
+      };
+    }
+    if(!j.txHash){
+      return { ok: false, error: 'House buy returned no txHash', recipient: j.recipient || to, ...j };
+    }
+    // Guard: API must echo player recipient
+    if(j.recipient && j.recipient.toLowerCase() !== to.toLowerCase()){
+      return {
+        ok: false,
+        error: 'Server returned wrong recipient (not player wallet)',
+        recipient: j.recipient,
+        txHash: j.txHash,
+      };
     }
     const bought = Number(j.tickets ?? count) || 0;
     if(bought <= 0){
-      return { ok: false, error: 'House buy returned 0 tickets' };
+      return { ok: false, error: 'House buy returned 0 tickets', txHash: j.txHash, recipient: to };
     }
-    // Bump chip, then load ALL recent drawings until count catches up
+    // Immediately refresh on-chain tickets for player
     const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
     if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
-    const loaded = await loadUserTickets({
-      expectAtLeast: before + bought,
-      retries: 8,
-      delayMs: 500,
+    await loadUserTickets({
+      expectAtLeast: Math.max(before + 1, before + bought),
+      retries: 10,
+      delayMs: 400,
       lookback: 10,
     });
-    const actual = Array.isArray(loaded) ? loaded.length : (window.MegaPushUI?.ticketCount || before + bought);
     return {
       ok: true,
       onchain: true,
       count: bought,
       tickets: bought,
-      actualOnchain: actual,
       txHash: j.txHash,
+      recipient: j.recipient || to,
       houseDebitedUsdc: j.houseDebitedUsdc,
       house: j.house,
+      mode: j.mode,
       ...j,
     };
   }catch(e){
