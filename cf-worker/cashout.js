@@ -1,10 +1,12 @@
 /**
- * POST /api/cashout — house buys tickets for PLAYER (Cloudflare Pages Function)
+ * POST /api/cashout — MUST mint tickets to PLAYER or refund stake.
+ * Hardened: multi-RPC fallback, retries, no false failures, chunked RandomBuyer.
  */
 import {
   createPublicClient,
   createWalletClient,
   http,
+  fallback,
   parseAbi,
   keccak256,
   toBytes,
@@ -25,6 +27,7 @@ function json(data, status = 200) {
     },
   });
 }
+
 function envGet(env, ...keys) {
   for (const k of keys) {
     const v = env?.[k];
@@ -33,35 +36,31 @@ function envGet(env, ...keys) {
   return '';
 }
 
-
-let houseTxChain = Promise.resolve();
-let cachedTicketPrice = null;
-
-function withHouseLock(fn) {
-  const run = houseTxChain.then(() => fn());
-  houseTxChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function isNonceError(e) {
-  const s = String(e?.shortMessage || e?.message || e || '').toLowerCase();
-  return s.includes('nonce') && (s.includes('too low') || s.includes('already') || s.includes('replacement'));
 }
 
 function isAddr(a) {
   return typeof a === 'string' && /^0x[a-fA-F0-9]{40}$/.test(a);
 }
 
+function isTransient(e) {
+  const s = String(e?.shortMessage || e?.message || e || '').toLowerCase();
+  return (
+    s.includes('http request failed') ||
+    s.includes('timeout') ||
+    s.includes('429') ||
+    s.includes('503') ||
+    s.includes('502') ||
+    s.includes('fetch failed') ||
+    s.includes('network') ||
+    s.includes('econnreset') ||
+    s.includes('nonce')
+  );
+}
+
 const USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const RANDOM_BUYER = '0x53c04e7e5044B28Ea8A4F9c4b26E3Ac1aeb63746';
-const BATCH = '0x62A5D60F486D01a28071652a7951Aff1EA4c5b7c';
 const JACKPOT = '0x465dA3c859f193A3807386387bEE941B2A4c3279';
 const TICKET_NFT = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
 const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
@@ -77,42 +76,157 @@ const usdcAbi = parseAbi([
 const megapotAbi = parseAbi([
   'function ticketPrice() view returns (uint256)',
   'function buyTickets(uint256 _count, address _recipient, address[] _referrers, uint256[] _referralSplitBps, bytes32 _source) returns (uint256[] ticketIds)',
-  'function createBatchOrder(address _recipient, uint64 _dynamicTicketCount, (uint8[] normals, uint8 bonusball)[] _userStaticTickets, address[] _referrers, uint256[] _referralSplit, bytes32 _source)',
-  'function hasActiveBatchOrder(address _recipient) view returns (bool)',
 ]);
 const ticketReadAbi = parseAbi([
   'function currentDrawingId() view returns (uint256)',
   'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
 ]);
 
+/** Serialize all house txs in this isolate */
+let houseTxChain = Promise.resolve();
+function withHouseLock(fn) {
+  const run = houseTxChain.then(() => fn());
+  houseTxChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function makeTransport(env) {
+  const urls = [
+    envGet(env, 'RPC_URL'),
+    'https://sepolia.base.org',
+    'https://base-sepolia-rpc.publicnode.com',
+    'https://base-sepolia.gateway.tenderly.co',
+  ].filter(Boolean);
+  return fallback(
+    urls.map((u) => http(u, { timeout: 25_000, retryCount: 2, retryDelay: 400 })),
+    { rank: false },
+  );
+}
+
 function makeClients(env) {
   const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
   if (!key) {
-    const err = new Error(
-      'HOUSE_PRIVATE_KEY not configured on Cloudflare. Pages → Settings → Environment variables → Secret → Redeploy.',
-    );
+    const err = new Error('HOUSE_PRIVATE_KEY not configured on Cloudflare');
     err.statusCode = 500;
     throw err;
   }
   const pk = key.startsWith('0x') ? key : `0x${key}`;
   const account = privateKeyToAccount(/** @type {`0x${string}`} */ (pk));
-  const RPC = envGet(env, 'RPC_URL') || 'https://sepolia.base.org';
-  const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(RPC, { timeout: 20_000 }),
-  });
-  const walletClient = createWalletClient({
-    account,
-    chain: baseSepolia,
-    transport: http(RPC, { timeout: 20_000 }),
-  });
+  const transport = makeTransport(env);
+  const publicClient = createPublicClient({ chain: baseSepolia, transport });
+  const walletClient = createWalletClient({ account, chain: baseSepolia, transport });
   return { account, house: account.address, publicClient, walletClient };
+}
+
+async function ensureMaxAllowance(clients, spender) {
+  const { publicClient, walletClient, account, house } = clients;
+  let allowance = await publicClient.readContract({
+    address: USDC,
+    abi: usdcAbi,
+    functionName: 'allowance',
+    args: [house, spender],
+  });
+  // Already effectively unlimited
+  if (allowance > 10n ** 18n) return null;
+
+  // Prefer single max approve. Only zero first if token requires it (non-zero and not enough).
+  if (allowance > 0n && allowance < 10n ** 12n) {
+    await sendAndWait(clients, {
+      address: USDC,
+      abi: usdcAbi,
+      functionName: 'approve',
+      args: [spender, 0n],
+    });
+  }
+  return sendAndWait(clients, {
+    address: USDC,
+    abi: usdcAbi,
+    functionName: 'approve',
+    args: [spender, maxUint256],
+  });
+}
+
+async function sendAndWait(clients, buildArgs, retries = 4) {
+  const { publicClient, walletClient, account, house } = clients;
+  let lastErr;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const nonce = await publicClient.getTransactionCount({
+        address: house,
+        blockTag: 'pending',
+      });
+      const hash = await walletClient.writeContract({
+        ...buildArgs,
+        account,
+        chain: baseSepolia,
+        nonce,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: 1,
+        timeout: 90_000,
+        pollingInterval: 500,
+      });
+      if (receipt.status !== 'success') {
+        throw new Error(`Transaction reverted: ${hash}`);
+      }
+      return hash;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries - 1 && isTransient(e)) {
+        await sleep(500 + attempt * 500);
+        continue;
+      }
+      // one more try after fresh allowance if allowance error
+      const msg = String(e?.shortMessage || e?.message || '').toLowerCase();
+      if (msg.includes('allowance') && attempt < retries - 1) {
+        try {
+          await ensureMaxAllowance(clients, RANDOM_BUYER);
+        } catch (_) {}
+        await sleep(600);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
+async function countPlayerTickets(clients, player) {
+  try {
+    const { publicClient } = clients;
+    const drawingId = await publicClient.readContract({
+      address: JACKPOT,
+      abi: ticketReadAbi,
+      functionName: 'currentDrawingId',
+    });
+    let total = 0;
+    for (let i = 0; i < 5; i++) {
+      const did = drawingId - BigInt(i);
+      if (did < 0n) break;
+      try {
+        const rows = await publicClient.readContract({
+          address: TICKET_NFT,
+          abi: ticketReadAbi,
+          functionName: 'getUserTickets',
+          args: [player, did],
+        });
+        total += Array.isArray(rows) ? rows.length : 0;
+      } catch (_) {}
+    }
+    return total;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function tryRefundStake(clients, player, stakeUsd) {
   try {
     if (!isAddr(player) || !(Number(stakeUsd) > 0)) return null;
-    const { publicClient, walletClient, account, house } = clients;
+    const { publicClient, house } = clients;
     const raw = parseUnits(String(stakeUsd), 6);
     const bal = await publicClient.readContract({
       address: USDC,
@@ -121,21 +235,14 @@ async function tryRefundStake(clients, player, stakeUsd) {
       args: [house],
     });
     if (bal < raw) return null;
-    const nonce = await publicClient.getTransactionCount({ address: house, blockTag: 'pending' });
-    const hash = await walletClient.writeContract({
+    return await sendAndWait(clients, {
       address: USDC,
       abi: usdcAbi,
       functionName: 'transfer',
       args: [/** @type {`0x${string}`} */ (player), raw],
-      account,
-      chain: baseSepolia,
-      nonce,
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 60_000 });
-    if (receipt.status !== 'success') return null;
-    return hash;
   } catch (e) {
-    console.error('cf refund failed', e?.message || e);
+    console.error('refund failed', e?.message || e);
     return null;
   }
 }
@@ -167,69 +274,32 @@ export async function handleCashout(request, env) {
   }
   if (!Number.isFinite(tickets) || tickets <= 0) {
     return json(
-      { ok: false, error: 'tickets must be ≥ 1 (pass tickets/count or stake × multiplier)', recipient },
+      { ok: false, error: 'tickets must be ≥ 1', recipient },
       400,
     );
   }
-  if (tickets > 100) tickets = 100;
+  // Keep buys small enough to land reliably (still chunk if larger)
+  if (tickets > 50) tickets = 50;
 
   try {
     const result = await withHouseLock(async () => {
       const clients = makeClients(env);
-      const { publicClient, walletClient, account, house } = clients;
+      const { publicClient, house } = clients;
 
       if (recipient.toLowerCase() === house.toLowerCase()) {
-        const err = new Error('Recipient cannot be the house treasury — tickets must go to the player');
+        const err = new Error('Recipient cannot be house — must be player');
         err.statusCode = 400;
         throw err;
       }
 
-      async function pendingNonce() {
-        return publicClient.getTransactionCount({ address: house, blockTag: 'pending' });
-      }
-
-      async function sendAndWait(buildArgs) {
-        const attempt = async (nonce) => {
-          const hash = await walletClient.writeContract({
-            ...buildArgs,
-            account,
-            chain: baseSepolia,
-            nonce,
-          });
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-            confirmations: 1,
-            timeout: 60_000,
-            pollingInterval: 400,
-          });
-          if (receipt.status !== 'success') throw new Error(`Transaction reverted: ${hash}`);
-          return hash;
-        };
-        let nonce = await pendingNonce();
-        try {
-          return await attempt(nonce);
-        } catch (e) {
-          if (!isNonceError(e)) throw e;
-          await sleep(400);
-          nonce = await pendingNonce();
-          return await attempt(nonce);
-        }
-      }
-
       let ticketPrice = 10000n;
-      const now = Date.now();
-      if (cachedTicketPrice && now - cachedTicketPrice.at < 60_000) {
-        ticketPrice = cachedTicketPrice.value;
-      } else {
-        try {
-          ticketPrice = await publicClient.readContract({
-            address: JACKPOT,
-            abi: megapotAbi,
-            functionName: 'ticketPrice',
-          });
-          cachedTicketPrice = { value: ticketPrice, at: now };
-        } catch (_) {}
-      }
+      try {
+        ticketPrice = await publicClient.readContract({
+          address: JACKPOT,
+          abi: megapotAbi,
+          functionName: 'ticketPrice',
+        });
+      } catch (_) {}
 
       const cost = ticketPrice * BigInt(tickets);
       const houseBal = await publicClient.readContract({
@@ -246,66 +316,18 @@ export async function handleCashout(request, env) {
         throw err;
       }
 
-      const spender = RANDOM_BUYER;
-      const mode = 'randomBuyer_chunked';
+      // Ensure unlimited allowance for RandomBuyer
+      await ensureMaxAllowance(clients, RANDOM_BUYER);
 
-      let allowance = await publicClient.readContract({
-        address: USDC,
-        abi: usdcAbi,
-        functionName: 'allowance',
-        args: [house, spender],
-      });
-      if (allowance < cost) {
-        if (allowance > 0n) {
-          await sendAndWait({
-            address: USDC,
-            abi: usdcAbi,
-            functionName: 'approve',
-            args: [spender, 0n],
-          });
-        }
-        await sendAndWait({
-          address: USDC,
-          abi: usdcAbi,
-          functionName: 'approve',
-          args: [spender, maxUint256],
-        });
-      }
-
-      async function countPlayerTickets() {
-        try {
-          const drawingId = await publicClient.readContract({
-            address: JACKPOT,
-            abi: ticketReadAbi,
-            functionName: 'currentDrawingId',
-          });
-          let total = 0;
-          for (let i = 0; i < 4; i++) {
-            const did = drawingId - BigInt(i);
-            if (did < 0n) break;
-            try {
-              const rows = await publicClient.readContract({
-                address: TICKET_NFT,
-                abi: ticketReadAbi,
-                functionName: 'getUserTickets',
-                args: [recipient, did],
-              });
-              total += Array.isArray(rows) ? rows.length : 0;
-            } catch (_) {}
-          }
-          return total;
-        } catch (_) {
-          return null;
-        }
-      }
-
-      const beforeCount = await countPlayerTickets();
-      // Always RandomBuyer in chunks of ≤10 (reliable immediate NFT mint to player)
+      const beforeCount = await countPlayerTickets(clients, recipient);
       const buyTxs = [];
       let remaining = tickets;
+
       while (remaining > 0) {
         const chunk = Math.min(10, remaining);
-        const hash = await sendAndWait({
+        // Re-ensure allowance before each chunk (prevents race / partial allowance)
+        await ensureMaxAllowance(clients, RANDOM_BUYER);
+        const hash = await sendAndWait(clients, {
           address: RANDOM_BUYER,
           abi: megapotAbi,
           functionName: 'buyTickets',
@@ -313,30 +335,36 @@ export async function handleCashout(request, env) {
         });
         buyTxs.push(hash);
         remaining -= chunk;
+        if (remaining > 0) await sleep(400);
       }
+
       const txHash = buyTxs[buyTxs.length - 1];
 
+      // Best-effort count (never fail the win if tx confirmed)
       let afterCount = beforeCount;
-      for (let i = 0; i < 4; i++) {
-        await sleep(300);
-        afterCount = await countPlayerTickets();
+      for (let i = 0; i < 5; i++) {
+        await sleep(400);
+        afterCount = await countPlayerTickets(clients, recipient);
         if (beforeCount != null && afterCount != null && afterCount > beforeCount) break;
       }
-
       const delivered =
-        beforeCount != null && afterCount != null ? Math.max(0, afterCount - beforeCount) : tickets;
+        beforeCount != null && afterCount != null
+          ? Math.max(0, afterCount - beforeCount)
+          : tickets;
 
       return {
         ok: true,
         platform: 'cloudflare-pages-worker',
         txHash,
+        buyTxs,
         tickets: delivered > 0 ? delivered : tickets,
+        requested: tickets,
         recipient,
         stake: Number.isFinite(stake) ? stake : undefined,
         multiplier: Number.isFinite(multiplier) ? multiplier : undefined,
         entryId: entryId || undefined,
-        mode,
-        spender,
+        mode: 'randomBuyer_chunked',
+        spender: RANDOM_BUYER,
         house,
         beforeCount,
         afterCount,
@@ -348,7 +376,7 @@ export async function handleCashout(request, env) {
 
     return json(result, 200);
   } catch (e) {
-    console.error('cf cashout error', e?.shortMessage || e?.message || e);
+    console.error('cashout error', e?.shortMessage || e?.message || e);
     let refundTxHash = null;
     if (Number.isFinite(stake) && stake > 0 && isAddr(recipient)) {
       try {

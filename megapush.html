@@ -2469,10 +2469,7 @@ async function refundStake(entryId, amountUsd){
 async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
   if(count <= 0) return { ok: false, error: 'tickets must be ≥ 1' };
-  if(!HOUSE_BUY_URL){
-    return { ok: false, error: 'HOUSE_BUY_URL not set' };
-  }
-  // Connected wallet only — never house treasury
+  if(!HOUSE_BUY_URL) return { ok: false, error: 'HOUSE_BUY_URL not set' };
   const to = recipient || account;
   if(!to || !/^0x[a-fA-F0-9]{40}$/i.test(to)){
     return { ok: false, error: 'Please connect your wallet to receive tickets' };
@@ -2480,75 +2477,52 @@ async function houseBuyTickets(count, recipient, meta = {}){
   if(HOUSE_TREASURY && to.toLowerCase() === HOUSE_TREASURY.toLowerCase()){
     return { ok: false, error: 'Ticket recipient cannot be the house address' };
   }
-  if(account && to.toLowerCase() !== account.toLowerCase()){
-    return { ok: false, error: 'Recipient must be the connected wallet' };
+  let lastErr = 'House buy failed';
+  let lastRefund = null;
+  for(let attempt=0; attempt<2; attempt++){
+    try{
+      const controller = new AbortController();
+      const timer = setTimeout(()=>controller.abort(), 55000);
+      const r = await fetch(HOUSE_BUY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          entryId: (meta.entryId || '') + (attempt?('-r'+attempt):''),
+          stake: meta.stake,
+          multiplier: meta.multiplier,
+          recipient: to,
+          tickets: count,
+          count,
+          chainId: 84532,
+        }),
+      });
+      clearTimeout(timer);
+      const j = await r.json().catch(()=>({}));
+      if(j && j.ok && j.txHash){
+        const bought = Math.max(1, Number(j.tickets) || count);
+        if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
+        loadUserTickets({ expectAtLeast: 1, retries: 8, delayMs: 400, lookback: 10 }).catch(()=>{});
+        return {
+          ok: true,
+          onchain: true,
+          count: bought,
+          tickets: bought,
+          txHash: j.txHash,
+          recipient: j.recipient || to,
+          ...j,
+        };
+      }
+      lastErr = j.error || ('HTTP '+r.status);
+      lastRefund = j.refundTxHash || null;
+      if(lastRefund) break;
+      await new Promise(res=>setTimeout(res, 800));
+    }catch(e){
+      lastErr = e?.name==='AbortError' ? 'Ticket buy timed out' : (e?.message || String(e));
+      await new Promise(res=>setTimeout(res, 800));
+    }
   }
-  try{
-    const r = await fetch(HOUSE_BUY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entryId: meta.entryId,
-        stake: meta.stake,
-        multiplier: meta.multiplier,
-        recipient: to,
-        tickets: count,
-        count,
-        referrer: REFERRER,
-        chainId: 84532,
-      }),
-    });
-    const j = await r.json().catch(()=>({}));
-    if(!r.ok || j.ok === false){
-      return {
-        ok: false,
-        error: j.error || ('HTTP '+r.status),
-        recipient: j.recipient || to,
-        refundTxHash: j.refundTxHash,
-        ...j,
-      };
-    }
-    if(!j.txHash){
-      return { ok: false, error: 'House buy returned no txHash', recipient: j.recipient || to, ...j };
-    }
-    // Guard: API must echo player recipient
-    if(j.recipient && j.recipient.toLowerCase() !== to.toLowerCase()){
-      return {
-        ok: false,
-        error: 'Server returned wrong recipient (not player wallet)',
-        recipient: j.recipient,
-        txHash: j.txHash,
-      };
-    }
-    const bought = Number(j.tickets ?? count) || 0;
-    if(bought <= 0){
-      return { ok: false, error: 'House buy returned 0 tickets', txHash: j.txHash, recipient: to };
-    }
-    // Immediately refresh on-chain tickets for player
-    const before = (window.MegaPushUI && window.MegaPushUI.ticketCount) || 0;
-    if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
-    // Non-blocking for success: refresh list but never fail the cash-out
-    loadUserTickets({
-      expectAtLeast: before + 1,
-      retries: 6,
-      delayMs: 400,
-      lookback: 10,
-    }).catch(()=>{});
-    return {
-      ok: true,
-      onchain: true,
-      count: bought,
-      tickets: bought,
-      txHash: j.txHash,
-      recipient: j.recipient || to,
-      houseDebitedUsdc: j.houseDebitedUsdc,
-      house: j.house,
-      mode: j.mode,
-      ...j,
-    };
-  }catch(e){
-    return { ok: false, error: e?.message || String(e) };
-  }
+  return { ok: false, error: lastErr, recipient: to, refundTxHash: lastRefund };
 }
 
 function ticketCacheKey(addr){
