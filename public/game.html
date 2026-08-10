@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-wholetix">
+<meta name="megapush-build" content="20260810-bank">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -690,6 +690,9 @@ button:focus:not(:focus-visible){outline:none}
   </div>
   <div class="right">
     <div class="bal" id="bal" aria-live="polite" aria-label="Sepolia USDC">— USDC</div>
+    <button type="button" class="tix-chip" id="playBalChip" title="Play balance — deposit once, stake without wallet popups" aria-label="Play balance">
+      <b id="playBal">$0</b> play
+    </button>
     <button type="button" class="tix-chip" id="tixChip" aria-live="polite" aria-label="Open my tickets"><b id="tixBal">0</b> tix</button>
     <button type="button" class="wallet-btn" id="walletBtn" aria-label="Connect or disconnect wallet">Connect</button>
   </div>
@@ -859,6 +862,30 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
+
+
+<!-- Play balance / deposit (one wallet confirm, many stakes) -->
+<div class="modal-bg" id="bankSheetBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bankSheetTitle">
+    <h2 id="bankSheetTitle">Play balance</h2>
+    <p id="bankSheetSub">Deposit USDC once, then stake without approving every round.</p>
+    <div class="receipt-bits" style="margin-bottom:12px">
+      <div class="rb-row"><span>Balance</span><b id="bankSheetBal">$0</b></div>
+    </div>
+    <div class="pills" id="bankPills" style="margin-bottom:12px">
+      <button type="button" class="pill" data-bank="5">$5</button>
+      <button type="button" class="pill" data-bank="10">$10</button>
+      <button type="button" class="pill on" data-bank="25">$25</button>
+      <button type="button" class="pill" data-bank="50">$50</button>
+    </div>
+    <div class="amt" style="margin-bottom:12px">
+      <input id="bankAmt" value="25" inputmode="decimal" placeholder="Amount" aria-label="Deposit amount" style="width:100%;text-align:center;font-weight:800;font-size:18px;padding:12px;border:1px solid var(--line);border-radius:12px">
+    </div>
+    <button type="button" class="go" id="bankDepositBtn">Deposit USDC to play</button>
+    <p class="ws-hint" style="margin-top:10px">One wallet confirmation per deposit. Stakes from balance need no popup. Cash-out still never needs your signature.</p>
+    <button type="button" class="go secondary" id="bankSheetClose" style="margin-top:10px">Close</button>
+  </div>
+</div>
 
 <!-- Wallet connect sheet — multi-wallet (EIP-6963 + any injected) -->
 <div class="modal-bg" id="walletSheetBg">
@@ -1331,7 +1358,7 @@ function paintBet(b){
     }else if(b.autoOn){
       ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
     }else{
-      ft.innerHTML='Stake USDC · cash out for tickets';
+      ft.innerHTML=(window.Megapot && Number(window.Megapot.playBalance)>0) ? ('Play balance $'+Number(window.Megapot.playBalance).toFixed(0)+' · stake with no popup') : 'Stake USDC · or deposit play balance for no popups';
     }
   }
   if(b.state==='pending'){
@@ -1339,7 +1366,7 @@ function paintBet(b){
     go.className='go wait';
     go.disabled=true;
     go.textContent='Confirm in wallet…';
-    ft.innerHTML='Sign the USDC transfer in your wallet';
+    ft.innerHTML= (window.Megapot && window.Megapot.playBalance >= (Number(b.amt)||0)) ? 'Staking from play balance…' : 'Sign the USDC transfer in your wallet';
   }
   if(b.state==='queued'){
     st.textContent='Queued';
@@ -2272,8 +2299,15 @@ document.addEventListener('click',e=>{
         }
         b.state='pending';
         paintBet(b);
-        // Keep hero #status as round state only — stake UX lives on the bet card
-        const res = await window.Megapot.stakeUsdc(b.amt, b.i);
+        // Prefer play balance (no wallet popup). Else one-time deposit prompt path / direct transfer.
+        let res;
+        const bal = Number(window.Megapot.playBalance || 0);
+        if(bal + 1e-9 >= Number(b.amt)){
+          res = await window.Megapot.stakeFromPlayBalance(b.amt, b.i);
+        }else{
+          // Not enough play balance — single wallet transfer stake (legacy)
+          res = await window.Megapot.stakeUsdc(b.amt, b.i);
+        }
         if(!res?.ok){
           b.state='idle';
           const err=res?.error || 'Stake failed';
@@ -2282,6 +2316,7 @@ document.addEventListener('click',e=>{
           return;
         }
         b.entryId=res.entryId;
+        // fromBank stakes are tracked inside Megapot module
         b.stakeTx=res.tx;
         b.state='queued';
         paintBet(b);
@@ -2411,6 +2446,10 @@ import { baseSepolia } from 'https://esm.sh/viem@2.21.54/chains';
 // ═══ CONFIG ═══
 const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 const HOUSE_BUY_URL = '/api/cashout';
+const BANK_URL = '/api/bank';
+let playBalance = 0;
+const bankEntryIds = new Set(); // stakes taken from play balance
+
 const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
 const RPC = 'https://sepolia.base.org';
 
@@ -2904,7 +2943,7 @@ async function connectWithProvider(provider, meta = {}){
       btn.title = 'Tap to disconnect';
     }
     if($('status')) $('status').textContent = 'Connected · ' + short(addr);
-    await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
+    await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins(), refreshPlayBalance()]);
     return addr;
   }catch(e){
     console.error('connectWithProvider', e);
@@ -2948,7 +2987,7 @@ async function connectWallet(opts = {}){
         btn.classList.add('on');
         btn.title = 'Tap to disconnect';
       }
-      await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins()]);
+      await Promise.all([loadUserTickets(), refreshUsdcBalance(), loadWins(), refreshPlayBalance()]);
       return account;
     }
 
@@ -2962,6 +3001,84 @@ async function connectWallet(opts = {}){
     if(!silent) showWalletSheet({ message: 'Connect failed — try again' });
     return null;
   }
+}
+
+
+function setPlayBalUi(n){
+  playBalance = Math.max(0, Math.round((Number(n) || 0) * 100) / 100);
+  const el = $('playBal');
+  if(el) el.textContent = '$' + (playBalance % 1 === 0 ? String(playBalance) : playBalance.toFixed(2));
+  const el2 = $('bankSheetBal');
+  if(el2) el2.textContent = '$' + (playBalance % 1 === 0 ? String(playBalance) : playBalance.toFixed(2));
+}
+
+async function refreshPlayBalance(){
+  if(!account){ setPlayBalUi(0); return 0; }
+  try{
+    const r = await fetch(BANK_URL + '?player=' + encodeURIComponent(account), { cache: 'no-store' });
+    const j = await r.json().catch(()=>({}));
+    if(j && j.ok){ setPlayBalUi(j.balance); return playBalance; }
+  }catch(e){ console.warn('play balance', e); }
+  return playBalance;
+}
+
+async function bankApi(body){
+  const r = await fetch(BANK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(()=>({}));
+  if(j && j.balance != null) setPlayBalUi(j.balance);
+  return { http: r.status, ...j };
+}
+
+/** Deposit USDC to house once → credit play balance (one wallet confirm). */
+async function depositToPlayBalance(amountUsd){
+  const amt = Math.floor(Number(amountUsd) || 0);
+  if(!(amt > 0)) return { ok: false, error: 'Enter a deposit amount' };
+  if(!account || !walletClient || !eip1193){
+    await connectWallet({ silent: false });
+    if(!account) return { ok: false, error: 'Connect wallet first' };
+  }
+  // Reuse transfer to treasury
+  const res = await stakeUsdc(amt, 99); // entryIndex 99 = deposit tag (not a live bet)
+  if(!res?.ok || !res.tx) return { ok: false, error: res?.error || 'Deposit transfer failed' };
+  // Credit bank from verified tx (retry a few times for RPC lag)
+  let last = null;
+  for(let i=0;i<8;i++){
+    last = await bankApi({ action: 'deposit', player: account, txHash: res.tx });
+    if(last?.ok) return { ok: true, ...last, tx: res.tx };
+    await new Promise(r => setTimeout(r, 600));
+  }
+  return { ok: false, error: last?.error || 'Could not credit deposit', tx: res.tx };
+}
+
+/** Stake from play balance — no wallet popup. */
+async function stakeFromPlayBalance(amountUsd, entryIndex = 0){
+  if(!account) return { ok: false, error: 'Please connect your wallet' };
+  const amt = Math.floor(Number(amountUsd) || 0);
+  if(!(amt > 0)) return { ok: false, error: 'Invalid stake amount' };
+  if(playBalance + 1e-9 < amt){
+    return { ok: false, error: 'Insufficient play balance', needDeposit: true, balance: playBalance };
+  }
+  const entryId = `${account.toLowerCase()}-${entryIndex}-${Date.now()}`;
+  const j = await bankApi({ action: 'stake', player: account, entryId, stake: amt });
+  if(!j?.ok) return { ok: false, error: j?.error || 'Bank stake failed', needDeposit: j?.error === 'Insufficient play balance', balance: j?.balance };
+  bankEntryIds.add(entryId);
+  return { ok: true, entryId, amount: amt, fromBank: true, balance: j.balance };
+}
+
+async function creditPlayBalance(entryId, amountUsd){
+  if(!account || !(amountUsd > 0)) return { ok: false };
+  const j = await bankApi({
+    action: 'credit',
+    player: account,
+    entryId: entryId || undefined,
+    stake: Math.floor(Number(amountUsd) || 0),
+    reason: 'refund',
+  });
+  return j;
 }
 
 /** Player signs USDC transfer to HOUSE_TREASURY for stake amount (human dollars → 6 dec). */
@@ -3024,6 +3141,20 @@ async function stakeUsdc(amountUsd, entryIndex = 0){
 async function refundStake(entryId, amountUsd){
   if(!account) return { ok: false, error: 'Wallet not connected' };
   try{
+    // Bank stakes → instant credit, no chain refund
+    if(entryId && bankEntryIds.has(entryId)){
+      const j = await creditPlayBalance(entryId, amountUsd);
+      if(j?.ok){
+        bankEntryIds.delete(entryId);
+        return { ok: true, toBank: true, ...j };
+      }
+    }
+    // Also try bank credit first (server knows entry) then chain refund
+    const bankTry = await creditPlayBalance(entryId, amountUsd);
+    if(bankTry?.ok && bankTry.toBank){
+      bankEntryIds.delete(entryId);
+      return { ok: true, toBank: true, ...bankTry };
+    }
     const r = await fetch('/api/refund', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3369,12 +3500,16 @@ window.Megapot = {
   loadUserTickets,
   loadWins,
   stakeUsdc,
+  stakeFromPlayBalance,
+  depositToPlayBalance,
+  refreshPlayBalance,
   refundStake,
   houseBuyTickets,
   claimWinnings,
   refreshUsdcBalance,
   ensureTreasuryConfigured,
   get account(){ return account; },
+  get playBalance(){ return playBalance; },
   HOUSE_TREASURY,
   HOUSE_BUY_URL,
   REFERRER,
@@ -3411,6 +3546,50 @@ waitForInjectedProvider(1800).then((p) => {
 }).catch(()=>{});
 
 window.__megapushWalletReady = true;
+
+
+// Play balance sheet
+function openBankSheet(){
+  if($('bankAmt') && !$('bankAmt').value) $('bankAmt').value = '25';
+  setPlayBalUi(playBalance);
+  $('bankSheetBg')?.classList.add('show');
+  refreshPlayBalance();
+}
+$('playBalChip')?.addEventListener('click', () => {
+  if(!window.Megapot?.account){ onWalletBtnClick(); return; }
+  openBankSheet();
+});
+$('bankSheetClose')?.addEventListener('click', () => $('bankSheetBg')?.classList.remove('show'));
+$('bankSheetBg')?.addEventListener('click', (e) => {
+  if(e.target === $('bankSheetBg')) $('bankSheetBg')?.classList.remove('show');
+});
+document.querySelectorAll('#bankPills .pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('#bankPills .pill').forEach(x => x.classList.remove('on'));
+    p.classList.add('on');
+    if($('bankAmt')) $('bankAmt').value = p.getAttribute('data-bank') || '25';
+  });
+});
+$('bankDepositBtn')?.addEventListener('click', async () => {
+  const btn = $('bankDepositBtn');
+  const amt = Math.floor(Number($('bankAmt')?.value) || 0);
+  if(!(amt > 0)){ alert('Enter a deposit amount'); return; }
+  if(btn){ btn.disabled = true; btn.textContent = 'Confirm in wallet…'; }
+  try{
+    const res = await depositToPlayBalance(amt);
+    if(res?.ok){
+      if(btn) btn.textContent = 'Deposited · $' + (res.balance ?? playBalance);
+      if($('status')) $('status').textContent = 'Play balance $' + playBalance + ' · stake without popups';
+      setTimeout(() => { $('bankSheetBg')?.classList.remove('show'); if(btn){ btn.disabled=false; btn.textContent='Deposit USDC to play'; } }, 900);
+    }else{
+      alert(res?.error || 'Deposit failed');
+      if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC to play'; }
+    }
+  }catch(e){
+    alert(e?.message || String(e));
+    if(btn){ btn.disabled = false; btn.textContent = 'Deposit USDC to play'; }
+  }
+});
 
 const claimBtn = $('claimAll');
 if(claimBtn){

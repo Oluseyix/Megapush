@@ -6,6 +6,7 @@ import { handleCashout } from './cashout.js';
 import { handleRefund } from './refund.js';
 import { handleHealth } from './health.js';
 import { handleRound } from './round.js';
+import { handleBank } from './bank.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -62,6 +63,9 @@ export default {
         if (path === '/api/refund') {
           if (request.method !== 'POST') return json({ ok: false, error: 'Use POST' }, 405);
           return handleRefund(request, env);
+        }
+        if (path === '/api/bank') {
+          return handleBank(request, env);
         }
         return json({ ok: false, error: 'Unknown API route', path }, 404);
       } catch (e) {
