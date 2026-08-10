@@ -268,10 +268,14 @@ export async function handleCashout(request, env) {
 
   let tickets = Math.floor(Number(body.tickets != null ? body.tickets : body.count));
   if (!Number.isFinite(tickets) || tickets <= 0) {
+    // Whole tickets only: floor(stake$) × floor(mult). $5 @ 2.37× → 10, not floor(11.85).
     if (Number.isFinite(stake) && Number.isFinite(multiplier) && stake > 0 && multiplier > 0) {
-      tickets = Math.floor(stake * multiplier);
+      const s = Math.floor(stake);
+      const m = Math.floor(multiplier);
+      tickets = s > 0 && m > 0 ? s * m : 0;
     }
   }
+  tickets = Math.floor(Number(tickets) || 0);
   if (!Number.isFinite(tickets) || tickets <= 0) {
     return json(
       { ok: false, error: 'tickets must be ≥ 1', recipient },

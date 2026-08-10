@@ -4,7 +4,7 @@
  * Body: { recipient, stake?, multiplier?, tickets?|count?, entryId? }
  *
  * - recipient MUST be player wallet (rejected if house)
- * - tickets = body.tickets|count OR floor(stake * multiplier)
+ * - tickets = body.tickets|count OR floor(stake) × floor(multiplier)
  * - ≤10: RandomBuyer.buyTickets
  * - ≥11: Batch.createBatchOrder (+ poll when possible)
  * - Approve correct spender; wait receipt before buy
@@ -235,13 +235,17 @@ module.exports = async function handler(req, res) {
   const multiplier = Number(body.multiplier);
   const entryId = body.entryId != null ? String(body.entryId) : null;
 
-  // 2) tickets = body.tickets|count OR floor(stake * multiplier)
+  // 2) tickets = body.tickets|count OR floor(stake) × floor(multiplier)
   let tickets = Math.floor(Number(body.tickets != null ? body.tickets : body.count));
   if (!Number.isFinite(tickets) || tickets <= 0) {
+    // Whole tickets only: floor(stake$) × floor(mult). $5 @ 2.37× → 10, not floor(11.85).
     if (Number.isFinite(stake) && Number.isFinite(multiplier) && stake > 0 && multiplier > 0) {
-      tickets = Math.floor(stake * multiplier);
+      const s = Math.floor(stake);
+      const m = Math.floor(multiplier);
+      tickets = s > 0 && m > 0 ? s * m : 0;
     }
   }
+  tickets = Math.floor(Number(tickets) || 0);
   if (!Number.isFinite(tickets) || tickets <= 0) {
     return res.status(400).json({
       ok: false,
