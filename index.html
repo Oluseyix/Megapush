@@ -17,11 +17,10 @@
   --wash:#F3F4F9;--line:#E6E8F1;--mid:#6B7280;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;overflow-x:hidden;overflow-x:clip;width:100%;max-width:100%;overscroll-behavior-x:none}
 body{
   font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--ink);
-  min-height:100vh;background:#fff;-webkit-font-smoothing:antialiased;
-}
+  min-height:100vh;background:#fff;-webkit-font-smoothing:antialiased;;overflow-x:hidden;overflow-x:clip;width:100%;max-width:100%;overscroll-behavior-x:none;touch-action:pan-y}
 .bg{
   position:fixed;inset:0;z-index:-1;
   background:

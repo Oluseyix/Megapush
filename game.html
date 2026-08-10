@@ -25,12 +25,38 @@
   --safe-b:env(safe-area-inset-bottom,0px);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
+html{
+  -webkit-text-size-adjust:100%;
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
+  overflow-x:clip;
+  overscroll-behavior-x:none;
+}
 body{
   font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--ink);
   -webkit-font-smoothing:antialiased;background:#fff;
-  min-height:100vh;min-height:100dvh;overflow-x:hidden;padding-bottom:var(--safe-b);
+  min-height:100vh;min-height:100dvh;
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
+  overflow-x:clip;
+  overscroll-behavior-x:none;
+  touch-action:pan-y;
+  padding-bottom:var(--safe-b);
+  position:relative;
 }
+
+/* Prevent horizontal page drag / rubber-band pan */
+header,.ticker,.page,.shell,.hero,.mega,.bets,.card{
+  max-width:100%;
+  box-sizing:border-box;
+}
+header{overflow-x:hidden}
+.ticker{max-width:100%}
+nav{-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.stage .particle{max-width:40px}
+
 .bg{position:fixed;inset:0;z-index:-1;background:linear-gradient(180deg,var(--peri) 0%,var(--peri-2) 26%,#EDEEFC 46%,#FFFFFF 62%);transition:filter .4s}
 body.intense .bg{filter:saturate(1.3) brightness(1.04)}
 body.danger .bg{filter:saturate(1.55) brightness(.93) hue-rotate(-6deg)}
@@ -62,7 +88,7 @@ nav::-webkit-scrollbar{display:none}
 .tix-chip{background:var(--wash);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:11px;font-weight:800;color:var(--ink);white-space:nowrap;transition:transform .25s}
 .tix-chip b{font-family:'Archivo Black',sans-serif;color:var(--teal)}
 
-.wrap{max-width:720px;margin:0 auto;padding:10px 14px calc(48px + var(--safe-b))}
+.wrap{max-width:720px;width:100%;margin:0 auto;padding:10px 14px calc(48px + var(--safe-b));overflow-x:hidden;box-sizing:border-box}
 
 /* mission bar */
 .mission{
@@ -137,8 +163,18 @@ nav::-webkit-scrollbar{display:none}
 .crashed .mult{color:#EDEEF4;text-shadow:3px 3px 0 #B9BECC,6px 6px 0 #8D93A5,9px 10px 0 rgba(15,22,38,.12);animation:multOut .65s cubic-bezier(.4,0,.2,1) both}
 @keyframes multOut{0%{transform:scale(1)}18%{transform:scale(1.14)}100%{transform:scale(.9);opacity:.5}}
 
-.stage{position:relative;height:200px;margin:8px auto 10px;max-width:360px;overflow:visible}
-.plume{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:min(500px,108vw);height:140px;background:radial-gradient(ellipse at 50% 100%,color-mix(in srgb,var(--heat) 36%,transparent) 0%,transparent 70%);pointer-events:none;transition:height .18s linear,opacity .25s;opacity:.78;z-index:1}
+.stage{
+  position:relative;height:200px;margin:8px auto 10px;max-width:min(360px,100%);
+  width:100%;
+  overflow:hidden; /* clip plume/particles so they never widen the page */
+  contain:layout paint;
+}
+.plume{
+  position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+  width:min(360px,100%);max-width:100%;
+  height:140px;background:radial-gradient(ellipse at 50% 100%,color-mix(in srgb,var(--heat) 36%,transparent) 0%,transparent 70%);
+  pointer-events:none;transition:height .18s linear,opacity .25s;opacity:.78;z-index:1;
+}
 .plume::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 100%,color-mix(in srgb,var(--heat) 16%,transparent) 0%,transparent 55%);filter:blur(14px);opacity:.65}
 .pot-wrap{
   position:absolute;bottom:16px;left:50%;
