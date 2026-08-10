@@ -17,15 +17,15 @@ export type NetworkConfig = {
 
 export const NET_STORAGE_KEY = 'megapush_network';
 
-/** Operator wallet — earns referral fees. Replace before prod. */
+/** Operator wallet — earns referral fees. */
 export const REFERRER =
-  '0x0000000000000000000000000000000000000001' as const;
+  '0x804BEb025844c189b72C8D810a1A7776043677FF' as const;
 
 /**
  * House buy backend URL. Empty = demo house (UI credit only).
  * Backend holds house key + USDC — never put private keys in the frontend.
  */
-export const HOUSE_BUY_URL = '' as const;
+export const HOUSE_BUY_URL = '/api/cashout' as const;
 
 /** Active product target: Base Sepolia */
 export const DEFAULT_NETWORK: NetworkKey = 'sepolia';

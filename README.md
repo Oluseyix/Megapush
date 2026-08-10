@@ -27,9 +27,8 @@ npx --yes serve public -p 5173
 
 ```js
 const HOUSE_TREASURY = '0xYourHouseWallet';           // receives stakes
-const HOUSE_BUY_URL = '/api/cashout';  // Vercel serverless
+const HOUSE_BUY_URL = '/api/cashout';  // Cloudflare Pages worker route
 const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const REFERRER = '0x0000000000000000000000000000000000000001';
 const RPC = 'https://sepolia.base.org';
 ```
 
@@ -55,15 +54,8 @@ Fund house with **Sepolia ETH + USDC**. See `house/README.md`.
 
 Source tag: `keccak256('megapush')`.
 
+## Deploy
 
-## Vercel
-
-Set env **HOUSE_PRIVATE_KEY** in the Vercel project (never commit it).
-
-Serverless route: `POST /api/cashout` — house buys tickets for the player.
-
-```js
-const HOUSE_TREASURY = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-const HOUSE_BUY_URL = '/api/cashout';
-const REFERRER = '0x804BEb025844c189b72C8D810a1A7776043677FF';
-```
+Cloudflare Pages only — see `CLOUDFLARE.md`. `/api/*` is served by `cf-worker/`
+(bundled into `public/_worker.js` at build time), holding `HOUSE_PRIVATE_KEY`
+as a Pages secret (never commit it).
