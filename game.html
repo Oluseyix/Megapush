@@ -1132,7 +1132,7 @@ function paintBet(b){
     if(!hasStake){
       ft.innerHTML='Pick a stake amount';
     }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
-      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+Math.max(0,Math.floor(Number(b.amt)||0)*Math.floor(Number(b.auto)||0))+' tix</b>';
+      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+Math.max(0,Math.floor((Number(b.amt)||0)*(Number(b.auto)||0)))+' tix</b>';
     }else if(b.autoOn){
       ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
     }else{
@@ -1157,11 +1157,11 @@ function paintBet(b){
     st.textContent='Climbing';
     go.className='go cash';
     go.disabled=false;
-    go.textContent='Cash out · '+(Math.max(0,Math.floor(Number(b.amt)||0)*Math.floor(Number(m)||0)))+' tickets';
+    go.textContent='Cash out · '+(Math.max(0,Math.floor((Number(b.amt)||0)*(Number(m)||0))))+' tickets';
     ft.innerHTML=b.autoOn?'Auto at <b>'+b.auto+'×</b>':'Manual cash out';
   }
   if(b.state==='won'){
-    const tixEst = Math.max(0, Math.floor(Number(b.amt)||0) * Math.floor(Number(b.at)||0));
+    const tixEst = Math.max(0, Math.floor((Number(b.amt)||0)*(Number(b.at)||0)));
     const tixShow = b.ticketsBought != null ? b.ticketsBought : tixEst;
     st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Buying tickets' : 'Cashed out');
     go.className='go wait';
