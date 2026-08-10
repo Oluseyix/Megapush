@@ -152,7 +152,18 @@ export class RoundDO {
 
     const rolled = !hand || hand.unconfigured || hand.roundId !== live.roundId;
     if (rolled) {
-      entries = {};
+      // Keep open stakes already assigned to the new hand (queued early)
+      const kept = {};
+      let exp = 0;
+      let count = 0;
+      for (const [id, e] of Object.entries(entries)) {
+        if (e && e.status === 'open' && e.roundId === live.roundId) {
+          kept[id] = e;
+          exp += Number(e.exposureAdd) || 0;
+          count += 1;
+        }
+      }
+      entries = kept;
       hand = {
         roundId: live.roundId,
         slotId: live.slotId,
@@ -164,8 +175,8 @@ export class RoundDO {
         handStart: live.handStart ?? live.timing?.handStart ?? null,
         phase: live.phase,
         windowClosed: live.phase !== 'betting',
-        exposureUsdc: 0,
-        stakeCount: 0,
+        exposureUsdc: Math.round(exp * 100) / 100,
+        stakeCount: count,
         updatedAt: nowMs,
         unconfigured: false,
       };
@@ -357,8 +368,8 @@ export class RoundDO {
   }
 
   /**
-   * Register stake during betting window only.
-   * Body: { stakeUsdc|stake, player, entryId, maxMultCap? }
+   * Register stake. Allowed during betting, or queued onto the next hand if rocket already flying.
+   * Body: { stakeUsdc|stake, player, entryId, maxMultCap?, autoMult? }
    */
   async recordStake(request) {
     const now = Date.now();
@@ -386,18 +397,61 @@ export class RoundDO {
     if (!entryId) return json({ ok: false, error: 'entryId required' }, 400);
 
     const hand = await this.ensure(now);
-    if (hand.unconfigured || hand.phase !== 'betting' || hand.windowClosed) {
+    if (hand.unconfigured) {
       return json(
-        {
-          ok: false,
-          error: 'Betting window closed',
-          phase: hand.phase,
-          windowClosed: true,
-          roundId: hand.roundId,
-          flyStart: hand.flyStart,
-        },
-        409,
+        { ok: false, error: 'ROUND_SECRET not configured — betting closed', windowClosed: true },
+        503,
       );
+    }
+
+    // Resolve which hand this stake joins (current betting, else next)
+    let targetRoundId = hand.roundId;
+    let targetFlyStart = hand.flyStart;
+    let exposureBase = Number(hand.exposureUsdc) || 0;
+    let queuedNext = false;
+
+    if (hand.phase === 'betting' && !hand.windowClosed) {
+      // join live hand
+    } else {
+      queuedNext = true;
+      const secret = masterSecret(this.env);
+      const probeStarts = [];
+      if (hand.crashAt != null) probeStarts.push(hand.crashAt + 100);
+      if (hand.resultEnd != null) probeStarts.push(hand.resultEnd + 50);
+      probeStarts.push(now + 500, now + 3000, now + 8000, now + 15000);
+      let found = null;
+      for (const t of probeStarts) {
+        const live = await resolveLiveHand(t, secret);
+        if (live?.timing && live.roundId != null && live.timing.flyStart > now) {
+          found = live;
+          break;
+        }
+        if (live?.phase === 'betting' && live.roundId != null) {
+          found = live;
+          break;
+        }
+      }
+      if (!found || found.roundId == null) {
+        return json(
+          {
+            ok: false,
+            error: 'No upcoming hand — try again in a moment',
+            phase: hand.phase,
+            windowClosed: true,
+          },
+          409,
+        );
+      }
+      targetRoundId = found.roundId;
+      targetFlyStart = found.timing?.flyStart ?? found.flyStart ?? null;
+      // Exposure for a future hand: only count entries already assigned to it
+      const entriesNow = (await this.state.storage.get(KEY.entries)) || {};
+      exposureBase = 0;
+      for (const e of Object.values(entriesNow)) {
+        if (e && e.status === 'open' && e.roundId === targetRoundId) {
+          exposureBase += Number(e.exposureAdd) || 0;
+        }
+      }
     }
 
     let entries = (await this.state.storage.get(KEY.entries)) || {};
@@ -410,7 +464,7 @@ export class RoundDO {
         entryId,
         stake: prev.stakeUsdc,
         exposureAdd: prev.exposureAdd,
-        roundId: hand.roundId,
+        roundId: prev.roundId,
         exposureUsdc: hand.exposureUsdc,
       });
     }
@@ -422,16 +476,16 @@ export class RoundDO {
     }
     exposureAdd = Math.round(exposureAdd * 100) / 100;
 
-    if (hand.exposureUsdc + exposureAdd > caps.maxRoundExposureUsdc + 1e-9) {
+    if (exposureBase + exposureAdd > caps.maxRoundExposureUsdc + 1e-9) {
       return json(
         {
           ok: false,
           error: 'MAX_ROUND_EXPOSURE would be exceeded',
-          exposureUsdc: hand.exposureUsdc,
+          exposureUsdc: exposureBase,
           maxRoundExposureUsdc: caps.maxRoundExposureUsdc,
           requestedAdd: exposureAdd,
-          remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - hand.exposureUsdc),
-          roundId: hand.roundId,
+          remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - exposureBase),
+          roundId: targetRoundId,
         },
         409,
       );
@@ -446,8 +500,9 @@ export class RoundDO {
       stakeUsdc: stake,
       exposureAdd,
       status: 'open',
-      roundId: hand.roundId,
+      roundId: targetRoundId,
       autoMult,
+      queuedNext,
       at: now,
     };
     // Cap entry map
@@ -457,13 +512,15 @@ export class RoundDO {
       for (const id of drop) delete entries[id];
     }
 
-    hand.exposureUsdc = Math.round((hand.exposureUsdc + exposureAdd) * 100) / 100;
-    hand.stakeCount = (hand.stakeCount || 0) + 1;
-    hand.updatedAt = now;
+    // Only bump live-hand exposure if stake is for the current hand
+    if (targetRoundId === hand.roundId) {
+      hand.exposureUsdc = Math.round((exposureBase + exposureAdd) * 100) / 100;
+      hand.stakeCount = (hand.stakeCount || 0) + 1;
+      hand.updatedAt = now;
+      await this.state.storage.put(KEY.hand, hand);
+    }
     await this.state.storage.put(KEY.entries, entries);
-    await this.state.storage.put(KEY.hand, hand);
 
-    // Reschedule alarms so auto-bank fires at target mult
     await this.scheduleAlarm(hand, now);
 
     return json({
@@ -473,12 +530,16 @@ export class RoundDO {
       stake,
       exposureAdd,
       autoMult,
-      roundId: hand.roundId,
+      roundId: targetRoundId,
       phase: hand.phase,
-      exposureUsdc: hand.exposureUsdc,
+      queuedNext,
+      exposureUsdc: targetRoundId === hand.roundId ? hand.exposureUsdc : exposureBase + exposureAdd,
       maxRoundExposureUsdc: caps.maxRoundExposureUsdc,
-      remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - hand.exposureUsdc),
-      flyStart: hand.flyStart,
+      remainingUsdc: Math.max(
+        0,
+        caps.maxRoundExposureUsdc - (targetRoundId === hand.roundId ? hand.exposureUsdc : exposureBase + exposureAdd),
+      ),
+      flyStart: targetFlyStart,
     });
   }
 

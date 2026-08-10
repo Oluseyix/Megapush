@@ -845,14 +845,6 @@ nav::-webkit-scrollbar{display:none}
 :focus-visible{outline:3px solid var(--blue);outline-offset:3px;border-radius:8px}
 button:focus:not(:focus-visible){outline:none}
 
-.tix-live{
-  font-family:'Archivo Black',sans-serif;font-size:clamp(18px,4.2vw,26px);
-  font-weight:400;color:var(--teal);letter-spacing:-.3px;margin-top:2px;line-height:1.1;
-}
-.progress-live{
-  font-size:12px;font-weight:700;color:var(--mid);margin-top:4px;letter-spacing:.2px;
-}
-.progress-live b{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -917,8 +909,6 @@ button:focus:not(:focus-visible){outline:none}
     <div class="hero" id="hero">
       <div class="lab">This round</div>
       <div class="mult num" id="mult" aria-live="polite" aria-atomic="true">1.00×</div>
-      <div class="tix-live" id="tixLive" aria-live="polite">= 0 tickets</div>
-      <div class="progress-live" id="progressLive" title="Ticket progress (not withdrawable)">Progress $0.00 / $1</div>
       <div class="status" id="status" role="status" aria-live="polite">Global round · stake below to join the next climb</div>
       <div class="prev-row">
         <div class="prev-mults" id="prev"></div>
@@ -1908,35 +1898,20 @@ function paintBet(b){
     st.textContent='Ready';
     go.className='go';
     const hasStake = b.amt != null && Number(b.amt) > 0;
-    let windowOpen = true;
-    try{
-      const g = globalRound;
-      if(g){
-        const now = serverNow();
-        const ph = phaseAt(g, now);
-        if(g.kill || g.windowClosed || g.acceptingBets===false || (ph && ph!=='betting')) windowOpen = false;
-      }
-    }catch(_){}
-    go.disabled = !hasStake || !windowOpen;
-    if(hasStake && !windowOpen){
-      go.textContent = 'Wait for betting…';
-      ft.innerHTML = (globalRound && globalRound.kill) ? 'Play paused' : 'Betting closed · next hand soon';
+    go.disabled = !hasStake;
+    go.textContent = hasStake ? ('Stake $'+Number(b.amt).toFixed(0)+' USDC') : 'Select stake';
+    if(!hasStake){
+      ft.innerHTML='Pick a stake amount';
+    }else if(globalRound && globalRound.error && /ROUND_SECRET/i.test(String(globalRound.error))){
+      ft.innerHTML='Play unavailable — try again later';
+    }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
+      ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+ticketsFromStakeMult(b.amt, b.auto)+' tix</b>';
+    }else if(b.autoOn){
+      ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
     }else{
-      go.textContent = hasStake ? ('Stake $'+Number(b.amt).toFixed(0)+' USDC') : 'Select stake';
-      if(!hasStake){
-        ft.innerHTML='Pick a stake amount';
-      }else if(b.autoOn && b.auto != null && Number(b.auto) > 0){
-        ft.innerHTML='Stake USDC · auto @ <b>'+b.auto+'×</b> → <b>'+ticketsFromStakeMult(b.amt, b.auto)+' tix</b>';
-      }else if(b.autoOn){
-        ft.innerHTML='Set auto cash-out multiplier (or turn auto off)';
-      }else{
-        const expHint = (globalRound && globalRound.remainingExposureUsdc!=null)
-          ? ' · room $'+Number(globalRound.remainingExposureUsdc).toFixed(0)
-          : '';
-        ft.innerHTML=(window.Megapot && Number(window.Megapot.playBalance)>0)
-          ? ('Play balance $'+Number(window.Megapot.playBalance).toFixed(0)+expHint)
-          : 'Tap Deposit in the header first';
-      }
+      ft.innerHTML=(window.Megapot && Number(window.Megapot.playBalance)>0)
+        ? ('Play balance $'+Number(window.Megapot.playBalance).toFixed(0))
+        : 'Tap Deposit in the header first';
     }
   }
   if(b.state==='pending'){
@@ -2006,21 +1981,6 @@ function paint(){
   document.documentElement.style.setProperty('--heat',h);
   document.documentElement.style.setProperty('--heat-d',d);
   $('mult').textContent=m.toFixed(2)+'×';
-  try{
-    const liveStake = (bets||[]).filter(b=>b.state==='live'||b.state==='queued').reduce((s,b)=>s+(Number(b.amt)||0),0)
-      || (bets||[]).find(b=>b.state==='idle'&&Number(b.amt)>0)?.amt || 0;
-    const tixN = ticketsFromStakeMult(liveStake || (bets[0]&&bets[0].amt) || 0, m);
-    if($('tixLive')){
-      if(liveStake > 0 || (bets||[]).some(b=>b.state==='live'||b.state==='queued')){
-        $('tixLive').textContent = '= '+tixN+' ticket'+(tixN===1?'':'s');
-        $('tixLive').style.opacity = '1';
-      }else{
-        const preview = ticketsFromStakeMult((bets[0]&&bets[0].amt)||0, m);
-        $('tixLive').textContent = (bets[0]&&bets[0].amt) ? ('= '+preview+' tickets') : '= 0 tickets';
-        $('tixLive').style.opacity = (bets[0]&&bets[0].amt) ? '0.85' : '0.45';
-      }
-    }
-  }catch(_){}
 
   if(i!==band){band=i;const el=$('mult');el.classList.remove('pop');void el.offsetWidth;el.classList.add('pop')}
   const multEl=$('mult');
@@ -4118,13 +4078,6 @@ function setPlayBalUi(n){
     if(p) p.disabled = !(playBalance > 0);
   }
 
-  try{
-    const p = Number(window.__mpProgressUsdc);
-    if($('progressLive')){
-      const v = Number.isFinite(p) ? p : 0;
-      $('progressLive').innerHTML = 'Progress <b>$'+v.toFixed(2)+'</b> / $1 · not withdrawable';
-    }
-  }catch(_){}
 }
 
 
@@ -4822,11 +4775,9 @@ async function stakeFromPlayBalance(amountUsd, entryIndex = 0){
   try{
     const g = typeof globalRound !== 'undefined' ? globalRound : null;
     if(g){
-      const now = typeof serverNow === 'function' ? serverNow() : Date.now();
-      const ph = typeof phaseAt === 'function' ? phaseAt(g, now) : g.phase;
-      if(g.kill) return { ok:false, error:'Play paused (kill switch)' };
-      if(g.windowClosed || g.acceptingBets===false || (ph && ph!=='betting')){
-        return { ok:false, error:'Betting window closed — wait for the next hand', windowClosed:true };
+      if(g.kill) return { ok:false, error:'Play paused' };
+      if(g.error && /ROUND_SECRET/i.test(String(g.error))){
+        return { ok:false, error:'Play unavailable — rounds not configured' };
       }
     }
   }catch(_){}
