@@ -1,113 +1,35 @@
-# MegaPush
+# About MegaPush
 
-Crash-style game on **Base Sepolia**. Players deposit USDC to a play balance, stake into a global synchronized round, and cash out for **Megapot lottery tickets**.
+## Don't buy your lottery tickets. Win them.
 
-## Play (local)
+Stake $10. The multiplier climbs: 1.00x, 1.84x, 2.71x. Bank at 3.4x and **34 real Megapot tickets** land in your wallet, entered in tonight's $1,000,000 drawing.
 
-```bash
-npm install
-# Required secrets in .dev.vars (gitignored):
-#   ROUND_SECRET=…          (≥16 chars — fairness seed material; no fallback)
-#   HOUSE_PRIVATE_KEY=…     (signs ticket purchases)
-#   ADMIN_TOKEN=…           (only if you use DO admin routes; routes 404 when unset)
-npx wrangler dev
-# open /game.html
-```
+Let it run too long and the round crashes. The stake is gone.
 
-## Deploy
+## Why play here instead of just buying
 
-```bash
-npx wrangler deploy
-```
+**Ten dollars buys ten tickets anywhere.** On MegaPush, ten dollars can become forty.
 
-Set secrets in the Cloudflare dashboard or via `wrangler secret put`. **Never commit private keys.**
+**Every ticket is the real thing.** MegaPush doesn't run its own lottery. We buy genuine Megapot tickets and send them straight to your wallet. Same daily drawing, same prize pool, same odds as everyone else.
 
-| Secret | Role |
-|--------|------|
-| `ROUND_SECRET` | **Required.** Provably-fair seed material. Worker **refuses to open a betting window** without it (≥16 characters). Not derived from the house key. |
-| `HOUSE_PRIVATE_KEY` | **Required for cashouts.** Signs Megapot ticket buys and house USDC outflows. |
-| `ADMIN_TOKEN` | **Required to enable admin DO routes** (`/kill`, `/reset-exposure`, `/close-window`, sequencer `/clear`). If unset, those routes **404** (they do not exist). If set, wrong bearer → 403. |
+**97% RTP, and we earn more when you win.** Our house edge is 3%, matching the crash-game standard. But Megapot pays us a referral fee on every ticket you bank, which means we make roughly three times more from your wins than from your losses.
 
-## Free daily $1 play balance
+**Whole tickets, always.** No fractions. The number on the bank button is the number that lands in your wallet.
 
-Once every **24 hours**, a connected wallet claims **$1 free play balance** to **stake** (not a free lottery ticket).
+**Nobody holds your money but you.** Your balance sits in an escrow you can exit without our permission. Tickets go to your own wallet. Winnings are claimed by you, straight from the Megapot contract.
 
-- Shows in the **Play** chip as +$1  
-- **Stake only** — cannot withdraw free $1 as USDC  
-- Stake → bank for Megapot tickets as usual  
-- UI: **Free daily** · API: `POST /api/bank` `{ "action": "free_daily", "player": "0x…" }`  
+**You can check our maths.** Every round is cryptographically committed before betting opens and revealed after the crash. Verify it yourself in about thirty seconds. [Here's how](playing/provably-fair.md)
 
-## Money model
+## Get started
 
-| Pool | Meaning |
-|------|---------|
-| **Deposited** | USDC deposited and never consumed by a settled round — **withdrawable** |
-| **Progress** | Fractional ticket dollars from cashouts (`stake × mult` remainder) — **tickets only**, never withdrawable |
-| **Staked / cashed** | Leaves as **whole tickets** to the player wallet (`floor(stake × mult)`) |
+* **New here?** [How it works](playing/how-to-play.md)
+* **Ready to play?** [How to play](playing/how-to-play.md)
+* **Want the numbers?** [Odds and payouts](learn/odds-and-payouts.md)
 
-Example: **$10 @ 3.47× → 34 tickets + $0.70 progress**. When progress reaches $1.00, one free ticket is bought to the player wallet.
+{% hint style="warning" %}
+**Currently on Base Sepolia testnet.** Testnet tickets don't enter real drawings and carry no value. Don't send mainnet USDC to any MegaPush address.
+{% endhint %}
 
-## How to withdraw (escrow)
-
-When using `MegaPushEscrow` (`contracts/src/MegaPushEscrow.sol`):
-
-1. **`requestWithdraw()`** — player starts a withdrawal. Deposits are blocked while pending.  
-2. **Challenge window** — `WITHDRAW_DELAY` (**5 minutes**). House can settle outstanding signed hands before funds leave.  
-3. **`withdraw()`** — after `unlockTime`, player pulls the full remaining balance to their wallet (no house cooperation required).
-
-Cancel a pending request with `cancelWithdraw()` if you need to deposit again sooner; otherwise wait the 5 minutes (or settle open hands), then withdraw.
-
-Off-chain play-bank withdraw (current Worker bank) sends house USDC to the player after debiting the KV balance — still requires the house key on the Worker.
-
-## How to verify a round (commit–reveal)
-
-After a hand crashes, the server reveals `serverSeed`. During betting/flying only `serverSeedHash` (the commit) was public.
-
-### Recipe
-
-1. Wait until `/api/round` (or round history) includes:
-   - `serverSeedHash` (commit published earlier)
-   - `serverSeed` (reveal)
-   - `crashMult` (crash point shown on the TV)
-2. Check the commit:
-
-```text
-sha256(serverSeed)  ===  serverSeedHash
-```
-
-3. Recompute the crash point (Bustabit-style, first 52 bits of the hash as hex):
-
-```text
-n = int(serverSeed[0:13], 16)   // 52 bits
-if n % 33 == 0:
-  crash = 1.00
-else:
-  crash = floor( (100 * 2^52 - n) / (2^52 - n) ) / 100
-  crash = min(10000, max(1, round(crash, 2)))
-```
-
-4. Confirm `crash` matches the published `crashMult` (allow tiny float rounding, e.g. 0.015).
-
-### HTTP helper
-
-```bash
-curl -sS -X POST "$ORIGIN/api/verify" \
-  -H 'Content-Type: application/json' \
-  -d '{"serverSeed":"…","serverSeedHash":"…","crashMult":2.58}'
-```
-
-Expect `ok: true`, `commitOk: true`, `crashOk: true`.
-
-Optional: pass `flyStart` + `cashoutAt` (+ `expectedSettlementMult`) to check that a cashout mult sits on the **same** exponential curve at server arrival time.
-
-The game UI also runs this check client-side after reveal (`verifyFairRound` + `POST /api/verify`).
-
-## Contracts
-
-Escrow sources: `contracts/src/`. Public Megapot / USDC addresses used by the client are in `public/game.html`.
-
-## Security notes
-
-- Do not commit `.env`, `.dev.vars`, or private keys  
-- House signing key ≠ fairness secret  
-- No local Express house server — production path is the Worker only  
+{% hint style="info" %}
+MegaPush is a game of chance. Stake only what you can afford to lose. [Odds and payouts](learn/odds-and-payouts.md) · [Play responsibly](appendix/responsible-gaming.md)
+{% endhint %}
