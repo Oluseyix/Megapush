@@ -8,7 +8,7 @@
 <meta name="description" content="MegaPush: crash-style climb that cash-outs into Megapot lottery tickets on Base Sepolia.">
 <meta name="application-name" content="MegaPush">
 <meta name="theme-color" content="#0E6F62">
-<meta name="megapush-build" content="20260810-roundhist">
+<meta name="megapush-build" content="20260811-verify-ok">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:title" content="MegaPush">
@@ -79,8 +79,13 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .header-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0;flex:1}
 .brand{font-family:'Archivo Black',sans-serif;font-size:18px;letter-spacing:-.5px;flex:none}
 .brand em{font-style:normal;color:var(--teal-2)}
-nav{display:flex;gap:2px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%;padding:2px}
+nav{display:flex;gap:2px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%;padding:2px;align-items:center}
 nav::-webkit-scrollbar{display:none}
+nav a.tab.docs-tab{
+  display:inline-flex;align-items:center;text-decoration:none;cursor:pointer;
+  color:var(--teal);font-weight:700;
+}
+nav a.tab.docs-tab:hover{background:rgba(23,161,139,.1)}
 .tab{padding:8px 12px;border-radius:10px;font-size:12.5px;font-weight:700;color:#4A5163;background:none;white-space:nowrap;flex:none;min-height:40px;display:inline-flex;align-items:center;justify-content:center}
 .tab.on{background:rgba(255,255,255,.85);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .right{display:flex;align-items:center;gap:6px;flex:none}
@@ -106,33 +111,43 @@ nav::-webkit-scrollbar{display:none}
 .sound-btn:active{transform:scale(.96)}
 .sound-btn.muted{opacity:.75;color:var(--mid)}
 .sound-btn .sound-ico{display:block;pointer-events:none}
+/* Cashout snackbar — fixed, compact, never blocks stake UI */
 .cashout-receipt{
-  display:none;margin:10px 4px 0;padding:12px 14px;border-radius:14px;
-  background:#fff;border:1px solid var(--line);box-shadow:0 6px 18px rgba(30,38,87,.08);
+  display:none;position:fixed;left:50%;bottom:calc(72px + var(--safe-b,0px));
+  transform:translateX(-50%) translateY(10px);z-index:90;
+  width:min(400px, calc(100% - 24px));padding:10px 12px;border-radius:14px;
+  background:rgba(255,255,255,.97);border:1px solid var(--line);
+  box-shadow:0 10px 28px rgba(30,38,87,.16);backdrop-filter:blur(10px);
+  pointer-events:auto;opacity:0;transition:opacity .2s ease, transform .22s cubic-bezier(.2,1.1,.4,1);
 }
-.cashout-receipt.show{display:block;animation:prevIn .35s cubic-bezier(.2,1.4,.4,1) both}
-.cashout-receipt .cr-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}
-.cashout-receipt .cr-title{font-size:14px;font-weight:800;color:var(--ink);line-height:1.25}
+.cashout-receipt.show{
+  display:block;opacity:1;transform:translateX(-50%) translateY(0);
+  animation:none;
+}
+.cashout-receipt .cr-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:0}
+.cashout-receipt .cr-title{font-size:13px;font-weight:800;color:var(--ink);line-height:1.25}
 .cashout-receipt .cr-title b{color:var(--teal)}
-.cashout-receipt .cr-sub{font-size:12px;font-weight:600;color:var(--mid);margin-top:2px}
+.cashout-receipt .cr-sub{font-size:11.5px;font-weight:600;color:var(--mid);margin-top:1px}
 .cashout-receipt .cr-x{
-  width:28px;height:28px;border-radius:8px;background:var(--wash);border:0;
-  color:var(--mid);font-size:16px;line-height:1;flex:none;cursor:pointer
+  width:26px;height:26px;border-radius:8px;background:var(--wash);border:0;
+  color:var(--mid);font-size:15px;line-height:1;flex:none;cursor:pointer
 }
 .cashout-receipt .cr-meta{
-  display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
-  font-size:12px;font-weight:700;color:var(--ink);margin-bottom:10px
+  display:none; /* keep layout light — details live in title/sub */
+  flex-wrap:wrap;gap:8px 12px;align-items:center;
+  font-size:12px;font-weight:700;color:var(--ink);margin:6px 0 0
 }
 .cashout-receipt .cr-meta span{color:var(--mid);font-weight:600}
-.cashout-receipt .cr-actions{display:flex;gap:8px;flex-wrap:wrap}
+.cashout-receipt .cr-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .cashout-receipt .cr-actions a,
 .cashout-receipt .cr-actions button{
-  flex:1;min-width:120px;text-align:center;padding:10px 12px;border-radius:10px;
-  font-size:12.5px;font-weight:800;text-decoration:none;cursor:pointer;border:0;
+  flex:0 1 auto;min-width:0;text-align:center;padding:7px 10px;border-radius:9px;
+  font-size:11.5px;font-weight:800;text-decoration:none;cursor:pointer;border:0;
   font-family:inherit;line-height:1.2
 }
 .cashout-receipt .cr-actions a{background:var(--ink);color:#fff}
 .cashout-receipt .cr-actions button{background:var(--wash);color:var(--ink);border:1px solid var(--line)}
+.cashout-receipt .cr-actions a[hidden]{display:none!important}
 .receipt-bits{display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
 .receipt-bits .rb-row{
   display:flex;justify-content:space-between;align-items:center;gap:10px;
@@ -219,11 +234,41 @@ nav::-webkit-scrollbar{display:none}
 .round-hist-row{
   display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center;
   background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+  cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit;
+  transition:border-color .15s, background .15s, transform .12s;
+  -webkit-tap-highlight-color:transparent;
 }
+.round-hist-row:hover,.round-hist-row:focus-visible{
+  border-color:var(--teal-2);background:#fff;outline:none;
+}
+.round-hist-row:active{transform:scale(.99)}
 .round-hist-row .rh-rank{font-size:11px;font-weight:800;color:var(--soft);min-width:22px}
 .round-hist-row .rh-mult{font-family:'Archivo Black',sans-serif;font-size:18px;letter-spacing:-.5px}
 .round-hist-row .rh-meta{font-size:11px;font-weight:600;color:var(--mid);text-align:right}
 .round-hist-row .rh-id{font-size:10px;font-weight:700;color:var(--soft);grid-column:1 / -1}
+.round-hist-row .rh-tap{font-size:10px;font-weight:700;color:var(--teal);grid-column:1 / -1}
+.round-hist-row.voided{opacity:.85}
+/* Round detail / verify card */
+.rh-detail-rows{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px}
+.rh-detail-row{
+  display:flex;flex-direction:column;gap:3px;
+  background:var(--wash);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+}
+.rh-detail-row .rd-lab{font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--soft)}
+.rh-detail-row .rd-val{
+  font-size:12px;font-weight:600;color:var(--ink);word-break:break-all;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.35;
+}
+.rh-detail-row .rd-val.plain{font-family:inherit;font-size:13px}
+.rh-detail-row a.rd-val{color:var(--teal);font-weight:800;text-decoration:none}
+.rh-detail-row a.rd-val:hover{text-decoration:underline}
+.rh-verify-status{
+  margin:10px 0 4px;padding:10px 12px;border-radius:12px;font-size:12px;font-weight:700;
+  background:var(--wash);border:1px solid var(--line);color:var(--mid);line-height:1.4;
+}
+.rh-verify-status.ok{background:#ECFDF3;border-color:rgba(20,190,92,.35);color:#047857}
+.rh-verify-status.bad{background:#FEF2F2;border-color:rgba(232,58,46,.3);color:#B31D38}
+.rh-detail-actions{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 @keyframes prevIn{from{opacity:0;transform:translateY(6px) scale(.9)}}
 
 .fly-overlay{position:absolute;left:0;right:0;top:22%;z-index:15;display:none;pointer-events:none;text-align:center}
@@ -508,16 +553,27 @@ nav::-webkit-scrollbar{display:none}
 /* modals */
 .modal-bg{position:fixed;inset:0;background:rgba(15,22,38,.55);z-index:100;display:none;align-items:center;justify-content:center;padding:max(16px, env(safe-area-inset-top,0px)) 16px max(16px, env(safe-area-inset-bottom,0px))}
 .modal-bg.show{display:flex}
+/* Stacked modals: bank sheet 100 · round hist 100 · detail cards above */
+#txDetailBg{z-index:130}
+#roundDetailBg{z-index:140}
 .modal{background:#fff;border-radius:20px;width:100%;max-width:420px;max-height:min(88vh,640px);overflow-y:auto;padding:22px 18px 18px;box-shadow:0 16px 48px rgba(0,0,0,.22);animation:modalIn .35s cubic-bezier(.2,1.1,.4,1)}
 @keyframes modalIn{from{transform:translateY(12px) scale(.96);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
 .onboard-panel{display:none}
 .onboard-panel.on{display:block}
-.onboard-dots{display:flex;justify-content:center;gap:8px;margin:16px 0 4px}
-.onboard-dots i{
-  width:8px;height:8px;border-radius:50%;background:var(--line);
-  display:block;transition:background .2s,transform .2s;
+.onboard-dots{
+  display:flex;justify-content:center;align-items:center;gap:10px;
+  margin:18px 0 0;padding:4px 0;
 }
-.onboard-dots i.on{background:var(--ink);transform:scale(1.15)}
+.onboard-dots button.dot{
+  width:12px;height:12px;min-width:12px;min-height:12px;padding:0;border:none;
+  border-radius:50%;background:var(--line);cursor:pointer;
+  display:block;transition:background .2s,transform .2s,box-shadow .2s;
+  -webkit-tap-highlight-color:transparent;
+}
+.onboard-dots button.dot:hover{background:#C5CAD8;transform:scale(1.12)}
+.onboard-dots button.dot:focus-visible{outline:2px solid var(--teal-2);outline-offset:3px}
+.onboard-dots button.dot.on{background:var(--ink);transform:scale(1.2);box-shadow:0 0 0 3px rgba(15,22,38,.1)}
+#onboardGo{margin-top:22px}
 /* Floating FABs — vertically draggable on mobile so they don't block the game */
 .help-fab{
   position:fixed;left:14px;top:38%;z-index:40;
@@ -878,6 +934,58 @@ button:focus:not(:focus-visible){outline:none}
 @media(max-width:520px){
   .free-daily-btn{height:32px;padding:0 8px;font-size:10px}
 }
+
+/* Site footer */
+.site-footer{
+  max-width:720px;width:100%;margin:8px auto 0;padding:22px 16px calc(28px + var(--safe-b));
+  border-top:1px solid var(--line);box-sizing:border-box;
+}
+.site-footer-inner{
+  display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px 24px;
+}
+.site-footer-brand{
+  font-family:'Archivo Black',sans-serif;font-size:14px;letter-spacing:-.3px;color:var(--ink);opacity:.9;
+}
+.site-footer-brand em{font-style:normal;color:var(--teal-2)}
+.site-footer-meta{margin-top:6px;font-size:11px;font-weight:600;color:var(--mid);line-height:1.4;max-width:34ch}
+.site-footer-nav{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.site-footer-nav a{
+  font-size:12px;font-weight:700;color:var(--navy);text-decoration:none;
+  padding:6px 0;border-bottom:2px solid transparent;
+}
+.site-footer-nav a:hover{color:var(--teal);border-bottom-color:rgba(23,161,139,.35)}
+.site-footer-nav a.docs-link{color:var(--teal)}
+.site-footer-copy{
+  margin-top:16px;padding-top:14px;border-top:1px solid var(--line);
+  font-size:10.5px;line-height:1.45;color:var(--mid);font-weight:500;text-align:left;
+}
+@media(max-width:520px){
+  .site-footer{padding:18px 12px calc(22px + var(--safe-b))}
+  .site-footer-nav{gap:6px 12px}
+  .site-footer-nav a{font-size:11px}
+}
+
+/* In-app toasts (never use browser alert for UX copy) */
+.mp-toast-host{
+  position:fixed;left:50%;bottom:calc(18px + var(--safe-b));transform:translateX(-50%);
+  z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;
+  width:min(420px, calc(100% - 24px));pointer-events:none;
+}
+.mp-toast{
+  pointer-events:auto;width:100%;padding:12px 14px;border-radius:14px;
+  background:rgba(15,22,38,.94);color:#fff;font-size:13px;font-weight:600;line-height:1.4;
+  box-shadow:0 12px 32px rgba(15,22,38,.28);border:1px solid rgba(255,255,255,.08);
+  animation:mpToastIn .22s ease both;
+}
+.mp-toast.ok{background:linear-gradient(180deg,#0E6F62,#0B5A50)}
+.mp-toast.err{background:linear-gradient(180deg,#B31D38,#8F1730)}
+.mp-toast.info{background:rgba(15,22,38,.94)}
+@keyframes mpToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.lb-empty td{opacity:.55}
+.lb-hint{
+  text-align:center;color:var(--mid);font-size:12px;font-weight:600;line-height:1.45;
+  padding:10px 12px 4px;
+}
 </style>
 </head>
 <body>
@@ -908,6 +1016,7 @@ button:focus:not(:focus-visible){outline:none}
       <button class="tab" data-page="tickets">Tickets</button>
       <button class="tab" data-page="board">Board</button>
       <button class="tab" data-page="winnings">Winnings</button>
+      <a class="tab docs-tab" href="https://oluseyix.gitbook.io/megapush" target="_blank" rel="noopener noreferrer" title="MegaPush documentation">Docs</a>
     </nav>
   </div>
   <div class="right">
@@ -935,7 +1044,7 @@ button:focus:not(:focus-visible){outline:none}
   <div class="page on" id="page-play">
     <div class="mega">
       <div class="lab">Megapot prize pool</div>
-      <div class="fig" id="potFig">—</div>
+      <div class="fig" id="potFig">$1.10M</div>
       <div class="stub">
         <div class="c">LAST DRAW</div>
         <div class="n"><span>18</span><span>21</span><span>23</span><span>25</span><span>28</span></div>
@@ -971,34 +1080,12 @@ button:focus:not(:focus-visible){outline:none}
 
     <div class="shell">
       <div class="bets" id="bets"></div>
-      <div class="cashout-receipt" id="cashoutReceipt" hidden>
-        <div class="cr-top">
-          <div>
-            <div class="cr-title" id="crTitle"><b>+0 tickets</b> locked in</div>
-            <div class="cr-sub" id="crSub">Cashed out successfully</div>
-          </div>
-          <button type="button" class="cr-x" id="crClose" aria-label="Dismiss">×</button>
-        </div>
-        <div class="cr-meta">
-          <div>Draw in <b id="crDraw">—</b></div>
-          <div><span id="crMultLabel"></span></div>
-        </div>
-        <div class="cr-actions">
-          <a id="crTx" href="#" target="_blank" rel="noopener noreferrer">View transaction</a>
-          <button type="button" id="crTixBtn">My tickets</button>
-        </div>
-      </div>
     </div>
   </div>
 
   <!-- TICKETS -->
   <div class="page" id="page-tickets">
-    <div class="card" id="claimCard">
-      <div class="card-lab" id="claimLab">Unclaimed wins</div>
-      <div class="card-val" id="claimVal">—</div>
-      <div class="card-sub" id="claimSub">Connect wallet to load wins</div>
-      <button class="go" style="margin-top:10px;display:none" type="button" id="claimAll">Claim all</button>
-    </div>
+    <!-- Unclaimed wins card removed — lottery claims happen on Megapot / chain, not here -->
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
@@ -1064,7 +1151,7 @@ button:focus:not(:focus-visible){outline:none}
     <div class="card">
       <div class="card-lab">Your lottery winnings</div>
       <div class="card-val" id="wdAvail">—</div>
-      <div class="card-sub" id="wdSub">Unclaimed Megapot wins · connect wallet to load</div>
+      <div class="card-sub" id="wdSub">Megapot lottery wins · connect wallet to load</div>
       <button class="go" style="margin-top:12px;display:none" type="button" id="wdClaimBtn">Go to Tickets to claim</button>
     </div>
 
@@ -1139,7 +1226,7 @@ button:focus:not(:focus-visible){outline:none}
       <div class="bh-hist-head">
         <strong>Transaction history</strong>
       </div>
-      <p style="font-size:11px;color:var(--mid);font-weight:600;margin:0 0 8px">Tap a row to open that transaction on BaseScan</p>
+      <p style="font-size:11px;color:var(--mid);font-weight:600;margin:0 0 8px">Tap a row to open the deposit card</p>
       <div class="bh-hist-list" id="bankHistoryList">
         <div class="bh-empty">Connect wallet to see deposits &amp; withdrawals</div>
       </div>
@@ -1147,15 +1234,16 @@ button:focus:not(:focus-visible){outline:none}
   </div>
 </div>
 
-<!-- Transaction history detail (internal / no hash only) -->
+<!-- Transaction history detail card (in-app — Basescan only via optional button) -->
 <div class="modal-bg" id="txDetailBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="txDetailTitle">
     <h2 id="txDetailTitle">Transaction</h2>
     <p id="txDetailSub">Play balance activity</p>
     <div class="tx-detail-rows" id="txDetailRows"></div>
     <div class="tx-detail-actions">
-      <a class="go" id="txDetailBaseScan" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">View this transaction on BaseScan ↗</a>
-      <button type="button" class="go secondary" id="txDetailClose">Close</button>
+      <button type="button" class="go" id="txDetailClose">Done</button>
+      <button type="button" class="go secondary" id="txDetailCopyHash" style="display:none">Copy tx hash</button>
+      <a class="go secondary" id="txDetailBaseScan" href="#" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none;display:none">View on Base ↗</a>
     </div>
   </div>
 </div>
@@ -1184,15 +1272,6 @@ button:focus:not(:focus-visible){outline:none}
       </div>
     </div>
     <div class="onboard-panel" data-step="1" id="onboardStep1">
-      <h2>Free daily $1</h2>
-      <p>Once every 24 hours claim <b>$1 free play balance</b> to stake. Not a free lottery ticket — stake the $1, bank for tickets into today's Megapot draw. Free $1 is <b>not withdrawable</b>.</p>
-      <div class="steps">
-        <div class="step"><n>1</n><div>Connect your wallet<small>Base Sepolia</small></div></div>
-        <div class="step"><n>2</n><div>Tap <b>Free daily</b><small>Play balance +$1</small></div></div>
-        <div class="step"><n>3</n><div>Stake $1 &amp; bank for tickets<small>Resets 24 hours after each claim</small></div></div>
-      </div>
-    </div>
-    <div class="onboard-panel" data-step="2" id="onboardStep2">
       <h2>How winning works</h2>
       <p>Your tickets are real Megapot entries in the same daily draw. MegaPush does not run the lottery.</p>
       <div class="steps">
@@ -1201,9 +1280,23 @@ button:focus:not(:focus-visible){outline:none}
         <div class="step"><n>3</n><div>Claim USDC on-chain<small>Same claim on megapot.io or Basescan</small></div></div>
       </div>
       <p style="font-size:11px;color:var(--mid);margin-top:12px;line-height:1.4">MegaPush is an independent app on the Megapot protocol. It is not operated or endorsed by Megapot.</p>
+      <p style="font-size:12px;margin-top:10px;line-height:1.4">
+        <a href="https://oluseyix.gitbook.io/megapush" target="_blank" rel="noopener noreferrer" style="color:var(--teal);font-weight:800;text-decoration:none">Full docs &amp; provably fair ↗</a>
+      </p>
     </div>
-    <div class="onboard-dots" id="onboardDots" aria-hidden="true">
-      <i class="on" data-dot="0"></i><i data-dot="1"></i><i data-dot="2"></i>
+    <div class="onboard-panel" data-step="2" id="onboardStep2">
+      <h2>Free daily $1</h2>
+      <p>Claim <b>$1 free play balance</b> once a day. Stake it to play — not withdrawable.</p>
+      <div class="steps">
+        <div class="step"><n>1</n><div>Connect your wallet<small>Base Sepolia</small></div></div>
+        <div class="step"><n>2</n><div>Tap <b>Free daily</b><small>Play balance +$1</small></div></div>
+        <div class="step"><n>3</n><div>Stake $1 &amp; bank for tickets<small>Resets 24 hours after each claim</small></div></div>
+      </div>
+    </div>
+    <div class="onboard-dots" id="onboardDots" role="tablist" aria-label="FAQ pages">
+      <button type="button" class="dot on" data-dot="0" role="tab" aria-label="How MegaPush works" aria-selected="true"></button>
+      <button type="button" class="dot" data-dot="1" role="tab" aria-label="How winning works" aria-selected="false"></button>
+      <button type="button" class="dot" data-dot="2" role="tab" aria-label="Free daily $1" aria-selected="false"></button>
     </div>
     <button type="button" class="go" id="onboardGo">Next</button>
   </div>
@@ -1220,7 +1313,7 @@ button:focus:not(:focus-visible){outline:none}
       <div class="step"><n>3</n><div>Come back tomorrow<small>One claim per wallet every 24 hours</small></div></div>
     </div>
     <p style="font-size:12px;color:var(--mid);line-height:1.4;margin-bottom:14px">
-      Free $1 is for <b>staking only</b> — you cannot withdraw it as USDC. Limit: 1 per wallet per day (server-enforced).
+      Free $1 is for staking only — not withdrawable. One claim per day.
     </p>
     <div id="freeDailyCardStatus" class="bank-status" role="status" style="margin-bottom:10px"></div>
     <button type="button" class="go" id="freeDailyClaimBtn">Claim $1 play balance</button>
@@ -1235,11 +1328,38 @@ button:focus:not(:focus-visible){outline:none}
 <div class="modal-bg" id="roundHistBg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="roundHistTitle">
     <h2 id="roundHistTitle">Round history</h2>
-    <p>Last 20 global crashes · same for everyone</p>
+    <p>Last 20 crashes · tap to verify</p>
     <div class="round-hist-list" id="roundHistList">
       <div class="bh-empty">Loading rounds…</div>
     </div>
     <button type="button" class="go secondary" id="roundHistClose" style="margin-top:14px">Close</button>
+  </div>
+</div>
+
+<!-- Disconnect confirm -->
+<div class="modal-bg" id="logoutBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="logoutTitle">
+    <h2 id="logoutTitle">Disconnect wallet?</h2>
+    <p id="logoutSub">You’ll need to connect again to stake, claim free daily, or cash out.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+      <button type="button" class="go" id="logoutConfirm" style="background:var(--red,#E83A2E)">Yes, disconnect</button>
+      <button type="button" class="go secondary" id="logoutCancel">Stay connected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Round detail / verify card -->
+<div class="modal-bg" id="roundDetailBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="roundDetailTitle">
+    <h2 id="roundDetailTitle">Round</h2>
+    <p id="roundDetailSub" style="margin-bottom:4px"></p>
+    <div class="rh-detail-rows" id="roundDetailRows"></div>
+    <div class="rh-verify-status" id="roundDetailVerify">Verified</div>
+    <div class="rh-detail-actions">
+      <button type="button" class="go" id="roundDetailVerifyBtn">Verify</button>
+      <a class="go secondary" id="roundDetailBlockLink" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none;display:none">View on Base ↗</a>
+      <button type="button" class="go secondary" id="roundDetailBack">Back</button>
+    </div>
   </div>
 </div>
 
@@ -1251,7 +1371,7 @@ button:focus:not(:focus-visible){outline:none}
     <div class="preview-tix" id="previewTix"></div>
     <div class="receipt-bits" id="previewReceipt">
       <div class="rb-row"><span>Draw in</span><b id="previewDrawTime">—</b></div>
-      <div class="rb-row" id="previewTxRow" hidden><span>Transaction</span><a id="previewTx" href="#" target="_blank" rel="noopener noreferrer">View on Basescan ↗</a></div>
+      <div class="rb-row" id="previewTxRow" hidden><span>Transaction</span><a id="previewTx" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer">View on Base ↗</a></div>
     </div>
     <button type="button" class="go" id="previewOk">Nice</button>
     <button type="button" class="go secondary" id="previewViewTix">View my tickets</button>
@@ -1277,9 +1397,15 @@ button:focus:not(:focus-visible){outline:none}
 function resolveApiBase(){
   try{
     const q = new URLSearchParams(location.search).get('api');
-    if(!q || q === 'same' || q === 'local') return '';
-    return String(q).replace(/\/$/,'');
-  }catch(_){ return ''; }
+    if(q === 'same' || q === 'local') return '';
+    if(q) return String(q).replace(/\/$/,'');
+    // Pages static host → full Worker API (fairness DO + bank + cashout)
+    const h = String(location.hostname || '');
+    if(h === 'megapush.pages.dev' || h.endsWith('.megapush.pages.dev')){
+      return 'https://megapush.xnoxseyi.workers.dev';
+    }
+  }catch(_){}
+  return '';
 }
 const API_BASE = resolveApiBase();
 function apiUrl(path){
@@ -1293,6 +1419,104 @@ window.resolveApiBase = resolveApiBase;
 (function(){
 const $=id=>document.getElementById(id);
 let actx=null;
+
+/** Instant prize pool: HTML seed + server inject + localStorage, then same-origin /api/pot. */
+const MEGAPOT_API = 'https://api.megapot.io/v1';
+const POT_CACHE_KEY = 'mp_pot_display_v1';
+const POT_PLACEHOLDERS = new Set(['', '—', '…', '...', '–']);
+function paintPotText(text){
+  const el = $('potFig');
+  if(!el || !text) return;
+  const t = String(text).trim();
+  if(!t || POT_PLACEHOLDERS.has(t)) return;
+  el.textContent = t;
+  el.removeAttribute('data-pot-loading');
+  window.__mpPotPainted = t;
+}
+function paintCachedPot(){
+  // 1) Server-injected bootstrap (Worker HTMLRewriter) — instant even on first visit
+  if(window.__mpPotPainted){ paintPotText(window.__mpPotPainted); }
+  // 2) localStorage from prior visits
+  try{
+    const raw = localStorage.getItem(POT_CACHE_KEY);
+    if(raw){
+      const j = JSON.parse(raw);
+      if(j && j.text){ paintPotText(j.text); return true; }
+    }
+  }catch(_){}
+  // 3) Keep HTML seed ($1.10M etc.) — never wipe to "—"
+  const el = $('potFig');
+  if(el && el.textContent && !POT_PLACEHOLDERS.has(el.textContent.trim())){
+    window.__mpPotPainted = el.textContent.trim();
+    return true;
+  }
+  return !!window.__mpPotPainted;
+}
+function saveCachedPot(text){
+  try{
+    const t = text && String(text).trim();
+    if(t && !POT_PLACEHOLDERS.has(t)){
+      localStorage.setItem(POT_CACHE_KEY, JSON.stringify({ text: t, at: Date.now() }));
+    }
+  }catch(_){}
+}
+function fmtPotUsdFromRaw(amountStr, decimals){
+  try{
+    let s = String(amountStr || '0').replace(/[^\d]/g,'');
+    if(!s) return null;
+    const dec = Number(decimals);
+    const d = Number.isFinite(dec) && dec >= 0 ? dec : 6;
+    if(s.length <= d) s = s.padStart(d + 1, '0');
+    const whole = s.slice(0, s.length - d) || '0';
+    const n = Number(whole);
+    if(!Number.isFinite(n) || n <= 0) return null;
+    if(n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+    if(n >= 1000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    return '$' + n.toFixed(2);
+  }catch(_){ return null; }
+}
+function applyPotPayload(j){
+  if(!j) return false;
+  let text = j.text || null;
+  if(!text && (j.prize_pool || j.prizePool || j.amount)){
+    const amt = j.prize_pool?.amount || j.prizePool?.amount || j.amount;
+    const dec = j.prize_pool?.decimals ?? j.prizePool?.decimals ?? j.decimals ?? 6;
+    text = fmtPotUsdFromRaw(amt, dec);
+  }
+  if(text){ paintPotText(text); saveCachedPot(text); }
+  const ended = j.drawEndsAt || j.ended_at || j.endedAt || j.drawing_time || j.drawingTime;
+  if(ended != null){
+    const ms = typeof ended === 'number' ? (ended < 1e12 ? ended * 1000 : ended) : Date.parse(ended);
+    if(Number.isFinite(ms)) window.__mpDrawEndsAtEarly = ms;
+  }
+  return !!text;
+}
+// Paint seed/cache/bootstrap synchronously before any await (no "—" flash)
+paintCachedPot();
+// Same-origin edge cache first (~ms), then Megapot as fallback
+(function earlyLoadPot(){
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const t = ctrl ? setTimeout(() => { try{ ctrl.abort(); }catch(_){} }, 8000) : null;
+  const signal = ctrl ? ctrl.signal : undefined;
+  const done = () => { if(t) clearTimeout(t); };
+  const potUrl = (typeof window.apiUrl === 'function' ? window.apiUrl('/api/pot') : '/api/pot');
+  fetch(potUrl, { cache: 'default', signal })
+    .then(r => r.ok ? r.json() : null)
+    .then(j => {
+      if(applyPotPayload(j)) return null;
+      return fetch(MEGAPOT_API + '/rounds/active', { cache: 'no-store', signal })
+        .then(r => r.ok ? r.json() : null)
+        .then(applyPotPayload);
+    })
+    .catch(() => {
+      return fetch(MEGAPOT_API + '/rounds/active', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(applyPotPayload)
+        .catch(()=>{});
+    })
+    .finally(done);
+})();
+
 /** Sound on by default; remember mute preference. */
 let soundOn = true;
 try{
@@ -1487,9 +1711,10 @@ window.MegaPushUI = {
     renderTickets();
   },
   bumpTickets(n){
-    const add = Math.max(0, Math.floor(Number(n) || 0));
-    if(add <= 0) return ticketCount;
-    ticketCount = (ticketCount || 0) + add;
+    // Allow negative deltas so failed cashouts can reverse optimistic credits
+    const delta = Math.trunc(Number(n) || 0);
+    if(!delta) return ticketCount;
+    ticketCount = Math.max(0, (ticketCount || 0) + delta);
     syncTixUI();
     return ticketCount;
   },
@@ -1547,6 +1772,28 @@ document.querySelectorAll('#pastFilter button').forEach(btn=>{
 /* ── Live leaderboard (Today / Week / Month) — privacy-first ── */
 let lbPeriod = 'today';
 let lbLoading = false;
+const LB_TOP_N = 10;
+
+function showToast(msg, kind){
+  const host = document.getElementById('toastHost');
+  if(!host){
+    try{ console.warn('[toast]', msg); }catch(_){}
+    return;
+  }
+  const el = document.createElement('div');
+  el.className = 'mp-toast ' + (kind === 'ok' || kind === 'err' || kind === 'info' ? kind : 'info');
+  el.setAttribute('role', 'status');
+  el.textContent = String(msg || '');
+  host.appendChild(el);
+  setTimeout(()=>{
+    try{
+      el.style.opacity = '0';
+      el.style.transition = 'opacity .25s';
+      setTimeout(()=> el.remove(), 280);
+    }catch(_){ try{ el.remove(); }catch(__){} }
+  }, 3200);
+}
+window.showToast = showToast;
 
 function lbPeriodLabel(p){
   if(p==='week') return 'This week';
@@ -1563,7 +1810,7 @@ async function refreshLeaderboard(){
     const player = (window.Megapot && window.Megapot.account) || '';
     const q = new URLSearchParams({
       period: lbPeriod,
-      limit: '20',
+      limit: String(LB_TOP_N),
       tzOffset: String(new Date().getTimezoneOffset()),
     });
     if(player) q.set('player', player);
@@ -1578,51 +1825,75 @@ async function refreshLeaderboard(){
     const topMult = $('lbTopMult');
     const topSub = $('lbTopSub');
     const nPlayers = Number(j.players || 0);
-    if(j.top && j.top.mult > 0){
-      if(topMult) topMult.textContent = Number(j.top.mult).toFixed(2)+'×';
+    const loggedIn = !!player;
+    const cap = Number(j.maxMult) > 0 ? Number(j.maxMult) : 50;
+    const topM = j.top && Number(j.top.mult) > 1 && Number(j.top.mult) <= cap + 1e-9
+      ? Number(j.top.mult)
+      : 0;
+    if(topM > 0){
+      if(topMult) topMult.textContent = topM.toFixed(2)+'×';
       if(topSub){
         topSub.textContent = nPlayers
-          ? (nPlayers+' pilot'+(nPlayers===1?'':'s')+' · '+lbPeriodLabel(j.period || lbPeriod).toLowerCase())
+          ? (nPlayers+' pilot'+(nPlayers===1?'':'s')+' · best cash-out · '+lbPeriodLabel(j.period || lbPeriod).toLowerCase())
           : lbPeriodLabel(j.period || lbPeriod);
       }
     }else{
       if(topMult) topMult.textContent = '—';
-      if(topSub) topSub.textContent = 'No scores for '+lbPeriodLabel(j.period || lbPeriod).toLowerCase()+' yet';
+      if(topSub){
+        topSub.textContent = loggedIn
+          ? 'No cash-outs yet · bank a climb to place'
+          : 'Best cash-out this period · connect to track your rank';
+      }
     }
 
-    const rows = Array.isArray(j.rows) ? j.rows : [];
+    // Only real pilots (no empty 6–10 dash rows). Cap shown mult to payout ceiling.
+    const maxMult = Number(j.maxMult) > 0 ? Number(j.maxMult) : 50;
+    const rows = (Array.isArray(j.rows) ? j.rows : [])
+      .filter(r => Number(r.highest) > 1 && Number(r.highest) <= maxMult + 1e-9)
+      .slice(0, LB_TOP_N);
     const you = j.you;
     const lines = [];
 
     if(!rows.length){
-      // Empty board — do not pin a blank YOU row (looked like "YOU You —")
       lines.push(
-        '<tr><td colspan="3" style="text-align:center;color:var(--mid);padding:18px 8px;font-size:13px;line-height:1.45">'+
-        'No cash-outs on the board for '+lbPeriodLabel(lbPeriod).toLowerCase()+' yet.<br>'+
-        '<span style="font-weight:600;opacity:.9">Bank a climb to place a score.</span>'+
-        '</td></tr>'
+        '<tr><td colspan="3"><div class="lb-hint">'+
+        (loggedIn
+          ? 'No cash-outs this period yet. Bank a climb to take the board.'
+          : 'No cash-outs this period yet. Climb and bank tickets — connect to track your rank.')+
+        '</div></td></tr>'
       );
     }else{
       for(const row of rows){
         const isYou = !!row.isYou;
         const name = isYou ? 'You' : (row.handle || 'Pilot');
+        const hi = Math.min(maxMult, Number(row.highest) || 0);
         lines.push(
           `<tr class="${isYou?'you':''}">`+
           `<td class="rk">${isYou?'YOU':row.rank}</td>`+
           `<td>${name}</td>`+
-          `<td class="num">${Number(row.highest).toFixed(2)}×</td></tr>`
+          `<td class="num">${hi.toFixed(2)}×</td></tr>`
         );
       }
     }
 
-    // YOU row only when connected AND you have a score this period but aren't in top rows
-    const youScore = you && Number(you.highest) > 0 ? Number(you.highest) : 0;
-    if(you && you.isYou && youScore > 0 && !rows.some(r => r.isYou)){
+    // YOU row when connected with a real score outside the listed top
+    const youScore = you && Number(you.highest) > 1 && Number(you.highest) <= maxMult + 1e-9
+      ? Math.min(maxMult, Number(you.highest))
+      : 0;
+    if(loggedIn && you && you.isYou && youScore > 0 && !rows.some(r => r.isYou)){
       lines.push(
         `<tr class="you">`+
         `<td class="rk">${you.rank != null ? you.rank : 'YOU'}</td>`+
         `<td>You</td>`+
         `<td class="num">${youScore.toFixed(2)}×</td></tr>`
+      );
+    }else if(loggedIn && you && you.isYou && !(youScore > 0) && rows.length){
+      // Connected, no score this period — show YOU under the list only if board has others
+      lines.push(
+        `<tr class="you">`+
+        `<td class="rk">YOU</td>`+
+        `<td>You</td>`+
+        `<td class="num">—</td></tr>`
       );
     }
 
@@ -1653,13 +1924,15 @@ document.querySelectorAll('#lbPeriod button').forEach(btn=>{
 /** Best-effort client-side score post (server also records on cashout). */
 async function postLeaderboardScore({ player, multiplier, tickets, entryId } = {}){
   try{
-    if(!player || !(Number(multiplier) > 0)) return;
+    const mult = Number(multiplier);
+    // Only cash-out mult (not crash point). Cap matches server MAX_PAYOUT_MULT.
+    if(!player || !(mult > 1) || !Number.isFinite(mult) || mult > 50) return;
     await fetch(apiUrl('/api/leaderboard'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         player,
-        multiplier: Number(multiplier),
+        multiplier: mult,
         tickets: Math.max(0, Math.floor(Number(tickets)||0)),
         entryId: entryId || undefined,
         at: Date.now(),
@@ -1779,19 +2052,146 @@ function renderRoundHistoryList(rounds){
     return;
   }
   el.innerHTML=list.map((r,i)=>{
+    const voided=!!r.voided;
     const mult=Number(r.crashMult!=null?r.crashMult:r.mult)||0;
-    const color=multColor(mult);
+    const color=voided?'var(--mid)':multColor(mult);
     const when=fmtRoundTime(r.crashAt||r.at);
     const rid=r.roundId!=null?String(r.roundId):'—';
     return (
-      '<div class="round-hist-row">'+
+      '<button type="button" class="round-hist-row'+(voided?' voided':'')+'" data-hist-idx="'+i+'" aria-label="Open round '+rid+' details">'+
         '<div class="rh-rank">#'+(i+1)+'</div>'+
-        '<div class="rh-mult" style="color:'+color+'">'+mult.toFixed(2)+'×</div>'+
+        '<div class="rh-mult" style="color:'+color+'">'+(voided?'VOID':(mult.toFixed(2)+'×'))+'</div>'+
         '<div class="rh-meta">'+when+'</div>'+
-        '<div class="rh-id">Round '+rid+(r.hand!=null?' · hand '+r.hand:'')+'</div>'+
-      '</div>'
+        '<div class="rh-id">Round '+rid+(r.hand!=null?' · hand '+r.hand:'')+(voided?' · voided':'')+'</div>'+
+        '<div class="rh-tap">Tap to verify →</div>'+
+      '</button>'
     );
   }).join('');
+}
+
+let roundDetailCurrent=null;
+
+function shortHex(h, n){
+  const s=String(h||'');
+  if(!s || s==='—') return '—';
+  const keep=n!=null?n:10;
+  if(s.length<=keep*2+2) return s;
+  return s.slice(0, keep+2)+'…'+s.slice(-keep);
+}
+function openRoundDetail(r){
+  if(!r) return;
+  roundDetailCurrent=r;
+  const voided=!!r.voided;
+  const mult=Number(r.crashMult!=null?r.crashMult:r.mult);
+  const rid=r.roundId!=null?String(r.roundId):'—';
+  const tb=r.targetBlock!=null?String(r.targetBlock):'';
+  const seed=r.serverSeed?String(r.serverSeed):'';
+  const seedH=r.serverSeedHash?String(r.serverSeedHash):'';
+  const blockHash=r.blockHash?String(r.blockHash):'';
+  const blockUrl=tb?('https://sepolia.basescan.org/block/'+encodeURIComponent(tb)):'';
+  const hand=r.hand!=null?String(r.hand):(r.slotId!=null?String(r.slotId):'');
+
+  if($('roundDetailTitle')){
+    $('roundDetailTitle').textContent = voided
+      ? ('Round '+rid+' · VOID')
+      : ('Round '+rid+(Number.isFinite(mult)?' · '+mult.toFixed(2)+'×':''));
+  }
+  if($('roundDetailSub')){
+    $('roundDetailSub').textContent = fmtRoundTime(r.crashAt||r.at)+(voided?' · voided':' · tap Verify to check fairness');
+  }
+
+  // Full detail rows so the card is useful (not just title + buttons)
+  const rows=[];
+  rows.push(['Crash mult', voided ? 'VOID' : (Number.isFinite(mult) ? mult.toFixed(2)+'×' : '—')]);
+  rows.push(['Time', fmtRoundTime(r.crashAt||r.at)]);
+  if(hand) rows.push(['Hand', hand]);
+  if(tb) rows.push(['Target block', tb]);
+  if(blockHash) rows.push(['Block hash', shortHex(blockHash, 8)]);
+  if(seedH) rows.push(['Server seed hash', shortHex(seedH, 8)]);
+  if(seed) rows.push(['Server seed (reveal)', shortHex(seed, 8)]);
+  if(r.voidReason) rows.push(['Void reason', String(r.voidReason)]);
+  const host=$('roundDetailRows');
+  if(host){
+    host.innerHTML=rows.map(([lab,val])=>{
+      const isLink = lab==='Target block' && blockUrl;
+      if(isLink){
+        return '<div class="rh-detail-row"><div class="rd-lab">'+lab+'</div>'+
+          '<a class="rd-val" href="'+blockUrl+'" target="_blank" rel="noopener noreferrer">'+String(val).replace(/</g,'&lt;')+' ↗</a></div>';
+      }
+      return '<div class="rh-detail-row"><div class="rd-lab">'+lab+'</div>'+
+        '<div class="rd-val'+(lab==='Crash mult'||lab==='Time'?' plain':'')+'">'+String(val).replace(/</g,'&lt;')+'</div></div>';
+    }).join('');
+  }
+
+  const vEl=$('roundDetailVerify');
+  if(vEl){
+    vEl.className='rh-verify-status';
+    vEl.textContent = (seed && seedH) ? 'Checking…' : (voided ? 'Round voided' : 'Missing data for this round');
+  }
+  const blk=$('roundDetailBlockLink');
+  if(blk){
+    if(blockUrl){
+      blk.href=blockUrl;
+      blk.style.display='block';
+      blk.textContent='View on Base ↗';
+    }else{
+      blk.style.display='none';
+    }
+  }
+  const vBtn=$('roundDetailVerifyBtn');
+  if(vBtn){
+    vBtn.disabled=!(seed && seedH);
+    vBtn.textContent=seed && seedH ? 'Verify' : 'Verify unavailable';
+  }
+
+  const bg=$('roundDetailBg');
+  if(bg){
+    bg.classList.add('show');
+    bg.style.zIndex='140';
+  }
+  // Auto-check on open so users see Verified immediately
+  if(seed && seedH){
+    try{ verifyRoundDetail(); }catch(_){}
+  }
+}
+
+function closeRoundDetail(){
+  $('roundDetailBg')?.classList.remove('show');
+  roundDetailCurrent=null;
+}
+
+async function verifyRoundDetail(){
+  const r=roundDetailCurrent;
+  const vEl=$('roundDetailVerify');
+  const vBtn=$('roundDetailVerifyBtn');
+  if(!r || !vEl) return;
+  if(vBtn){ vBtn.disabled=true; vBtn.textContent='Verifying…'; }
+  vEl.className='rh-verify-status';
+  vEl.textContent='Checking…';
+  try{
+    const res = await verifyFairRound({
+      serverSeed: r.serverSeed,
+      serverSeedHash: r.serverSeedHash,
+      crashMult: r.crashMult,
+      targetBlock: r.targetBlock,
+      blockHash: r.blockHash,
+      chainPrevSeed: r.chainPrevSeed,
+      chainHead: r.chainHead,
+      chainIndex: r.chainIndex,
+    });
+    if(res && res.ok){
+      vEl.className='rh-verify-status ok';
+      vEl.textContent='Verified · this round checks out';
+    }else{
+      const err = res?.error || res?.local?.error || res?.server?.error || 'Verification failed';
+      vEl.className='rh-verify-status bad';
+      vEl.textContent=String(err);
+    }
+  }catch(e){
+    vEl.className='rh-verify-status bad';
+    vEl.textContent=e?.message||String(e);
+  }
+  if(vBtn){ vBtn.disabled=false; vBtn.textContent='Verify again'; }
 }
 async function fetchRoundHistory(opts){
   const silent=!!(opts&&opts.silent);
@@ -1856,11 +2256,29 @@ function openRoundHistory(){
 }
 function closeRoundHistory(){
   stopRoundHistoryPoll();
+  closeRoundDetail();
   $('roundHistBg')?.classList.remove('show');
 }
 $('roundHistBtn')?.addEventListener('click', ()=> openRoundHistory());
 $('roundHistClose')?.addEventListener('click', ()=> closeRoundHistory());
 $('roundHistBg')?.addEventListener('click', (e)=>{ if(e.target===$('roundHistBg')) closeRoundHistory(); });
+$('roundHistList')?.addEventListener('click', (e)=>{
+  const row=e.target.closest?.('[data-hist-idx], .round-hist-row');
+  if(!row || !$('roundHistList')?.contains(row)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  let idx=Number(row.getAttribute('data-hist-idx'));
+  if(!Number.isFinite(idx) || idx<0){
+    // Fallback: index among sibling rows
+    const all=[...($('roundHistList').querySelectorAll('.round-hist-row, [data-hist-idx]'))];
+    idx=all.indexOf(row);
+  }
+  const r=roundHistoryCache[idx];
+  if(r) openRoundDetail(r);
+});
+$('roundDetailBack')?.addEventListener('click', ()=> closeRoundDetail());
+$('roundDetailVerifyBtn')?.addEventListener('click', ()=> { verifyRoundDetail(); });
+$('roundDetailBg')?.addEventListener('click', (e)=>{ if(e.target===$('roundDetailBg')) closeRoundDetail(); });
 
 /* megapush-flow2 */
 /* ── Global synchronized multiplier (same everywhere) ── */
@@ -1870,23 +2288,66 @@ let lastPhase=null;
 let lastRoundId=null;
 let globalRaf=null;
 let globalPollTimer=null;
+let globalPollTimerFast=null;
 let crashHandledForRound=null;
 let crashUiUntil=0; // wall-clock: force-clear Flew Away after crash
 let crashShownAt=0;
+/** Monotonic fetch id — ignore out-of-order /api/round responses (stale waiting→1× freeze). */
+let roundFetchSeq=0;
+let roundApplySeq=0;
 
 function serverNow(){ return Date.now() + clockOffset; }
 
+/** Phase rank for stale-packet rejection (higher = later in hand). */
+function phaseRank(ph){
+  switch(ph){
+    case 'intermission': return 0;
+    case 'betting': return 1;
+    case 'waiting': return 2;
+    case 'flying': return 3;
+    case 'crashed': return 4;
+    case 'voided': return 4;
+    default: return 0;
+  }
+}
+
+function isStaleRoundPacket(prev, next){
+  if(!prev || !next) return false;
+  const pr = Number(prev.roundId);
+  const nr = Number(next.roundId);
+  if(Number.isFinite(pr) && Number.isFinite(nr)){
+    if(nr < pr) return true;
+    if(nr > pr) return false;
+  }
+  // Same round: never regress phase (e.g. flying ← waiting from a slow in-flight poll)
+  if(phaseRank(next.phase) < phaseRank(prev.phase)) return true;
+  return false;
+}
+
 async function fetchGlobalRound(){
+  const seq = ++roundFetchSeq;
   try{
     const r=await fetch(apiUrl('/api/round')+'?t='+Date.now(),{cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const j=await r.json();
+    // Drop late responses so a slow "waiting" packet cannot freeze mult at 1×
+    if(seq < roundApplySeq) return globalRound;
+    if(isStaleRoundPacket(globalRound, j)) return globalRound;
+    roundApplySeq = seq;
     if(j && j.serverNow){
       // Snap clock to server (avoid sticky desync that freezes mult)
       clockOffset = j.serverNow - Date.now();
     }
+    // Preserve short-lived client poll flags across replace
+    const prev = globalRound;
     globalRound=j;
-    if(globalRound) globalRound._fetching=false;
+    if(globalRound){
+      globalRound._fetching=false;
+      if(prev){
+        if(prev._lastWaitPoll) globalRound._lastWaitPoll = prev._lastWaitPoll;
+        if(prev._lastFlyPoll) globalRound._lastFlyPoll = prev._lastFlyPoll;
+      }
+    }
     return j;
   }catch(e){
     console.warn('global round', e);
@@ -1904,6 +2365,15 @@ function phaseAt(g, now){
   }
   // Prefer server phase while timestamps still valid
   if(g.phase==='intermission') return 'intermission';
+  if(g.phase==='voided'){
+    if(g.resultEnd!=null && now >= g.resultEnd) return 'intermission';
+    return 'voided';
+  }
+  // Waiting for future Base block entropy after betting closes
+  if(g.phase==='waiting'){
+    if(g.flyStart!=null && now >= g.flyStart) return 'flying';
+    return 'waiting';
+  }
   if(g.phase==='crashed'){
     if(g.resultEnd!=null && now >= g.resultEnd) return 'intermission';
     if(g.crashAt!=null && g.resultMs!=null && now >= g.crashAt + Number(g.resultMs)) return 'intermission';
@@ -1916,6 +2386,8 @@ function phaseAt(g, now){
   }
   if(g.phase==='betting'){
     if(g.flyStart!=null && now >= g.flyStart) return 'flying';
+    // betting window ended but still waiting on entropy (stale phase field)
+    if(g.bettingEndsAt!=null && now >= g.bettingEndsAt && g.flyStart==null) return 'waiting';
     return 'betting';
   }
   // Fallbacks from timestamps
@@ -1925,13 +2397,14 @@ function phaseAt(g, now){
   }
   if(g.flyStart!=null && now >= g.flyStart) return 'flying';
   if(g.bettingEndsAt!=null && now < g.bettingEndsAt) return 'betting';
+  if(g.bettingEndsAt!=null && now >= g.bettingEndsAt && g.flyStart==null) return 'waiting';
   return 'betting';
 }
 
 function multAt(g, now){
   if(!g) return 1;
   const ph = phaseAt(g, now);
-  if(ph==='intermission' || ph==='betting') return 1;
+  if(ph==='intermission' || ph==='betting' || ph==='waiting' || ph==='voided') return 1;
   if(ph==='crashed' && g.crashMult!=null) return Number(g.crashMult);
   const growth=Number(g.growthPerMs)||0.00018;
   if(g.flyStart==null || now < g.flyStart) return 1;
@@ -1946,28 +2419,38 @@ function multAt(g, now){
   return m;
 }
 
-/** Verify commit–reveal: local Web Crypto + optional POST /api/verify */
+/** Verify commit–reveal + optional future-block entropy: local Web Crypto + POST /api/verify */
 async function verifyFairRound(g){
   if(!g || !g.serverSeed || !g.serverSeedHash || g.crashMult==null) return { ok:false, error:'Missing reveal' };
+  const norm = (s)=>String(s||'').replace(/^0x/i,'').toLowerCase();
+  async function sha256Str(s){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(s)));
+    return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function bustabitCrash(entropyHex){
+    const h = norm(entropyHex);
+    const n = parseInt(h.slice(0,13), 16);
+    const e = Math.pow(2,52);
+    if(!Number.isFinite(n)) return 1.01;
+    if(n % 33 === 0) return 1.0;
+    let crash = Math.floor((100*e - n)/(e - n))/100;
+    return Math.min(10000, Math.max(1, Math.round(crash*100)/100));
+  }
   let local = { ok:false };
   try{
-    const data = new TextEncoder().encode(g.serverSeed);
-    const buf = await crypto.subtle.digest('SHA-256', data);
-    const hex = [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-    if(hex !== g.serverSeedHash) local = { ok:false, error:'Seed hash mismatch' };
+    const commitHex = await sha256Str(g.serverSeed);
+    if(norm(commitHex) !== norm(g.serverSeedHash)) local = { ok:false, error:'Seed hash mismatch', commitOk:false };
     else {
-      const h = g.serverSeed.replace(/^0x/,'').toLowerCase();
-      const n = parseInt(h.slice(0,13), 16);
-      const e = Math.pow(2,52);
-      let crash = 1.0;
-      if(n % 33 !== 0){
-        crash = Math.floor((100*e - n)/(e - n))/100;
-        crash = Math.min(10000, Math.max(1, Math.round(crash*100)/100));
+      let material = norm(g.serverSeed);
+      // New path: crash from sha256(serverSeed_hex || blockHash_hex)
+      if(g.blockHash){
+        material = await sha256Str(norm(g.serverSeed) + norm(g.blockHash));
       }
+      const crash = bustabitCrash(material);
       if(Math.abs(crash - Number(g.crashMult)) > 0.015){
-        local = { ok:false, error:'Crash mult mismatch', expected:crash, got:g.crashMult };
+        local = { ok:false, error:'Crash mult mismatch', expected:crash, got:g.crashMult, commitOk:true, crashOk:false };
       } else {
-        local = { ok:true, crash, seedHash:hex };
+        local = { ok:true, crash, seedHash:commitHex, commitOk:true, crashOk:true, entropy: material.slice(0,16)+'…' };
       }
     }
   }catch(e){
@@ -1981,10 +2464,26 @@ async function verifyFairRound(g){
         serverSeed: g.serverSeed,
         serverSeedHash: g.serverSeedHash,
         crashMult: g.crashMult,
+        targetBlock: g.targetBlock,
+        blockHash: g.blockHash,
+        chainPrevSeed: g.chainPrevSeed,
+        chainHead: g.chainHead,
+        chainIndex: g.chainIndex,
       }),
     });
     const j = await r.json();
-    if(j && j.ok) return { ok:true, crash:j.computedCrashMult, seedHash:j.computedHash, server:true, local };
+    if(j && j.ok) return {
+      ok:true,
+      crash:j.computedCrashMult,
+      seedHash:j.computedHash,
+      server:true,
+      commitOk:j.commitOk,
+      blockOk:j.blockOk,
+      crashOk:j.crashOk,
+      chainOk:j.chainOk,
+      local,
+    };
+    if(j) return { ok:false, server:j, local, commitOk:j.commitOk, blockOk:j.blockOk, crashOk:j.crashOk, chainOk:j.chainOk };
   }catch(_){}
   return local;
 }
@@ -2049,11 +2548,11 @@ function paintBet(b){
     }
   }
   if(b.state==='pending'){
-    st.textContent='Confirm…';
+    st.textContent='Placing…';
     go.className='go wait';
     go.disabled=true;
-    go.textContent='Confirm in wallet…';
-    ft.innerHTML='Staking from play balance…';
+    go.textContent='Placing stake…';
+    ft.innerHTML='Using play balance · no wallet popup';
   }
   if(b.state==='queued'){
     st.textContent='Queued';
@@ -2072,18 +2571,21 @@ function paintBet(b){
   if(b.state==='won'){
     const tixEst = ticketsFromStakeMult(b.amt, b.at);
     const tixShow = b.ticketsBought != null ? wholeTickets(b.ticketsBought) : tixEst;
-    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Locking tickets' : 'Cashed out');
+    st.textContent = b.payoutFailed ? 'Payout failed' : (b.payoutPending ? 'Tickets landing' : 'Cashed out');
     go.className='go wait';
     go.disabled=true;
     if(b.payoutFailed){
       go.textContent='Failed';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · stake returned to play balance';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · try again next round';
     }else if(b.payoutPending){
-      go.textContent='…';
-      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · securing your tickets…';
-    }else{
+      go.textContent=tixShow>0?('+'+tixShow+' tickets'):'…';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · tickets landing…';
+    }else if(tixShow > 0){
       go.textContent='+'+tixShow+' tickets';
       ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · tickets locked in';
+    }else{
+      go.textContent='Progress';
+      ft.innerHTML='Cashed at <b>'+(b.at||0).toFixed(2)+'×</b> · remainder to ticket progress';
     }
   }
   if(b.state==='lost'){
@@ -2228,6 +2730,26 @@ function spawnTicketFlight(fromEl, tickets){
 }
 
 const BASESCAN_TX = 'https://sepolia.basescan.org/tx/';
+const BASESCAN_HOME = 'https://sepolia.basescan.org';
+/** Only set real Basescan tx links — never href="#" (that reloads the game). */
+function setBasescanTxLink(el, txHash){
+  if(!el) return false;
+  const h = String(txHash || '').trim();
+  const ok = /^0x[a-fA-F0-9]{64}$/i.test(h);
+  if(ok){
+    el.href = BASESCAN_TX + h;
+    el.target = '_blank';
+    el.rel = 'noopener noreferrer';
+    el.hidden = false;
+    if(el.style) el.style.display = '';
+    return true;
+  }
+  el.href = BASESCAN_HOME;
+  el.hidden = true;
+  if(el.style) el.style.display = 'none';
+  return false;
+}
+window.setBasescanTxLink = setBasescanTxLink;
 
 function goToTicketsPage(){
   const tab = document.querySelector('#nav .tab[data-page="tickets"]');
@@ -2242,6 +2764,8 @@ function goToTicketsPage(){
   try{ window.scrollTo({ top: 0, behavior: 'smooth' }); }catch(_){}
 }
 
+let cashoutReceiptTimer=null;
+
 function showCashoutReceipt({ tickets, at, txHash }){
   const box=$('cashoutReceipt');
   if(!box) return;
@@ -2252,24 +2776,27 @@ function showCashoutReceipt({ tickets, at, txHash }){
   tickDrawTimers();
   const a=$('crTx');
   if(a){
-    if(txHash){
-      a.href = BASESCAN_TX + String(txHash);
-      a.style.display = '';
-      a.textContent = 'View transaction';
-    }else{
-      a.removeAttribute('href');
-      a.style.display = 'none';
-    }
+    setBasescanTxLink(a, txHash);
+    a.textContent = 'View on Base ↗';
   }
   box.hidden = false;
+  // reflow so transition plays when re-shown
+  void box.offsetWidth;
   box.classList.add('show');
+  // Auto-dismiss so it never blocks the next stake
+  if(cashoutReceiptTimer) clearTimeout(cashoutReceiptTimer);
+  cashoutReceiptTimer = setTimeout(()=>hideCashoutReceipt(), 3800);
 }
 
 function hideCashoutReceipt(){
   const box=$('cashoutReceipt');
+  if(cashoutReceiptTimer){ clearTimeout(cashoutReceiptTimer); cashoutReceiptTimer=null; }
   if(!box) return;
   box.classList.remove('show');
-  box.hidden = true;
+  // delay hidden so fade can finish
+  setTimeout(()=>{
+    if(box && !box.classList.contains('show')) box.hidden = true;
+  }, 220);
 }
 
 // Expose for module + external
@@ -2279,194 +2806,206 @@ window.goToTicketsPage = goToTicketsPage;
 window.showCashoutReceipt = showCashoutReceipt;
 window.hideCashoutReceipt = hideCashoutReceipt;
 
+/**
+ * Celebrate cash-out without blocking the screen.
+ * Full modal was interrupting immediate re-bets — use snackbar + toast only.
+ */
 function showTicketPreview(tickets, at, opts){
   opts = opts || {};
   const tixN = wholeTickets(tickets);
-  const samples=[];
-  const show=Math.min(6,tixN);
-  for(let i=0;i<show;i++) samples.push(rndNums());
-  $('previewTitle').textContent='+'+tixN+' tickets';
-  $('previewSub').textContent='Cashed at '+at.toFixed(2)+'× · entering today\'s Megapot draw';
-  $('previewTix').innerHTML=samples.map(s=>`
-    <div class="pt">${s.picks.map(n=>`<span>${pad(n)}</span>`).join('')}<span class="b">${pad(s.bonus)}</span></div>
-  `).join('')+(tixN>show?`<div class="pt">+${tixN-show} more</div>`:'');
-  tickDrawTimers();
-  const txRow=$('previewTxRow');
-  const txA=$('previewTx');
-  if(opts.txHash && txA){
-    txA.href = BASESCAN_TX + String(opts.txHash);
-    if(txRow) txRow.hidden = false;
-  }else if(txRow){
-    txRow.hidden = true;
-  }
-  $('previewBg').classList.add('show');
-  showCashoutReceipt({ tickets: tixN, at, txHash: opts.txHash });
+  const mult = Number(at) || 0;
+  // Keep modal DOM warm for optional later open, but never force it
+  try{
+    if($('previewTitle')) $('previewTitle').textContent='+'+tixN+' tickets';
+    if($('previewSub')) $('previewSub').textContent='Cashed at '+mult.toFixed(2)+'× · entering today\'s Megapot draw';
+  }catch(_){}
+  // Ensure any leftover modal is closed
+  try{ $('previewBg')?.classList.remove('show'); }catch(_){}
+  showCashoutReceipt({ tickets: tixN, at: mult, txHash: opts.txHash });
+  try{
+    showToast(
+      '+'+tixN+' ticket'+(tixN===1?'':'s')+' · '+mult.toFixed(2)+'×',
+      'ok'
+    );
+  }catch(_){}
 }
 
+/** Big wins: quiet toast only — never open a blocking share modal. */
 function maybeShare(at, tickets){
-  if(at<5) return;
-  $('shareMult').textContent=at.toFixed(2)+'×';
-  $('shareSub').textContent='→ '+wholeTickets(tickets)+' tickets into today\'s Megapot';
-  setTimeout(()=>$('shareBg').classList.add('show'),600);
+  if(!(Number(at) >= 5)) return;
+  try{
+    if($('shareMult')) $('shareMult').textContent=Number(at).toFixed(2)+'×';
+    if($('shareSub')) $('shareSub').textContent='→ '+wholeTickets(tickets)+' tickets into today\'s Megapot';
+    // Do not auto-open shareBg — that covers the board mid-session
+  }catch(_){}
 }
 
 async function cashOut(b){
   if(b.state!=='live') return;
-  const at = m;
-  // tickets = floor(stake) × floor(mult) — whole tickets only (no decimal mult credit)
+  if(b._cashoutLock) return;
+  // Freeze mult + clock at click — server uses these with grace so late RTT still pays
+  const at = Number(m) || 1;
+  const clientCashoutAt = Date.now();
+  // Prefer stake's round, then live global round
+  const roundId =
+    b.roundId != null
+      ? b.roundId
+      : globalRound && globalRound.roundId != null
+        ? globalRound.roundId
+        : null;
   let tickets = ticketsFromStakeMult(b.amt, at);
   const player = window.Megapot?.account || null;
   const entryId = b.entryId || ((player || 'local').toLowerCase()+'-'+b.i+'-'+Date.now());
   const stakeAmt = Number(b.amt) || 0;
 
-  // Pending only — never celebrate until ok && txHash
+  // Instant UI — no loading spinner; tickets credited immediately (confirmed in background)
   b.at = at;
   b.payoutFailed = false;
-  b.payoutPending = tickets > 0;
-  b.ticketsBought = null;
+  b.payoutPending = false;
+  b.ticketsBought = tickets > 0 ? tickets : 0;
   b.state = 'won';
+  b._cashoutLock = true;
   paintBet(b);
 
-  if(tickets <= 0){
-    b.payoutPending = false;
-    paintBet(b);
-    $('status').textContent = 'Cashed at '+at.toFixed(2)+'× · no tickets this round';
-    return;
-  }
-
   if(!window.Megapot || typeof window.Megapot.houseBuyTickets !== 'function'){
-    b.payoutPending = false;
-    b.payoutFailed = true;
-    paintBet(b);
-    $('status').textContent = 'Cash-out failed · try again';
-    return;
-  }
-
-  // recipient = connected wallet ONLY
-  if(!player || !/^0x[a-fA-F0-9]{40}$/i.test(player)){
-    b.payoutPending = false;
-    b.payoutFailed = true;
-    paintBet(b);
-    $('status').textContent = 'Connect wallet to receive tickets';
-    return;
-  }
-  if(window.Megapot.HOUSE_TREASURY && player.toLowerCase() === String(window.Megapot.HOUSE_TREASURY).toLowerCase()){
-    b.payoutPending = false;
-    b.payoutFailed = true;
-    paintBet(b);
-    $('status').textContent = 'Cash-out failed · check wallet';
-    return;
-  }
-
-  $('status').textContent = 'Cashing out…';
-  $('status').classList.remove('won');
-
-  try{
-    const res = await window.Megapot.houseBuyTickets(tickets, player, {
-      entryId,
-      stake: stakeAmt,
-      multiplier: at,
-      recipient: player, // always player wallet
-    });
-    b.payoutPending = false;
-    // Prefer server settlement mult (client mult is ignored on-chain)
-    if(res && res.ok && res.multiplier != null && Number(res.multiplier) > 0){
-      b.at = Number(res.multiplier);
-    }else if(res && res.ok && res.settlement && res.settlement.mult != null){
-      b.at = Number(res.settlement.mult);
-    }
-
-    // Success ONLY if ok && txHash
-    if(!res || !res.ok || !res.txHash){
-      b.payoutFailed = true;
-      b.ticketsBought = null;
-      paintBet(b);
-      if(res?.refundTxHash){
-        $('status').textContent = 'Cash-out failed · stake back in play balance';
-        if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
-      }else{
-        // API should refund; frontend backup refund if stake was taken
-        if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
-          const rf = await window.Megapot.refundStake(entryId, stakeAmt);
-          if(rf?.ok){
-            $('status').textContent = 'Cash-out failed · stake back in play balance';
-            if(window.Megapot.refreshUsdcBalance) await window.Megapot.refreshUsdcBalance();
-          }else{
-            $('status').textContent = 'Cash-out failed · check refund';
-          }
-        }else{
-          $('status').textContent = 'Cash-out failed · try again';
-        }
-      }
-      return;
-    }
-
-    const bought = Math.max(1, wholeTickets(res.tickets) || tickets);
-    b.ticketsBought = bought;
-    b.payoutFailed = false;
-    paintBet(b);
-
-    // Load tickets immediately (await)
-    try{
-      if(typeof window.Megapot.loadUserTickets === 'function'){
-        await window.Megapot.loadUserTickets({
-          expectAtLeast: 1,
-          retries: 6,
-          delayMs: 350,
-          lookback: 10,
-        });
-      }
-    }catch(e){ console.warn('load tickets after cashout', e); }
-
-    // Celebrate only after confirmed buy + refresh
-    $('status').classList.add('won');
-    playCash();
-    const go = $('go'+b.i);
-    if(go){
-      const r = go.getBoundingClientRect();
-      confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
-      spawnTicketFlight(go, bought);
-    }
-    showTicketPreview(bought, at, { txHash: res.txHash });
-    maybeShare(at, bought);
-    cashoutsToday++;
-    syncMission();
-    try{
-      const post = window.MegaPushUI?.postLeaderboardScore || postLeaderboardScore;
-      if(typeof post === 'function'){
-        post({
-          player,
-          multiplier: at,
-          tickets: bought,
-          entryId: entryId || res.txHash,
-        });
-      }
-    }catch(_){}
-    $('status').textContent = '+'+wholeTickets(bought)+' ticket'+(wholeTickets(bought)===1?'':'s')+' locked in';
-    const pt = $('previewTitle');
-    if(pt && $('previewBg')?.classList.contains('show')){
-      pt.textContent = '+'+wholeTickets(bought)+' tickets';
-    }
-    if(window.MegaPushUI) window.MegaPushUI.syncTixUI();
-  }catch(err){
-    console.error(err);
-    b.payoutPending = false;
     b.payoutFailed = true;
     b.ticketsBought = null;
     paintBet(b);
-    const msg = err?.message || String(err);
-    if(stakeAmt > 0 && typeof window.Megapot.refundStake === 'function'){
-      try{
-        const rf = await window.Megapot.refundStake(entryId, stakeAmt);
-        if(rf?.ok){
-          $('status').textContent = 'Cash-out failed · stake back in play balance';
-          if(window.Megapot.refreshPlayBalance) await window.Megapot.refreshPlayBalance();
-          return;
-        }
-      }catch(_){}
-    }
     $('status').textContent = 'Cash-out failed · try again';
+    b._cashoutLock = false;
+    return;
   }
+
+  if(!player || !/^0x[a-fA-F0-9]{40}$/i.test(player)){
+    b.payoutFailed = true;
+    b.ticketsBought = null;
+    paintBet(b);
+    $('status').textContent = 'Connect wallet to receive tickets';
+    b._cashoutLock = false;
+    return;
+  }
+  if(window.Megapot.HOUSE_TREASURY && player.toLowerCase() === String(window.Megapot.HOUSE_TREASURY).toLowerCase()){
+    b.payoutFailed = true;
+    b.ticketsBought = null;
+    paintBet(b);
+    $('status').textContent = 'Cash-out failed · check wallet';
+    b._cashoutLock = false;
+    return;
+  }
+
+  // Celebrate immediately — never show a loading/pending cashout state
+  // Always settle on server even when tickets=0 (progress remainder / free progress tickets)
+  if(tickets > 0 && window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(tickets);
+  $('status').classList.add('won');
+  playCash();
+  const go = $('go'+b.i);
+  if(go && tickets > 0){
+    const r = go.getBoundingClientRect();
+    confettiBurst(r.left+r.width/2, r.top+r.height/2, 10);
+    spawnTicketFlight(go, tickets);
+  }
+  if(tickets > 0) showTicketPreview(tickets, at, { txHash: null });
+  $('status').textContent = tickets > 0
+    ? ('+'+wholeTickets(tickets)+' ticket'+(wholeTickets(tickets)===1?'':'s')+' · '+at.toFixed(2)+'×')
+    : ('Cashed at '+at.toFixed(2)+'× · progress banked');
+  if(tickets > 0){ cashoutsToday++; syncMission(); }
+  if(window.MegaPushUI) window.MegaPushUI.syncTixUI();
+  b.payoutPending = false;
+  b.payoutFailed = false;
+  b.ticketsBought = tickets;
+  paintBet(b);
+
+  // Background settle only — UI already done (no await on click path)
+  const meta = {
+    entryId,
+    stake: stakeAmt,
+    multiplier: at,
+    claimedMult: at,
+    clientCashoutAt,
+    roundId,
+    recipient: player,
+  };
+  Promise.resolve()
+    .then(() => window.Megapot.houseBuyTickets(tickets, player, meta))
+    .then(async (res) => {
+      if(res && res.ok){
+        if(res.multiplier != null && Number(res.multiplier) > 0) b.at = Number(res.multiplier);
+        else if(res.settlement && res.settlement.mult != null) b.at = Number(res.settlement.mult);
+        const freeTix = Math.max(0, wholeTickets(res.freeTickets) || 0);
+        const cashoutTix = Math.max(
+          0,
+          wholeTickets(res.cashoutTickets != null ? res.cashoutTickets : res.tickets) || tickets,
+        );
+        // Total tickets user should see (cashout + free from progress)
+        const keep = Math.max(tickets, cashoutTix + freeTix, wholeTickets(res.tickets) || 0);
+        const delta = keep - tickets;
+        if(delta !== 0 && window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(delta);
+        b.ticketsBought = keep;
+        b.payoutFailed = false;
+        b.payoutPending = false; // never show long "locking" state
+        paintBet(b);
+        if(res.txHash) showCashoutReceipt({ tickets: keep, at: b.at, txHash: res.txHash });
+        // Pull chain tickets ASAP so they appear in Tickets tab immediately
+        try{
+          window.Megapot.loadUserTickets?.({
+            expectAtLeast: Math.max(1, keep),
+            retries: 24,
+            delayMs: 500,
+            lookback: 12,
+          })?.catch?.(()=>{});
+        }catch(_){}
+        try{
+          const post = window.MegaPushUI?.postLeaderboardScore || postLeaderboardScore;
+          if(keep > 0) post?.({ player, multiplier: b.at, tickets: keep, entryId: entryId || res.txHash });
+        }catch(_){}
+        maybeShare(b.at, keep);
+        if(keep > 0){
+          $('status').textContent =
+            '+'+wholeTickets(keep)+' ticket'+(wholeTickets(keep)===1?'':'s')+
+            ' · '+Number(b.at).toFixed(2)+'×';
+        }else{
+          $('status').textContent = 'Cashed at '+Number(b.at).toFixed(2)+'× · progress banked';
+        }
+        window.MegaPushUI?.syncTixUI?.();
+        b._cashoutLock = false;
+        return;
+      }
+
+      // Server rejected — only reverse for true losses / hard errors.
+      // Do NOT invent a client refund (server owns stake accounting).
+      // Never treat refund as success for a progress/ticket win.
+      b.payoutFailed = true;
+      b.ticketsBought = null;
+      b.payoutPending = false;
+      paintBet(b);
+      if(tickets > 0 && window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(-tickets);
+      if(tickets > 0){ cashoutsToday = Math.max(0, cashoutsToday - 1); syncMission(); }
+      const lost = !!(res && res.lost);
+      const errMsg = String(res?.error || '');
+      if(lost || /too late|already crashed|crashed/i.test(errMsg)){
+        $('status').textContent = 'Too late · round crashed before cash out landed';
+      }else if(res?.refundToBank){
+        // Legacy server path only — should not fire for settled wins anymore
+        $('status').textContent = 'Cash-out failed · $'+stakeAmt+' back in play balance';
+        try{ await window.Megapot.refreshPlayBalance?.(); }catch(_){}
+      }else{
+        $('status').textContent = errMsg || 'Cash-out failed · try again';
+        try{ await window.Megapot.refreshPlayBalance?.(); }catch(_){}
+      }
+      b._cashoutLock = false;
+    })
+    .catch(async (err) => {
+      console.error(err);
+      // Network/timeout: do NOT reverse win or refund — server may have cashed successfully
+      $('status').textContent = tickets > 0
+        ? 'Cash-out sent · tickets landing shortly'
+        : 'Cash-out sent · check progress in a moment';
+      try{
+        window.Megapot.loadUserTickets?.({ expectAtLeast: 1, retries: 20, delayMs: 600 })?.catch?.(()=>{});
+      }catch(_){}
+      try{ await window.Megapot.refreshPlayBalance?.(); }catch(_){}
+      b._cashoutLock = false;
+    });
 }
 
 function crash(){
@@ -2480,14 +3019,18 @@ function crash(){
   const label=m<1.5?'BUSTED':m<3?'FLEW AWAY':'GONE';
   $('bustMain').textContent=label;
   $('bustSub').textContent='Ended at '+m.toFixed(2)+'×';
+  // Do not overwrite a successful cash-out status line
+  const anyWon = bets.some(b => b.state==='won' && !b.payoutFailed);
   if(globalRound && globalRound.serverSeedHash){
-    const short = String(globalRound.serverSeedHash).slice(0,10)+'…';
-    $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
+    if(!anyWon){
+      $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
+    }
     // async verify in background
     verifyFairRound(globalRound).then(v=>{
       // Do not fight the post-crash timer — only update if still on crash screen
       if(!$('hero') || !$('hero').classList.contains('crashed')) return;
       if(Date.now() >= crashUiUntil) return;
+      if(anyWon || bets.some(b => b.state==='won' && !b.payoutFailed)) return;
       if(v && v.ok){
         $('status').textContent = 'Crashed at '+m.toFixed(2)+'×';
       }else if(v && !v.ok){
@@ -2540,6 +3083,9 @@ function crash(){
 }
 
 function reset(){
+  try{ hideCashoutReceipt(); }catch(_){}
+  try{ $('previewBg')?.classList.remove('show'); }catch(_){}
+  try{ $('shareBg')?.classList.remove('show'); }catch(_){}
   // Soft UI reset when global phase returns to betting
   m=1;band=0;lastAutoMiss=null;running=false;cp=0;
   $('hero').classList.remove('crashed');
@@ -2575,7 +3121,12 @@ function start(){
   const joined=bets.filter(b=>b.state==='queued');
   m=1;
   running=true;
-  joined.forEach(b=>{b.state='live';paintBet(b)});
+  joined.forEach(b=>{
+    b.state='live';
+    // Freeze which global hand this stake is on (cashout needs this after crash)
+    if(globalRound && globalRound.roundId != null) b.roundId = globalRound.roundId;
+    paintBet(b);
+  });
   $('status').textContent=joined.length?'Climbing · cash out before it flies':'Global climb in progress';
   $('status').classList.remove('won','hot');
   playStart();
@@ -2588,16 +3139,28 @@ function onGlobalPhase(phase, g){
 
   // Clear "flew away" for betting / intermission / new round
   if(phase==='betting' || phase==='intermission'){
-    if(lastPhase==='crashed' || lastPhase==='flying' || lastPhase===null || roundChanged){
+    if(lastPhase==='crashed' || lastPhase==='flying' || lastPhase==='waiting' || lastPhase==='voided' || lastPhase===null || roundChanged){
       reset();
       if(phase==='intermission'){
         $('status').textContent='Stake for the next climb';
       }
     }
   }
+  if(phase==='waiting' && (lastPhase!=='waiting' || roundChanged)){
+    running=false;
+    // Entropy wait is silent — no block-number status (keeps UI calm)
+    $('status').textContent = 'Starting…';
+    $('status').classList.remove('hot','won');
+  }
+  if(phase==='voided' && crashHandledForRound!==rid){
+    crashHandledForRound=rid;
+    running=false;
+    $('status').textContent='Round voided · stakes returned (block entropy unavailable)';
+    $('status').classList.remove('hot','won');
+  }
   if(phase==='flying' && (lastPhase!=='flying' || roundChanged)){
     crashHandledForRound=null;
-    if(lastPhase==='crashed' || lastPhase==='intermission') reset();
+    if(lastPhase==='crashed' || lastPhase==='intermission' || lastPhase==='waiting') reset();
     start();
   }
   if(phase==='crashed' && crashHandledForRound!==rid){
@@ -2645,14 +3208,49 @@ function globalFrame(){
     fetchGlobalRound();
   }
 
-  // Keep polling server — especially across hand boundaries
-  if(g && !g._fetching){
-    const endAt = g.cycleEnd!=null ? g.cycleEnd : g.nextRoundStart;
-    const nearEnd = endAt!=null && now >= endAt - 400;
-    const pastEnd = endAt!=null && now >= endAt;
-    if(pastEnd || nearEnd || g.phase==='crashed' || g.phase==='intermission'){
-      g._fetching=true;
-      fetchGlobalRound().finally(()=>{ if(globalRound) globalRound._fetching=false; });
+  // Keep polling server — critical during waiting→flying (entropy resolve) or DO recovery.
+  // Use local phaseAt (not only server phase) so post-betting "waiting" still polls hard.
+  if(g){
+    // Don't stick _fetching forever if a fetch hangs
+    if(g._fetching && g._fetchStartedAt && (nowWall - g._fetchStartedAt > 2500)){
+      g._fetching=false;
+      g._fetchStartedAt=0;
+    }
+    if(!g._fetching){
+      const localPh = phaseAt(g, now);
+      const endAt = g.cycleEnd!=null ? g.cycleEnd : g.nextRoundStart;
+      const nearEnd = endAt!=null && now >= endAt - 400;
+      const pastEnd = endAt!=null && now >= endAt;
+      const bettingClosing =
+        (g.phase==='betting' || localPh==='betting') &&
+        g.bettingEndsAt!=null && now >= Number(g.bettingEndsAt) - 800;
+      // waiting / post-bet: target block may land any second — poll ~400ms
+      const needWaitPoll =
+        (g.phase==='waiting' || localPh==='waiting' || bettingClosing) &&
+        (!g._lastWaitPoll || nowWall - g._lastWaitPoll > 400);
+      // flying: soft resync mult every few seconds (clock drift / missed polls)
+      const needFlyPoll =
+        (g.phase==='flying' || localPh==='flying') &&
+        (!g._lastFlyPoll || nowWall - g._lastFlyPoll > 1500);
+      if(
+        pastEnd ||
+        nearEnd ||
+        bettingClosing ||
+        needWaitPoll ||
+        needFlyPoll ||
+        g.phase==='crashed' ||
+        g.phase==='intermission' ||
+        g.phase==='voided' ||
+        localPh==='crashed' ||
+        localPh==='intermission' ||
+        localPh==='voided'
+      ){
+        g._fetching=true;
+        g._fetchStartedAt = nowWall;
+        if(g.phase==='waiting' || localPh==='waiting' || bettingClosing) g._lastWaitPoll = nowWall;
+        if(g.phase==='flying' || localPh==='flying') g._lastFlyPoll = nowWall;
+        fetchGlobalRound().finally(()=>{ if(globalRound){ globalRound._fetching=false; globalRound._fetchStartedAt=0; } });
+      }
     }
   }
 
@@ -2661,7 +3259,6 @@ function globalFrame(){
     globalRaf=requestAnimationFrame(globalFrame);
     return;
   }
-  // flyStart may be null during short end-of-slot intermission — still drive UI + poll
 
   const phase = phaseAt(g, now);
 
@@ -2682,6 +3279,11 @@ function globalFrame(){
     bets.forEach(b=>{
       if(b.state==='live'&&b.autoOn&&b.auto!=null&&Number(b.auto)>0&&m>=Number(b.auto)) cashOut(b);
     });
+  }else if(phase==='waiting'){
+    // Entropy wait — stay at 1× but keep polling (handled above)
+    running=false;
+    m=1;
+    paint();
   }else if(phase==='betting' || phase==='intermission'){
     running=false;
     m=1;
@@ -2690,12 +3292,15 @@ function globalFrame(){
     }else{
       paint();
     }
+  }else if(phase==='voided'){
+    running=false;
+    m=1;
+    paint();
   }else{
     // crashed
     running=false;
     if(g.crashMult!=null) m=Number(g.crashMult);
     paint();
-    // Double safety with server resultEnd
     const re = g.resultEnd!=null ? g.resultEnd : (g.crashAt!=null ? g.crashAt+(Number(g.resultMs)||3200) : null);
     if(re!=null && now>=re){
       clearCrashUI('Stake for the next climb');
@@ -2726,16 +3331,26 @@ window.runPreflight = runPreflight;
 
 function startGlobalSync(){
   if(globalPollTimer) clearInterval(globalPollTimer);
+  if(globalPollTimerFast) clearInterval(globalPollTimerFast);
   runPreflight().catch(()=>{});
   fetchGlobalRound().then(()=>{
     if(!globalRaf) globalRaf=requestAnimationFrame(globalFrame);
   });
-  // Poll often enough to never sit on one crash mult across rounds
-  // Fast polls while flying so crash is detected quickly without leaking crashAt
+  // Steady poll — always, including waiting (entropy → flying)
   globalPollTimer=setInterval(fetchGlobalRound, 500);
-  setInterval(()=>{
-    const ph = globalRound && globalRound.phase;
-    if(ph==='flying' || ph==='crashed' || ph==='intermission' || ph==='betting') fetchGlobalRound();
+  // Faster during waiting / flying / crash / hand edges so 1× never freezes
+  globalPollTimerFast=setInterval(()=>{
+    const g = globalRound;
+    if(!g){ fetchGlobalRound(); return; }
+    const ph = g.phase;
+    const localPh = phaseAt(g, serverNow());
+    if(
+      ph==='waiting' || localPh==='waiting' ||
+      ph==='flying' || localPh==='flying' ||
+      ph==='crashed' || localPh==='crashed' ||
+      ph==='intermission' || ph==='voided' ||
+      ph==='betting' || localPh==='betting'
+    ) fetchGlobalRound();
   }, 250);
 }
 
@@ -3058,7 +3673,7 @@ function claimDemoWins(){
   return { ok: true, demo: true, claimedUsd: Math.round(claimedUsd * 100) / 100 };
 }
 
-/** Update Tickets claim card + Winnings tab from unclaimed lottery wins only */
+/** Update Winnings tab from lottery wins (Tickets "Unclaimed wins" card removed). */
 function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null, demo = false } = {}){
   unclaimedWinsUsd = Number(totalUsd) || 0;
   unclaimedWinsCount = Math.max(0, Math.floor(Number(count) || 0));
@@ -3067,22 +3682,21 @@ function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null, demo = 
   const money = fmtMoney(unclaimedWinsUsd);
   const has = unclaimedWinsUsd > 0 && unclaimedWinsCount > 0;
 
-  // Tickets tab — claim card
+  // Tickets tab claim card is gone — keep optional nodes safe if re-added later
   const claimVal = $('claimVal');
   const claimSub = $('claimSub');
   const claimLab = $('claimLab');
   const claimAll = $('claimAll');
-  if(claimLab) claimLab.textContent = has ? (demoLotteryActive ? 'Ready to claim' : 'Ready to claim') : 'Unclaimed wins';
+  if(claimLab) claimLab.textContent = has ? 'Lottery wins' : 'Lottery wins';
   if(claimVal) claimVal.textContent = has ? money : '—';
   if(claimSub){
     if(!address && !has) claimSub.textContent = 'Connect wallet to load wins';
-    else if(has) claimSub.textContent = unclaimedWinsCount+' winning ticket'+(unclaimedWinsCount===1?'':'s')+' · claim to wallet';
-    else claimSub.textContent = 'No unclaimed wins right now';
+    else if(has) claimSub.textContent = unclaimedWinsCount+' winning ticket'+(unclaimedWinsCount===1?'':'s');
+    else claimSub.textContent = 'No wins to show';
   }
   if(claimAll){
-    claimAll.style.display = has ? 'block' : 'none';
-    claimAll.disabled = !has;
-    claimAll.textContent = 'Claim all';
+    claimAll.style.display = 'none';
+    claimAll.disabled = true;
   }
 
   // Winnings tab — lottery winnings (not USDC wallet balance)
@@ -3102,8 +3716,8 @@ function setUnclaimedWinnings({ totalUsd = 0, count = 0, address = null, demo = 
   if(netFee) netFee.textContent = has ? 'Claim on-chain (gas)' : '—';
   if(addrEl) addrEl.value = address || '';
   if(wdSub){
-    if(!address) wdSub.textContent = 'Unclaimed Megapot wins · connect wallet to load';
-    else if(has) wdSub.textContent = unclaimedWinsCount+' unclaimed win'+(unclaimedWinsCount===1?'':'s')+' from lottery draws';
+    if(!address) wdSub.textContent = 'Megapot lottery wins · connect wallet to load';
+    else if(has) wdSub.textContent = unclaimedWinsCount+' win'+(unclaimedWinsCount===1?'':'s')+' from lottery draws';
     else wdSub.textContent = 'No unclaimed lottery winnings';
   }
   if(wdClaim){
@@ -3154,8 +3768,10 @@ function showOnboard(step){
   document.querySelectorAll('.onboard-panel').forEach((p,i)=>{
     p.classList.toggle('on', i === onboardStep);
   });
-  document.querySelectorAll('#onboardDots i').forEach((d,i)=>{
-    d.classList.toggle('on', i === onboardStep);
+  document.querySelectorAll('#onboardDots .dot, #onboardDots i').forEach((d,i)=>{
+    const on = i === onboardStep;
+    d.classList.toggle('on', on);
+    d.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   const go = $('onboardGo');
   if(go) go.textContent = onboardStep >= ONBOARD_STEPS - 1 ? "Let's play" : 'Next';
@@ -3187,6 +3803,14 @@ if($('onboardGo')){
     hideOnboard(true);
   };
 }
+
+// Clickable FAQ page dots
+$('onboardDots')?.addEventListener('click', (e)=>{
+  const dot = e.target.closest('[data-dot]');
+  if(!dot || !$('onboardDots').contains(dot)) return;
+  const n = Number(dot.getAttribute('data-dot'));
+  if(Number.isFinite(n)) showOnboard(n);
+});
 
 if($('helpFab')){
   $('helpFab').onclick = ()=>{
@@ -3236,12 +3860,13 @@ if($('freeDailyBtn')){
   // Open info card — do not claim until user confirms
   $('freeDailyBtn').onclick = async ()=>{
     if(!window.Megapot){
-      alert('Still loading — try again in a second');
+      showToast('Still loading — try again in a second', 'err');
       return;
     }
     if(!window.Megapot.account){
-      await window.Megapot.connectWallet?.();
-      if(!window.Megapot.account){ alert('Connect wallet to claim'); return; }
+      showToast('Connect your wallet to claim free daily', 'err');
+      try{ window.Megapot.connectWallet?.(); }catch(_){}
+      return;
     }
     openFreeDailyCard();
   };
@@ -3371,6 +3996,8 @@ document.addEventListener('click',e=>{
   if(act==='go'){
     // Live → manual cash out
     if(b.state==='live') return cashOut(b);
+    // Placing / re-staking — clear cashout snackbar so it never sits on the form
+    try{ hideCashoutReceipt(); }catch(_){}
     // Queued → cancel + treasury refund via backend
     if(b.state==='queued'){
       (async()=>{
@@ -3390,7 +4017,7 @@ document.addEventListener('click',e=>{
           }else{
             const err=res?.error||'try again';
             $('status').textContent='Cancel/refund failed: '+err;
-            alert('Cancel failed: '+err);
+            showToast('Cancel failed: '+err, 'err');
             paintBet(b);
           }
         }catch(err){
@@ -3410,7 +4037,7 @@ document.addEventListener('click',e=>{
         b.amt=Number.isFinite(typed) && typed > 0 ? Math.floor(typed) : null;
         if(!b.amt || b.amt <= 0){
           $('status').textContent='Select a stake amount first';
-          alert('Select a stake amount first');
+          showToast('Select a stake amount first', 'err');
           paintBet(b);
           return;
         }
@@ -3418,21 +4045,22 @@ document.addEventListener('click',e=>{
           syncAutoFromInput(b);
           if(b.auto==null || !(Number(b.auto) > 0)){
             $('status').textContent='Enter an auto cash-out multiplier, or turn auto off';
-            alert('Enter an auto cash-out multiplier, or turn auto off');
+            showToast('Enter an auto cash-out multiplier, or turn auto off', 'err');
             paintBet(b);
             return;
           }
         }
         if(!window.Megapot){
           $('status').textContent='Wallet module still loading — wait 1s and try again';
-          alert('Wallet module not ready. Refresh the page if this keeps happening.');
+          showToast('Wallet module not ready. Refresh if this keeps happening.', 'err');
           return;
         }
         if(!window.Megapot.account){
           $('status').textContent='Please connect your wallet';
           await window.Megapot.connectWallet?.();
           if(!window.Megapot.account){
-            alert('Please connect your wallet.');
+            showToast('Please connect your wallet to stake.', 'err');
+            try{ window.Megapot.connectWallet?.(); }catch(_){}
             paintBet(b);
             return;
           }
@@ -3456,7 +4084,7 @@ document.addEventListener('click',e=>{
         if(!res?.ok){
           b.state='idle';
           const err=res?.error || 'Stake failed';
-          alert(err);
+          showToast(err, 'err');
           paintBet(b);
           return;
         }
@@ -3475,7 +4103,7 @@ document.addEventListener('click',e=>{
         console.error('stake', err);
         b.state='idle';
         const msg=err?.shortMessage||err?.message||String(err);
-        alert('Stake error: '+msg);
+        showToast('Stake error: '+msg, 'err');
         paintBet(b);
       }
     })();
@@ -3514,8 +4142,14 @@ document.addEventListener('change',e=>{
 });
 
 document.querySelectorAll('#nav .tab').forEach(tab=>{
-  tab.addEventListener('click',()=>{
-    document.querySelectorAll('#nav .tab').forEach(t=>t.classList.remove('on'));
+  tab.addEventListener('click',(ev)=>{
+    // External docs link — let the browser navigate / open GitBook
+    if(tab.tagName === 'A' || tab.classList.contains('docs-tab') || !tab.dataset.page){
+      return;
+    }
+    document.querySelectorAll('#nav .tab').forEach(t=>{
+      if(t.tagName !== 'A') t.classList.remove('on');
+    });
     tab.classList.add('on');
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
     const page=$('page-'+tab.dataset.page);
@@ -4079,8 +4713,10 @@ function bindProviderListeners(provider){
     const b = $('walletBtn');
     if(!accs?.length){
       account = null; walletClient = null;
-      if(b){ b.textContent = 'Connect'; b.classList.remove('on'); }
+      if(b){ b.textContent = 'Connect'; b.classList.remove('on'); b.title = 'Connect wallet'; }
       setBalUi(null);
+      resetLoggedOutUi();
+      try{ clearTicketsUi({ dropCache: false }); }catch(_){}
       return;
     }
     account = accs[0];
@@ -4090,7 +4726,8 @@ function bindProviderListeners(provider){
       b.classList.add('on');
       b.title = 'Tap to disconnect';
     }
-    loadUserTickets(); refreshUsdcBalance(); loadWins();
+    loadUserTickets(); refreshUsdcBalance(); loadWins(); refreshPlayBalance();
+    try{ refreshLeaderboard(); }catch(_){}
   });
   provider.on('chainChanged', () => {
     if(account && eip1193){
@@ -4130,23 +4767,66 @@ async function refreshUsdcBalance(){
  * Jackpot display vs Sepolia gameplay:
  * - UI "Megapot prize pool" → Megapot Data API (mainnet jackpot, e.g. ~$1.1M)
  * - ticketPrice + drawingId for stakes/tickets → Base Sepolia RPC (testnet contracts)
+ * Early classic script already paints cache + starts pot fetch; this refines when module loads.
  */
 async function loadLivePot(){
   const el = $('potFig');
-
-  // 1) Display pot from Megapot API (do not use Sepolia prizePool for the big number)
+  const isEmpty = (s) => !s || s === '—' || s === '…' || s === '...' || s === '–';
+  // Keep seed/cache/early value — never blank the pot while loading
+  if(window.__mpPotPainted && el && isEmpty(el.textContent?.trim())){
+    el.textContent = window.__mpPotPainted;
+  }
   try{
-    const r = await fetch(API + '/rounds/active');
-    if(r.ok){
-      const j = await r.json();
-      const amt = BigInt(j.prize_pool?.amount || j.prizePool?.amount || '0');
-      const dec = Number(j.prize_pool?.decimals ?? j.prizePool?.decimals ?? 6);
-      if(amt > 0n && el) el.textContent = fmtUsd(amt, dec);
-      // Real draw countdown from active round end
-      const ended = j.ended_at || j.endedAt || j.drawing_time || j.drawingTime;
-      if(ended){
-        const ms = typeof ended === 'number' ? (ended < 1e12 ? ended*1000 : ended) : Date.parse(ended);
-        if(Number.isFinite(ms)) window.setDrawEndsAt?.(ms);
+    const raw = localStorage.getItem('mp_pot_display_v1');
+    if(raw && el && isEmpty(el.textContent?.trim())){
+      const c = JSON.parse(raw);
+      if(c && c.text) el.textContent = c.text;
+    }
+  }catch(_){}
+  if(window.__mpDrawEndsAtEarly && window.setDrawEndsAt){
+    try{ window.setDrawEndsAt(window.__mpDrawEndsAtEarly); }catch(_){}
+  }
+
+  // 1) Same-origin edge pot (fast), then Megapot API
+  try{
+    let painted = false;
+    try{
+      const edge = await fetch(apiUrl('/api/pot'), { cache: 'default' });
+      if(edge.ok){
+        const j = await edge.json();
+        if(j?.text && el){
+          el.textContent = j.text;
+          el.removeAttribute('data-pot-loading');
+          window.__mpPotPainted = j.text;
+          try{ localStorage.setItem('mp_pot_display_v1', JSON.stringify({ text: j.text, at: Date.now() })); }catch(_){}
+          painted = true;
+        }
+        if(j?.drawEndsAt && window.setDrawEndsAt){
+          const ms = Number(j.drawEndsAt);
+          if(Number.isFinite(ms)) window.setDrawEndsAt(ms);
+        }
+      }
+    }catch(_){}
+    if(!painted){
+      const r = await fetch(API + '/rounds/active', { cache: 'no-store' });
+      if(r.ok){
+        const j = await r.json();
+        const amt = BigInt(j.prize_pool?.amount || j.prizePool?.amount || '0');
+        const dec = Number(j.prize_pool?.decimals ?? j.prizePool?.decimals ?? 6);
+        if(amt > 0n && el){
+          const text = fmtUsd(amt, dec);
+          el.textContent = text;
+          el.removeAttribute('data-pot-loading');
+          try{
+            localStorage.setItem('mp_pot_display_v1', JSON.stringify({ text, at: Date.now() }));
+            window.__mpPotPainted = text;
+          }catch(_){}
+        }
+        const ended = j.ended_at || j.endedAt || j.drawing_time || j.drawingTime;
+        if(ended){
+          const ms = typeof ended === 'number' ? (ended < 1e12 ? ended*1000 : ended) : Date.parse(ended);
+          if(Number.isFinite(ms)) window.setDrawEndsAt?.(ms);
+        }
       }
     }
   }catch(e){ console.warn('API pot', e); }
@@ -4157,20 +4837,29 @@ async function loadLivePot(){
     drawingId = id;
     const st = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'getDrawingState', args: [id] });
     if(st.ticketPrice != null) ticketPrice = st.ticketPrice;
-    // On-chain draw time (seconds) — use if API did not set a future end
     if(st.drawingTime != null){
       const ms = Number(st.drawingTime) * 1000;
       if(Number.isFinite(ms) && ms > Date.now() - 60_000){
         if(window.setDrawEndsAt) window.setDrawEndsAt(ms);
       }
     }
-    // Only fall back display to Sepolia pool if API failed and still "—"
-    if(el && (!el.textContent || el.textContent === '—') && st.prizePool != null){
-      el.textContent = fmtUsd(st.prizePool);
+    // Only fall back display to Sepolia pool if still empty/placeholder
+    if(el && isEmpty(el.textContent?.trim()) && st.prizePool != null){
+      const text = fmtUsd(st.prizePool);
+      el.textContent = text;
+      try{ localStorage.setItem('mp_pot_display_v1', JSON.stringify({ text, at: Date.now() })); }catch(_){}
     }
   }catch(e){
     console.warn('RPC pot/ticketPrice', e);
-    if(el && (!el.textContent || el.textContent === '—')) el.textContent = '—';
+    // Keep seed/cache — never force "—" over a real number
+    if(el && isEmpty(el.textContent?.trim())){
+      try{
+        const raw = localStorage.getItem('mp_pot_display_v1');
+        const c = raw ? JSON.parse(raw) : null;
+        if(c && c.text) el.textContent = c.text;
+        else if(window.__mpPotPainted) el.textContent = window.__mpPotPainted;
+      }catch(_){}
+    }
   }
 }
 
@@ -4484,6 +5173,8 @@ function histTypeLabel(t){
   if(k === 'stake') return 'Stake';
   if(k === 'refund') return 'Refund';
   if(k === 'free_daily') return 'Free daily';
+  if(k === 'progress') return 'Ticket progress';
+  if(k === 'progress_ticket') return 'Progress ticket';
   return k || 'Tx';
 }
 function histSignedAmount(row){
@@ -4506,54 +5197,121 @@ function mergeBankHistory(serverList, localList){
   (localList || []).forEach(add);
   return Array.from(map.values()).sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)).slice(0, 50);
 }
+let _txDetailHash = '';
 function openTxDetail(row){
   if(!row) return;
+  // Always open the in-app detail card — never auto-navigate away from the game
+  try{ if(typeof event !== 'undefined' && event?.preventDefault) event.preventDefault(); }catch(_){}
+
   const type = String(row.type || 'tx').toLowerCase();
   const { text } = histSignedAmount(row);
   const when = fmtHistTime(row.at) || '—';
   const bal = row.balance != null
     ? ('$' + Number(row.balance).toFixed(Number(row.balance) % 1 ? 2 : 0))
-    : '—';
+    : (row.deposited != null
+      ? ('$' + Number(row.deposited).toFixed(Number(row.deposited) % 1 ? 2 : 0))
+      : '—');
   const txHash = row.txHash ? String(row.txHash) : '';
   const entryId = row.entryId != null ? String(row.entryId) : '';
+  const hasTx = !!(txHash && /^0x[a-fA-F0-9]{64}$/i.test(txHash));
+  _txDetailHash = hasTx ? txHash : '';
+  const amtNum = Math.abs(Number(row.amount) || 0);
+  const amtPretty = '$' + amtNum.toFixed(amtNum % 1 ? 2 : 0);
 
-  // Prefer deep-link straight to this tx on BaseScan (not wallet history)
-  if(txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)){
-    try{
-      window.open(BASESCAN_TX + txHash, '_blank', 'noopener,noreferrer');
-    }catch(_){
-      location.href = BASESCAN_TX + txHash;
-    }
-    return;
+  if($('txDetailTitle')){
+    $('txDetailTitle').textContent =
+      type === 'deposit' ? 'Deposit' :
+      type === 'withdraw' ? 'Withdrawal' :
+      histTypeLabel(type);
   }
-
-  if($('txDetailTitle')) $('txDetailTitle').textContent = histTypeLabel(type);
   if($('txDetailSub')){
-    $('txDetailSub').textContent = 'Internal play-balance activity (no on-chain transaction hash)';
+    if(type === 'deposit'){
+      $('txDetailSub').textContent = hasTx
+        ? 'USDC deposited to play balance on Base Sepolia'
+        : 'Play balance credit';
+    }else if(type === 'withdraw'){
+      $('txDetailSub').textContent = hasTx
+        ? 'USDC withdrawn to your wallet on Base Sepolia'
+        : 'Withdrawal from play balance';
+    }else if(hasTx){
+      $('txDetailSub').textContent = 'On-chain activity · Base Sepolia';
+    }else{
+      $('txDetailSub').textContent = 'Internal play-balance activity';
+    }
   }
 
+  // Rich detail rows — especially for deposits
   const rows = [
     ['Type', histTypeLabel(type)],
     ['Amount', text],
-    ['When', when],
-    ['Balance after', bal],
   ];
-  if(entryId) rows.push(['Entry', entryId.length > 28 ? entryId.slice(0, 12) + '…' + entryId.slice(-8) : entryId]);
+  if(type === 'deposit'){
+    rows.push(['Credited', amtPretty]);
+    rows.push(['Network', 'Base Sepolia']);
+    rows.push(['Status', hasTx ? 'Confirmed on Base' : 'Recorded']);
+  }else if(type === 'withdraw'){
+    rows.push(['Network', 'Base Sepolia']);
+    rows.push(['Status', hasTx ? 'Sent on Base' : 'Recorded']);
+  }
+  rows.push(['When', when]);
+  rows.push(['Play balance after', bal]);
+  if(hasTx){
+    rows.push(['Tx hash', shortTx(txHash)]);
+    rows.push(['Full hash', txHash]);
+  }
+  if(entryId){
+    rows.push(['Entry', entryId.length > 28 ? entryId.slice(0, 12) + '…' + entryId.slice(-8) : entryId]);
+  }
 
   const host = $('txDetailRows');
   if(host){
-    host.innerHTML = rows.map(([k, v]) =>
-      '<div class="td-row"><span>'+k+'</span><b>'+String(v).replace(/</g,'&lt;')+'</b></div>'
-    ).join('');
+    host.innerHTML = rows.map(([k, v]) => {
+      // Full hash: monospace breakable
+      const isHash = k === 'Full hash' || k === 'Tx hash';
+      const style = isHash ? ' style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:600"' : '';
+      return '<div class="td-row"><span>'+k+'</span><b'+style+'>'+String(v).replace(/</g,'&lt;')+'</b></div>';
+    }).join('');
   }
 
+  // "View on Base" — real explorer link (not "baselink" placeholder)
   const txBtn = $('txDetailBaseScan');
-  if(txBtn) txBtn.style.display = 'none';
+  const linkFn = window.setBasescanTxLink;
+  if(txBtn){
+    txBtn.className = 'go secondary';
+    txBtn.textContent = 'View on Base ↗';
+    if(typeof linkFn === 'function' && linkFn(txBtn, hasTx ? txHash : null)){
+      txBtn.style.display = 'block';
+      txBtn.hidden = false;
+      txBtn.textContent = 'View on Base ↗';
+    }else if(hasTx){
+      txBtn.href = (typeof BASESCAN_TX !== 'undefined' ? BASESCAN_TX : 'https://sepolia.basescan.org/tx/') + txHash;
+      txBtn.target = '_blank';
+      txBtn.rel = 'noopener noreferrer';
+      txBtn.style.display = 'block';
+      txBtn.hidden = false;
+      txBtn.textContent = 'View on Base ↗';
+    }else{
+      txBtn.style.display = 'none';
+      txBtn.hidden = true;
+      txBtn.href = 'https://sepolia.basescan.org';
+    }
+  }
+  const copyBtn = $('txDetailCopyHash');
+  if(copyBtn){
+    copyBtn.style.display = hasTx ? 'block' : 'none';
+    copyBtn.textContent = 'Copy tx hash';
+  }
 
-  $('txDetailBg')?.classList.add('show');
+  // Stack above bank sheet; stay in-app
+  const bg = $('txDetailBg');
+  if(bg){
+    bg.classList.add('show');
+    bg.style.zIndex = '130';
+  }
 }
 function closeTxDetail(){
   $('txDetailBg')?.classList.remove('show');
+  _txDetailHash = '';
 }
 function renderBankHistory(list){
   const el = $('bankHistoryList');
@@ -4573,30 +5331,57 @@ function renderBankHistory(list){
     const type = String(row.type || 'tx').toLowerCase();
     const when = fmtHistTime(row.at);
     const bal = row.balance != null ? ('Bal $' + Number(row.balance).toFixed(Number(row.balance) % 1 ? 2 : 0)) : '';
-    const hasTx = !!(row.txHash && /^0x[a-fA-F0-9]{64}$/i.test(String(row.txHash)));
-    const hint = hasTx ? 'Tx on BaseScan' : 'Internal';
+    // Unique attr so we never collide with round-history data-hist-idx
     return (
-      '<button type="button" class="bh-row" data-hist-idx="'+idx+'" aria-label="'+(hasTx ? 'Open transaction on BaseScan' : 'View '+histTypeLabel(type)+' details')+'">'+
+      '<button type="button" class="bh-row" data-bank-hist-idx="'+idx+'" aria-label="Open '+histTypeLabel(type)+' card">'+
         '<div class="bh-type '+type+'">'+histTypeLabel(type)+'</div>'+
         '<div class="bh-amt '+(neg?'neg':'pos')+'">'+text+'</div>'+
-        '<div class="bh-meta"><span>'+when+(bal ? ' · '+bal : '')+'</span><span class="bh-open">'+hint+(hasTx?' ↗':'')+'</span></div>'+
+        '<div class="bh-meta"><span>'+when+(bal ? ' · '+bal : '')+'</span><span class="bh-open">View card →</span></div>'+
       '</button>'
     );
   }).join('');
 }
-// Click history row → that transaction on BaseScan (or internal detail)
+// Click history row → in-app detail card only (Basescan never on row click)
 document.getElementById('bankHistoryList')?.addEventListener('click', (e)=>{
-  const btn = e.target.closest?.('[data-hist-idx]');
-  if(!btn) return;
-  const idx = Number(btn.getAttribute('data-hist-idx'));
+  const btn = e.target.closest?.('[data-bank-hist-idx]');
+  if(!btn || !$('bankHistoryList')?.contains(btn)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const idx = Number(btn.getAttribute('data-bank-hist-idx'));
   if(!Number.isFinite(idx) || idx < 0) return;
   const row = bankHistoryCache[idx];
   if(row) openTxDetail(row);
 });
-document.getElementById('txDetailClose')?.addEventListener('click', ()=> closeTxDetail());
+document.getElementById('txDetailClose')?.addEventListener('click', (e)=>{
+  e.preventDefault();
+  closeTxDetail();
+});
+document.getElementById('txDetailCopyHash')?.addEventListener('click', async (e)=>{
+  e.preventDefault();
+  if(!_txDetailHash) return;
+  try{
+    await navigator.clipboard.writeText(_txDetailHash);
+    const b = $('txDetailCopyHash');
+    if(b){ b.textContent = 'Copied'; setTimeout(()=>{ if(b) b.textContent = 'Copy tx hash'; }, 1200); }
+  }catch(_){
+    try{ showToast?.('Could not copy', 'err'); }catch(__){}
+  }
+});
 document.getElementById('txDetailBg')?.addEventListener('click', (e)=>{
   if(e.target === $('txDetailBg')) closeTxDetail();
 });
+// Block accidental navigation if Basescan link has no real tx hash
+function guardBasescanClick(e){
+  const a = e.currentTarget;
+  const href = a?.getAttribute('href') || '';
+  if(!href || href === '#' || href.endsWith('/tx/') || !/\/tx\/0x[a-fA-F0-9]{64}/i.test(href)){
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}
+document.getElementById('txDetailBaseScan')?.addEventListener('click', guardBasescanClick);
+document.getElementById('crTx')?.addEventListener('click', guardBasescanClick);
+document.getElementById('previewTx')?.addEventListener('click', guardBasescanClick);
 function pushLocalHistory(addr, row){
   if(!addr || !row) return;
   try{
@@ -5320,12 +6105,17 @@ async function refundStake(entryId, amountUsd){
 }
 
 /**
- * House buys Megapot tickets for the PLAYER wallet only.
- * Success requires ok + txHash. Never invents tickets.
+ * House settles cashout + buys Megapot tickets for the PLAYER wallet only.
+ * Instant: server locks win + returns immediately; on-chain buy continues in background.
+ * count may be 0 (progress-only remainder) — still settles stake, never client-refunds.
+ * Sends clientCashoutAt / claimedMult / roundId so late RTT still settles under crash.
  */
 async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
-  if(count <= 0) return { ok: false, error: 'tickets must be ≥ 1' };
+  // Allow 0 when stake is present (progress-only cashout must still hit the server)
+  if(count <= 0 && !(Number(meta.stake) > 0)){
+    return { ok: false, error: 'tickets must be ≥ 1' };
+  }
   if(!HOUSE_BUY_URL) return { ok: false, error: 'HOUSE_BUY_URL not set' };
   const to = recipient || account;
   if(!to || !/^0x[a-fA-F0-9]{40}$/i.test(to)){
@@ -5335,51 +6125,104 @@ async function houseBuyTickets(count, recipient, meta = {}){
     return { ok: false, error: 'Ticket recipient cannot be the house address' };
   }
   let lastErr = 'House buy failed';
-  let lastRefund = null;
+  let lastBody = null;
+  // Keep stable entryId across retries (sequencer idempotency)
+  const entryId = meta.entryId ? String(meta.entryId) : '';
+  // Instant settle API — on-chain ticket buy continues in Worker background.
+  // 12s budget is plenty for settle+progress; chain buy is deferred.
   for(let attempt=0; attempt<2; attempt++){
     try{
       const controller = new AbortController();
-      const timer = setTimeout(()=>controller.abort(), 55000);
+      const timer = setTimeout(()=>controller.abort(), 12000);
       const r = await fetch(HOUSE_BUY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          entryId: (meta.entryId || '') + (attempt?('-r'+attempt):''),
+          entryId,
           stake: meta.stake,
           multiplier: meta.multiplier,
+          claimedMult: meta.claimedMult != null ? meta.claimedMult : meta.multiplier,
+          clientCashoutAt: meta.clientCashoutAt != null ? meta.clientCashoutAt : undefined,
+          roundId: meta.roundId != null ? meta.roundId : undefined,
           recipient: to,
           tickets: count,
           count,
           chainId: 84532,
+          // no sync — server returns as soon as settlement is locked in
         }),
       });
       clearTimeout(timer);
       const j = await r.json().catch(()=>({}));
-      if(j && j.ok && j.txHash){
-        const bought = Math.max(1, Math.floor(Number(j.tickets) || count) || count);
-        if(window.MegaPushUI?.bumpTickets) window.MegaPushUI.bumpTickets(bought);
-        loadUserTickets({ expectAtLeast: 1, retries: 8, delayMs: 400, lookback: 10 }).catch(()=>{});
+      lastBody = j;
+      if(j && j.ok){
+        const freeTix = Math.max(0, Math.floor(Number(j.freeTickets) || 0));
+        let cashoutTix = Math.max(
+          0,
+          Math.floor(Number(j.cashoutTickets != null ? j.cashoutTickets : j.tickets) || 0),
+        );
+        // Prefer explicit cashoutTickets; fall back to total - free, then request count
+        if(!(cashoutTix > 0) && count > 0){
+          const total = Math.floor(Number(j.tickets) || 0);
+          cashoutTix = freeTix > 0 && total >= freeTix ? total - freeTix : (total || count);
+        }
+        const totalTix = Math.max(cashoutTix + freeTix, Math.floor(Number(j.tickets) || 0), count);
+        // Refresh tickets immediately while chain buy finishes in background
+        if(totalTix > 0){
+          loadUserTickets({ expectAtLeast: 1, retries: 24, delayMs: 500, lookback: 12 }).catch(()=>{});
+        }
         return {
           ok: true,
-          onchain: true,
-          count: bought,
-          tickets: bought,
-          txHash: j.txHash,
+          onchain: !!j.txHash,
+          pendingOnchain: j.pendingOnchain !== false && !j.txHash && totalTix > 0,
+          pendingTickets: j.pendingTickets != null ? j.pendingTickets : totalTix,
+          count: totalTix,
+          tickets: totalTix,
+          cashoutTickets: cashoutTix,
+          freeTickets: freeTix,
+          returned: 0,
+          txHash: j.txHash || null,
           recipient: j.recipient || to,
-          ...j,
+          multiplier: j.multiplier,
+          settlement: j.settlement,
+          stake: j.stake,
+          entryId: j.entryId,
+          already: j.already,
+          note: j.note,
+          instant: j.instant !== false,
+          progressUsdc: j.progressUsdc,
         };
       }
       lastErr = j.error || ('HTTP '+r.status);
-      lastRefund = j.refundTxHash || null;
-      if(lastRefund) break;
-      await new Promise(res=>setTimeout(res, 800));
+      // Hard rejects only — do not treat refund as a win path
+      if(j.lost || j.voided || r.status === 409 || r.status === 400){
+        return {
+          ok: false,
+          error: lastErr,
+          recipient: to,
+          lost: !!j.lost,
+          voided: !!j.voided,
+          crashMult: j.crashMult,
+          // Prefer never showing refund as the happy path
+          refundToBank: !!j.refundToBank,
+          refundTxHash: j.refundTxHash || null,
+          playBalance: j.playBalance,
+        };
+      }
+      await new Promise(res=>setTimeout(res, 150));
     }catch(e){
-      lastErr = e?.name==='AbortError' ? 'Ticket buy timed out' : (e?.message || String(e));
-      await new Promise(res=>setTimeout(res, 800));
+      lastErr = e?.name==='AbortError' ? 'Cashout timed out' : (e?.message || String(e));
+      await new Promise(res=>setTimeout(res, 150));
     }
   }
-  return { ok: false, error: lastErr, recipient: to, refundTxHash: lastRefund };
+  return {
+    ok: false,
+    error: lastErr,
+    recipient: to,
+    refundTxHash: lastBody?.refundTxHash || null,
+    refundToBank: lastBody?.refundToBank,
+    lost: !!lastBody?.lost,
+  };
 }
 
 function ticketCacheKey(addr){
@@ -5717,6 +6560,26 @@ async function claimWinnings(){
   }
 }
 
+function resetLoggedOutUi(){
+  // Play balance → deposit CTA (not leftover $)
+  try{ setPlayBalUi(0); }catch(_){}
+  // Free daily → default label (not previous timer)
+  try{
+    window.__mpFreeDailyEligible = null;
+    window.__mpFreeDailyNextAt = null;
+    const lab = document.getElementById('freeDailyLab');
+    const fd = document.getElementById('freeDailyBtn');
+    if(lab) lab.textContent = 'Free daily';
+    if(fd){ fd.disabled = false; fd.classList.remove('ready'); }
+    if(typeof updateFreeDailyUi === 'function'){
+      updateFreeDailyUi({ freeDailyEligible: true, freeDailyNextAt: null, freeDailyMsLeft: 0 });
+    }
+  }catch(_){}
+  try{ closeFreeDailyCard?.(); }catch(_){}
+  try{ renderBankHistory?.([]); }catch(_){}
+  try{ refreshLeaderboard?.(); }catch(_){}
+}
+
 function disconnectWallet(){
   account = null;
   walletClient = null;
@@ -5729,19 +6592,37 @@ function disconnectWallet(){
     btn.title = 'Connect wallet';
   }
   setBalUi(null);
+  resetLoggedOutUi();
   if(typeof window.setUnclaimedWinnings === 'function'){
     window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
   }
   // Clear live UI but keep localStorage cache so refresh can restore
   clearTicketsUi({ dropCache: false });
   if($('status')) $('status').textContent = 'Wallet disconnected';
+  showToast('Wallet disconnected', 'info');
   return true;
+}
+
+function openLogoutConfirm(){
+  const bg = $('logoutBg');
+  if(!bg){
+    // Fallback if modal missing
+    if(window.confirm('Disconnect wallet?')) disconnectWallet();
+    return;
+  }
+  const sub = $('logoutSub');
+  if(sub && account){
+    try{ sub.textContent = 'Disconnect '+short(account)+'? You can reconnect anytime.'; }catch(_){}
+  }
+  bg.classList.add('show');
+}
+function closeLogoutConfirm(){
+  $('logoutBg')?.classList.remove('show');
 }
 
 function onWalletBtnClick(){
   if(account){
-    const shortAddr = short(account);
-    disconnectWallet(); // one-tap disconnect — reconnect is silent next visit
+    openLogoutConfirm();
     return;
   }
   showWalletSheet();
@@ -5798,6 +6679,14 @@ if(btn){
 $('walletSheetClose')?.addEventListener('click', () => hideWalletSheet());
 $('walletSheetBg')?.addEventListener('click', (e) => {
   if(e.target === $('walletSheetBg')) hideWalletSheet();
+});
+$('logoutConfirm')?.addEventListener('click', () => {
+  closeLogoutConfirm();
+  disconnectWallet();
+});
+$('logoutCancel')?.addEventListener('click', () => closeLogoutConfirm());
+$('logoutBg')?.addEventListener('click', (e) => {
+  if(e.target === $('logoutBg')) closeLogoutConfirm();
 });
 
 // Silent reconnect only if already authorized
@@ -5965,8 +6854,42 @@ if(claimBtn){
 </script>
 
 
-<footer class="mp-disclaimer" style="max-width:720px;margin:24px auto 40px;padding:0 16px;font-size:11px;line-height:1.45;color:var(--mid);text-align:center">
-  MegaPush is an independent application built on the Megapot protocol. It is not operated or endorsed by Megapot.
+<div class="mp-toast-host" id="toastHost" aria-live="polite" aria-relevant="additions"></div>
+
+<!-- Cash-out snackbar: fixed, non-blocking (never covers stake UI) -->
+<div class="cashout-receipt" id="cashoutReceipt" hidden role="status" aria-live="polite">
+  <div class="cr-top">
+    <div>
+      <div class="cr-title" id="crTitle"><b>+0 tickets</b> locked in</div>
+      <div class="cr-sub" id="crSub">Cashed out successfully</div>
+    </div>
+    <button type="button" class="cr-x" id="crClose" aria-label="Dismiss">×</button>
+  </div>
+  <div class="cr-meta">
+    <div>Draw in <b id="crDraw">—</b></div>
+    <div><span id="crMultLabel"></span></div>
+  </div>
+  <div class="cr-actions">
+    <a id="crTx" href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer" hidden>View on Base ↗</a>
+    <button type="button" id="crTixBtn">Tickets</button>
+  </div>
+</div>
+
+<footer class="site-footer" role="contentinfo">
+  <div class="site-footer-inner">
+    <div>
+      <div class="site-footer-brand">MEGA<em>PUSH</em></div>
+      <p class="site-footer-meta">Crash-style climb · cash out for Megapot lottery tickets on Base Sepolia.</p>
+    </div>
+    <nav class="site-footer-nav" aria-label="Footer">
+      <a href="/">Home</a>
+      <a class="docs-link" href="https://oluseyix.gitbook.io/megapush" target="_blank" rel="noopener noreferrer">Docs</a>
+      <a href="https://sepolia.basescan.org" target="_blank" rel="noopener noreferrer">Base</a>
+    </nav>
+  </div>
+  <p class="site-footer-copy">
+    MegaPush is an independent application built on the Megapot protocol. It is not operated or endorsed by Megapot.
+  </p>
 </footer>
 </body>
 </html>

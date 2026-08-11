@@ -1,5 +1,6 @@
 /**
- * Shared hand timing — used by round.js (public curve) and RoundDO (lifecycle).
+ * Shared hand timing constants + secret helpers.
+ * Live hand lifecycle with future-block entropy lives in RoundDO (not pure time+secret).
  */
 import {
   CYCLE_MS,
@@ -8,13 +9,18 @@ import {
   GROWTH_PER_MS,
   MAX_HANDS,
   FAIR_SCHEME,
+  TARGET_BLOCK_OFFSET,
+  ENTROPY_WAIT_MAX_MS,
   serverSeedForHand,
   crashFromSeed,
+  crashFromSeedAndBlock,
   multAtElapsed,
   roundMult,
   flightFromCrash,
   multOnCurve,
   settlementFromArrival,
+  settlementFromIntent,
+  CASHOUT_GRACE_MS,
   sha256Hex,
 } from './crash-curve.js';
 
@@ -25,8 +31,17 @@ export {
   GROWTH_PER_MS,
   MAX_HANDS,
   FAIR_SCHEME,
+  TARGET_BLOCK_OFFSET,
+  ENTROPY_WAIT_MAX_MS,
   multOnCurve,
   settlementFromArrival,
+  settlementFromIntent,
+  CASHOUT_GRACE_MS,
+  serverSeedForHand,
+  crashFromSeed,
+  crashFromSeedAndBlock,
+  flightFromCrash,
+  sha256Hex,
 };
 
 export function envGet(env, ...keys) {
@@ -69,6 +84,8 @@ export function unconfiguredRoundState(nowMs = Date.now()) {
     crashMult: null,
     serverSeedHash: null,
     serverSeed: null,
+    targetBlock: null,
+    blockHash: null,
     roundId: null,
     kill: false,
     error: 'ROUND_SECRET not configured — betting closed',
@@ -78,141 +95,6 @@ export function unconfiguredRoundState(nowMs = Date.now()) {
       reveal: null,
       verify: 'POST /api/verify after seed is revealed',
     },
-  };
-}
-
-/** Full hand timing including crash point. */
-export async function handTiming(slotId, hand, handStart, slotEnd, secret) {
-  const serverSeed = await serverSeedForHand(secret, slotId, hand);
-  const serverSeedHash = await sha256Hex(serverSeed);
-  let crashMult = crashFromSeed(serverSeed);
-  let { flightMs, crashMult: capped } = flightFromCrash(crashMult);
-  crashMult = capped;
-
-  const remaining = slotEnd - handStart;
-  // Full seed-derived flight must fit — never truncate crash mult (breaks /api/verify).
-  const need = BET_MS + flightMs + RESULT_MS + 50;
-  if (remaining < need) {
-    return { fits: false, serverSeed, serverSeedHash, crashMult };
-  }
-
-  const flyStart = handStart + BET_MS;
-  const crashAt = flyStart + flightMs;
-  const resultEnd = crashAt + RESULT_MS;
-
-  return {
-    fits: true,
-    serverSeed,
-    serverSeedHash,
-    crashMult,
-    flightMs,
-    handStart,
-    flyStart,
-    bettingEndsAt: flyStart,
-    crashAt,
-    resultEnd,
-    handEnd: resultEnd,
-  };
-}
-
-/**
- * Resolve live hand at nowMs (includes secrets — filter before public response).
- */
-export async function resolveLiveHand(nowMs, secret) {
-  const slotId = Math.floor(nowMs / CYCLE_MS);
-  const slotStart = slotId * CYCLE_MS;
-  const slotEnd = slotStart + CYCLE_MS;
-
-  let handStart = slotStart;
-  let hand = 0;
-  let timing = null;
-
-  while (hand < MAX_HANDS) {
-    timing = await handTiming(slotId, hand, handStart, slotEnd, secret);
-    if (!timing.fits) {
-      return {
-        ok: true,
-        phase: 'intermission',
-        acceptingBets: false,
-        roundId: slotId * 1000 + hand,
-        slotId,
-        hand,
-        mult: 1,
-        timing: null,
-        serverSeedHash: timing.serverSeedHash,
-        serverSeed: null,
-        crashMult: null,
-        slotEnd,
-        nextRoundStart: slotEnd,
-        nextRoundId: (slotId + 1) * 1000,
-      };
-    }
-    if (nowMs < timing.handEnd) break;
-    handStart = timing.handEnd;
-    hand += 1;
-  }
-
-  if (!timing || !timing.fits) {
-    return {
-      ok: true,
-      phase: 'intermission',
-      acceptingBets: false,
-      roundId: slotId * 1000 + hand,
-      slotId,
-      hand,
-      mult: 1,
-      timing: null,
-      serverSeedHash: null,
-      serverSeed: null,
-      crashMult: null,
-      slotEnd,
-      nextRoundStart: slotEnd,
-      nextRoundId: (slotId + 1) * 1000,
-    };
-  }
-
-  const { serverSeed, serverSeedHash, crashMult, flyStart, crashAt, resultEnd } = timing;
-  const roundId = slotId * 1000 + hand;
-
-  let phase;
-  let mult;
-  if (nowMs < flyStart) {
-    phase = 'betting';
-    mult = 1;
-  } else if (nowMs < crashAt) {
-    phase = 'flying';
-    mult = multOnCurve(timing, nowMs);
-  } else if (nowMs < resultEnd) {
-    phase = 'crashed';
-    mult = crashMult;
-  } else {
-    phase = 'intermission';
-    mult = 1;
-  }
-
-  const nextProbe = await handTiming(slotId, hand + 1, resultEnd, slotEnd, secret);
-  const nextRoundStart = nextProbe.fits ? resultEnd : slotEnd;
-  const nextRoundId = nextProbe.fits ? roundId + 1 : (slotId + 1) * 1000;
-
-  return {
-    ok: true,
-    phase,
-    acceptingBets: phase === 'betting',
-    roundId,
-    slotId,
-    hand,
-    mult,
-    timing,
-    serverSeedHash,
-    serverSeed,
-    crashMult,
-    flyStart,
-    crashAt,
-    resultEnd,
-    handStart: timing.handStart,
-    slotEnd,
-    nextRoundStart,
-    nextRoundId,
   };
 }
 
@@ -233,4 +115,25 @@ export function exposureForStake(stakeUsdc, env) {
   if (!(stake > 0)) return 0;
   const { maxPayoutMult, maxPayoutPerEntryUsdc } = capsFromEnv(env);
   return Math.min(stake * maxPayoutMult, maxPayoutPerEntryUsdc);
+}
+
+/**
+ * Build timing object for settlement from a RoundDO hand snapshot.
+ */
+export function timingFromHand(hand) {
+  if (!hand) return null;
+  return {
+    handStart: hand.handStart,
+    flyStart: hand.flyStart,
+    bettingEndsAt: hand.bettingEndsAt ?? hand.flyStart,
+    crashAt: hand.crashAt,
+    resultEnd: hand.resultEnd,
+    crashMult: hand.crashMult,
+    flightMs: hand.flightMs,
+    serverSeed: hand.serverSeed,
+    serverSeedHash: hand.serverSeedHash,
+    targetBlock: hand.targetBlock,
+    blockHash: hand.blockHash,
+    voided: !!hand.voided,
+  };
 }

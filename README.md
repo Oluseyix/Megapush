@@ -29,3 +29,12 @@ Let it run too long and the round crashes. The stake is gone.
 Currently on Base Sepolia testnet. Testnet tickets don't enter real drawings and carry no value. Don't send mainnet USDC to any MegaPush address.
 
 MegaPush is a game of chance. Stake only what you can afford to lose. [Odds and payouts](learn/odds-and-payouts.md) · [Play responsibly](appendix/responsible-gaming.md)
+
+## Repo notes (engineers)
+
+- **Live app / Worker:** Cloudflare Workers + static assets (`wrangler.toml`, `cf-worker/`, `public/`)
+- **Deploy:** `npx wrangler deploy` → https://megapush.xnoxseyi.workers.dev
+- **Provably fair (detailed):** [`docs/playing/provably-fair.md`](docs/playing/provably-fair.md)
+- **Cloudflare setup:** [`CLOUDFLARE.md`](CLOUDFLARE.md)
+- Cashout settles instantly and mints tickets in the background; settled wins never refund stake
+- Do not commit `.env`, `.dev.vars`, or private keys

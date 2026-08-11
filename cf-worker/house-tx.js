@@ -7,6 +7,8 @@ import {
   http,
   fallback,
   parseAbi,
+  parseAbiItem,
+  parseEventLogs,
   keccak256,
   toBytes,
   formatUnits,
@@ -38,6 +40,15 @@ const ticketReadAbi = parseAbi([
   'function currentDrawingId() view returns (uint256)',
   'function getUserTickets(address _userAddress, uint256 _drawingId) view returns ((uint256 ticketId, (uint256 drawingId, uint256 packedTicket, bytes32 referralScheme) ticket, uint8[] normals, uint8 bonusball)[])',
 ]);
+/** ERC-721 — mint to house, transfer only earned tickets to player; extras stay with house. */
+export const ticketNftAbi = parseAbi([
+  'function safeTransferFrom(address from, address to, uint256 tokenId)',
+  'function transferFrom(address from, address to, uint256 tokenId)',
+  'function ownerOf(uint256 tokenId) view returns (address)',
+]);
+const TRANSFER_EVENT = parseAbiItem(
+  'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+);
 
 export function envGet(env, ...keys) {
   for (const k of keys) {
@@ -83,10 +94,50 @@ export function makeTransport(env) {
   );
 }
 
-export function makeClients(env) {
-  const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
+const KV_HOUSE_KEY = 'HOUSE_PRIVATE_KEY';
+/** @type {string|null} */
+let _houseKeyCache = null;
+
+/**
+ * Resolve house signing key: Worker secret first, then BANK_KV bootstrap copy.
+ * Pages can push the key once via /api/bootstrap/house so the Worker can cash out.
+ */
+export async function resolveHousePrivateKey(env) {
+  const fromEnv = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
+  if (fromEnv) {
+    _houseKeyCache = fromEnv;
+    return fromEnv;
+  }
+  if (_houseKeyCache) return _houseKeyCache;
+  try {
+    if (env?.BANK_KV) {
+      const fromKv = await env.BANK_KV.get(KV_HOUSE_KEY);
+      if (fromKv && String(fromKv).trim()) {
+        _houseKeyCache = String(fromKv).trim();
+        return _houseKeyCache;
+      }
+    }
+  } catch (e) {
+    console.warn('resolveHousePrivateKey KV', e?.message || e);
+  }
+  return '';
+}
+
+export async function storeHousePrivateKey(env, key) {
+  const k = String(key || '').trim();
+  if (!k || k.length < 64) {
+    throw new Error('Invalid house private key');
+  }
+  if (!env?.BANK_KV) throw new Error('BANK_KV missing');
+  await env.BANK_KV.put(KV_HOUSE_KEY, k.startsWith('0x') ? k : `0x${k}`);
+  _houseKeyCache = k.startsWith('0x') ? k : `0x${k}`;
+  return privateKeyToAccount(/** @type {`0x${string}`} */ (_houseKeyCache)).address;
+}
+
+export async function makeClients(env) {
+  const key = await resolveHousePrivateKey(env);
   if (!key) {
-    const err = new Error('Service unavailable');
+    const err = new Error('Service unavailable — HOUSE_PRIVATE_KEY not configured');
     err.statusCode = 503;
     throw err;
   }
@@ -197,8 +248,103 @@ export async function countPlayerTickets(clients, player) {
 }
 
 /**
- * Buy Megapot tickets for recipient (chunked). Caller must serialize via DO or lock.
- * @returns {{ ok: true, txHash, buyTxs, tickets, requested, house, beforeCount, afterCount, delivered, cost, ticketPriceUsdc }}
+ * Parse ticket tokenIds minted/transferred to `to` from a tx receipt.
+ */
+export function ticketIdsFromReceipt(receipt, toAddr) {
+  const to = String(toAddr || '').toLowerCase();
+  if (!receipt?.logs?.length || !to) return [];
+  try {
+    const events = parseEventLogs({
+      abi: [TRANSFER_EVENT],
+      logs: receipt.logs,
+    });
+    const ids = [];
+    for (const ev of events) {
+      if (ev.eventName !== 'Transfer') continue;
+      const dest = String(ev.args?.to || '').toLowerCase();
+      if (dest !== to) continue;
+      if (ev.args?.tokenId != null) ids.push(ev.args.tokenId);
+    }
+    return ids;
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Buy one chunk with simulate + generous gas. Retries on revert/transient errors.
+ */
+async function buyTicketChunk(clients, { recipient, chunk, maxAttempts = 4 }) {
+  const { publicClient, walletClient, account, house } = clients;
+  let lastErr;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      if (attempt === 1 || attempt === 3) {
+        try {
+          await ensureMaxAllowance(clients, RANDOM_BUYER);
+        } catch (_) {}
+      }
+      // Megapot RandomBuyer uses ~1.1M gas / ticket; under-estimation OOGs and looks like a random revert.
+      // Floor: 2.5M per ticket, cap 14M per chunk (Base Sepolia block room).
+      const gasFloor = 2_500_000n * BigInt(chunk);
+      let gas = gasFloor;
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: RANDOM_BUYER,
+          abi: megapotAbi,
+          functionName: 'buyTickets',
+          args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
+          account,
+        });
+        if (request.gas != null) {
+          const bumped = (request.gas * 25n) / 10n; // 2.5× estimate
+          if (bumped > gas) gas = bumped;
+        }
+      } catch (simErr) {
+        // Still try send with floor gas — sim can fail while send works after allowance
+        console.warn('buyTickets sim', simErr?.shortMessage || simErr?.message || simErr);
+      }
+      if (gas > 14_000_000n) gas = 14_000_000n;
+
+      const nonce = await publicClient.getTransactionCount({
+        address: house,
+        blockTag: 'pending',
+      });
+      const hash = await walletClient.writeContract({
+        address: RANDOM_BUYER,
+        abi: megapotAbi,
+        functionName: 'buyTickets',
+        args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
+        account,
+        chain: baseSepolia,
+        gas,
+        nonce,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: 1,
+        timeout: 90_000,
+        pollingInterval: 500,
+      });
+      if (receipt.status !== 'success') {
+        throw new Error(`Transaction reverted: ${hash}`);
+      }
+      return hash;
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.shortMessage || e?.message || e || '').toLowerCase();
+      // Permanent config issues — don't spin
+      if (msg.includes('house usdc') || msg.includes('not configured')) throw e;
+      await sleep(400 + attempt * 400);
+    }
+  }
+  throw lastErr || new Error('buyTicketChunk failed');
+}
+
+/**
+ * Buy Megapot tickets for the PLAYER.
+ * Adaptive chunks (5 → 1) with retries — large single chunks intermittently revert on Base Sepolia.
+ * tickets = exact requested count (caller must pass floor(stake×mult) only).
  */
 export async function buyTicketsForPlayer(env, { recipient, tickets }) {
   if (!isAddr(recipient)) {
@@ -214,7 +360,7 @@ export async function buyTicketsForPlayer(env, { recipient, tickets }) {
   }
   if (n > 50) n = 50;
 
-  const clients = makeClients(env);
+  const clients = await makeClients(env);
   const { publicClient, house } = clients;
 
   if (recipient.toLowerCase() === house.toLowerCase()) {
@@ -252,47 +398,128 @@ export async function buyTicketsForPlayer(env, { recipient, tickets }) {
   const beforeCount = await countPlayerTickets(clients, recipient);
   const buyTxs = [];
   let remaining = n;
+  let chunkSize = n >= 10 ? 5 : Math.min(5, n); // prefer 5; fall back to 1 on pain
 
   while (remaining > 0) {
-    const chunk = Math.min(10, remaining);
-    await ensureMaxAllowance(clients, RANDOM_BUYER);
-    const hash = await sendAndWait(clients, {
-      address: RANDOM_BUYER,
-      abi: megapotAbi,
-      functionName: 'buyTickets',
-      args: [BigInt(chunk), recipient, [REFERRER], [PRECISE_UNIT], SOURCE],
-    });
-    buyTxs.push(hash);
-    remaining -= chunk;
-    if (remaining > 0) await sleep(400);
+    const chunk = Math.min(chunkSize, remaining);
+    try {
+      const hash = await buyTicketChunk(clients, { recipient, chunk });
+      buyTxs.push(hash);
+      remaining -= chunk;
+      if (remaining > 0) await sleep(250);
+    } catch (e) {
+      if (chunkSize > 1) {
+        // shrink chunk and retry same remaining
+        chunkSize = 1;
+        console.warn('buyTickets shrink chunk to 1', e?.shortMessage || e?.message || e);
+        continue;
+      }
+      // chunk=1 still failing — if we already delivered some, return partial success
+      if (buyTxs.length > 0) {
+        console.error('buyTickets partial', { delivered: n - remaining, failed: remaining });
+        break;
+      }
+      throw e;
+    }
+  }
+
+  const delivered = n - remaining;
+  if (!(delivered > 0)) {
+    const err = new Error('Ticket buy failed on-chain');
+    err.statusCode = 500;
+    throw err;
   }
 
   const txHash = buyTxs[buyTxs.length - 1];
   let afterCount = beforeCount;
-  for (let i = 0; i < 5; i++) {
-    await sleep(400);
+  try {
+    await sleep(300);
     afterCount = await countPlayerTickets(clients, recipient);
-    if (beforeCount != null && afterCount != null && afterCount > beforeCount) break;
-  }
-  const delivered =
-    beforeCount != null && afterCount != null ? Math.max(0, afterCount - beforeCount) : n;
+  } catch (_) {}
 
   return {
     ok: true,
     txHash,
     buyTxs,
-    tickets: delivered > 0 ? delivered : n,
+    tickets: delivered,
     requested: n,
     recipient,
     house,
     beforeCount,
     afterCount,
     delivered,
-    cost: cost.toString(),
+    kept: delivered,
+    returned: Math.max(0, n - delivered),
+    partial: delivered < n,
+    cost: (ticketPrice * BigInt(delivered)).toString(),
     ticketPriceUsdc: formatUnits(ticketPrice, 6),
-    costUsdc: Number(formatUnits(cost, 6)),
-    mode: 'randomBuyer_chunked',
+    costUsdc: Number(formatUnits(ticketPrice * BigInt(delivered), 6)),
+    mode: 'adaptive_chunk_buy',
     spender: RANDOM_BUYER,
+  };
+}
+
+/**
+ * Claw back excess tickets from a player to house when we know they received too many.
+ * Requires house to already own them OR player-approved operator (usually house owns via mint path).
+ * Prefer mint-to-house path so this is rarely needed for new cashouts.
+ */
+export async function reclaimTicketsToHouse(env, { player, ticketIds }) {
+  if (!isAddr(player)) {
+    return { ok: false, error: 'Valid player required' };
+  }
+  const ids = (Array.isArray(ticketIds) ? ticketIds : [])
+    .map((x) => {
+      try {
+        return BigInt(x);
+      } catch {
+        return null;
+      }
+    })
+    .filter((x) => x != null);
+  if (!ids.length) return { ok: false, error: 'ticketIds required' };
+
+  const clients = await makeClients(env);
+  const { publicClient, house } = clients;
+  const reclaimed = [];
+  const failed = [];
+
+  for (const tokenId of ids) {
+    try {
+      const owner = await publicClient.readContract({
+        address: TICKET_NFT,
+        abi: ticketNftAbi,
+        functionName: 'ownerOf',
+        args: [tokenId],
+      });
+      if (String(owner).toLowerCase() === house.toLowerCase()) {
+        reclaimed.push(tokenId.toString());
+        continue; // already house
+      }
+      if (String(owner).toLowerCase() !== player.toLowerCase()) {
+        failed.push({ id: tokenId.toString(), error: 'not owned by player' });
+        continue;
+      }
+      // Without prior approval this will fail — caller should use mint-to-house path
+      const hash = await sendAndWait(clients, {
+        address: TICKET_NFT,
+        abi: ticketNftAbi,
+        functionName: 'transferFrom',
+        args: [player, house, tokenId],
+      });
+      reclaimed.push(tokenId.toString());
+      void hash;
+    } catch (e) {
+      failed.push({ id: tokenId.toString(), error: e?.shortMessage || e?.message || String(e) });
+    }
+  }
+
+  return {
+    ok: failed.length === 0,
+    reclaimed,
+    failed,
+    house,
+    player,
   };
 }
 
@@ -310,7 +537,7 @@ export async function transferUsdcFromHouse(env, { to, amountUsdc }) {
     throw err;
   }
 
-  const clients = makeClients(env);
+  const clients = await makeClients(env);
   const { publicClient, house } = clients;
   const raw = parseUnits(String(amount), 6);
   const houseBal = await publicClient.readContract({

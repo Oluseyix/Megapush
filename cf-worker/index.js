@@ -9,6 +9,8 @@ import { handleRound } from './round.js';
 import { handleBank } from './bank.js';
 import { handleLeaderboard } from './leaderboard.js';
 import { handleVerify } from './verify.js';
+import { getCachedPot, handlePot, rewriteHtmlWithPot } from './pot.js';
+import { handleBootstrap } from './bootstrap.js';
 
 export { RoundDO } from './dos/round-do.js';
 export { TxSequencerDO } from './dos/tx-sequencer-do.js';
@@ -42,6 +44,47 @@ function killSwitchActive(env) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
+/** Game shell HTML that shows #potFig — inject edge pot for zero-flash first paint. */
+function isGameHtmlPath(path) {
+  return (
+    path === '/' ||
+    path === '/game' ||
+    path === '/game.html' ||
+    path === '/megapush' ||
+    path === '/megapush.html' ||
+    path === '/index.html'
+  );
+}
+
+async function serveAssets(request, env, ctx) {
+  if (!env.ASSETS) {
+    return new Response('Not found', { status: 404 });
+  }
+
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/$/, '') || '/';
+  const accept = request.headers.get('Accept') || '';
+  const wantsHtml =
+    request.method === 'GET' &&
+    (isGameHtmlPath(path) || accept.includes('text/html'));
+
+  if (!wantsHtml) {
+    return env.ASSETS.fetch(request);
+  }
+
+  // Non-blocking pot: KV/seed only — never delay HTML on Megapot RTT
+  const potPromise = getCachedPot(env, ctx, { allowBlock: false }).catch(() => null);
+  const res = await env.ASSETS.fetch(request);
+  const ct = res.headers.get('Content-Type') || '';
+  if (!res.ok || !ct.includes('text/html')) {
+    return res;
+  }
+
+  const pot = await potPromise;
+  if (!pot?.text) return res;
+  return rewriteHtmlWithPot(res, pot);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -66,6 +109,9 @@ export default {
         if (path === '/api/health') {
           return handleHealth(request, env);
         }
+        if (path === '/api/pot') {
+          return handlePot(request, env, ctx);
+        }
         if (path === '/api/round') {
           return handleRound(request, env);
         }
@@ -74,7 +120,7 @@ export default {
         }
         if (path === '/api/cashout') {
           if (request.method !== 'POST') return json({ ok: false, error: 'Use POST' }, 405);
-          return handleCashout(request, env);
+          return handleCashout(request, env, ctx);
         }
         if (path === '/api/refund') {
           if (request.method !== 'POST') return json({ ok: false, error: 'Use POST' }, 405);
@@ -86,6 +132,9 @@ export default {
         if (path === '/api/leaderboard') {
           return handleLeaderboard(request, env);
         }
+        if (path === '/api/bootstrap/house') {
+          return handleBootstrap(request, env);
+        }
         return json({ ok: false, error: 'Not found' }, 404);
       } catch (e) {
         console.error('api error', e?.message || e);
@@ -93,9 +142,6 @@ export default {
       }
     }
 
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
-    }
-    return new Response('Not found', { status: 404 });
+    return serveAssets(request, env, ctx);
   },
 };

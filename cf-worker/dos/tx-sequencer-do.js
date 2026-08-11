@@ -23,6 +23,7 @@ const KEY = {
   hourWindow: 'hourWindow', // { startMs, payoutUsdc, jobs }
   minuteWindow: 'minuteWindow', // { startMs, jobs }
   processing: 'processing',
+  processingAt: 'processingAt',
 };
 
 const MAX_RESULT_CACHE = 200;
@@ -145,12 +146,19 @@ export class TxSequencerDO {
     const rateErr = await this.checkRateLimits(type, payload);
     if (rateErr) return json(rateErr, rateErr.statusCode || 429);
 
+    // Stale "processing" lock can strand all cashouts — clear if older than 90s
+    const lockAt = Number((await this.state.storage.get(KEY.processingAt)) || 0);
+    if ((await this.state.storage.get(KEY.processing)) && lockAt > 0 && Date.now() - lockAt > 90_000) {
+      console.warn('TxSequencerDO clearing stale processing lock', { lockAt });
+      await this.state.storage.put(KEY.processing, false);
+    }
     if (await this.state.storage.get(KEY.processing)) {
-      // Should be rare (DO is single-threaded); still guard re-entrancy via waitUntil
       return json({ ok: false, error: 'House sequencer busy — retry', retry: true }, 503);
     }
 
+    // Mark busy briefly, then release storage before long RPC (avoids DO storage timeout reset)
     await this.state.storage.put(KEY.processing, true);
+    await this.state.storage.put(KEY.processingAt, Date.now());
     const seq = Number((await this.state.storage.get(KEY.seq)) || 0) + 1;
     await this.state.storage.put(KEY.seq, seq);
 
@@ -160,6 +168,11 @@ export class TxSequencerDO {
     let error = null;
 
     try {
+      // Clear the processing lock right before external I/O so storage isn't held open
+      // for multi-second ticket buys (that was resetting the DO).
+      await this.state.storage.put(KEY.processing, false);
+      await this.state.storage.delete(KEY.processingAt);
+
       if (type === 'cashout') {
         result = await buyTicketsForPlayer(this.env, {
           recipient: payload.recipient,
@@ -173,7 +186,6 @@ export class TxSequencerDO {
         });
         result.sequencer = { id: jobId, seq, type: 'usdc_transfer' };
       } else if (type === 'settleBatch') {
-        // Escrow not deployed yet — accept + record for step later
         result = {
           ok: true,
           pending: true,
@@ -197,7 +209,10 @@ export class TxSequencerDO {
         statusCode: e?.statusCode || 500,
       };
     } finally {
-      await this.state.storage.put(KEY.processing, false);
+      try {
+        await this.state.storage.put(KEY.processing, false);
+        await this.state.storage.delete(KEY.processingAt);
+      } catch (_) {}
     }
 
     const record = {

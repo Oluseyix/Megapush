@@ -18,29 +18,37 @@ function json(data, status = 200) {
 }
 
 async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake }) {
+  // Prefer sequencer (nonce safety). On busy/rate-limit/failure, fall through to
+  // direct house buy so cashouts still complete.
   if (env?.TX_SEQUENCER_DO) {
-    const { executeHouseJob } = await import('./dos/client.js');
-    const out = await executeHouseJob(env, {
-      type: 'cashout',
-      id: entryId || undefined,
-      payload: {
-        recipient,
-        tickets,
-        entryId,
-        costUsdc,
-        stake,
-      },
-    });
-    if (out?.missingBinding) {
-      // fall through
-    } else if (out?.already && out?.result?.ok) {
-      return { ...out.result, already: true, sequencerId: out.id };
-    } else if (out?.ok && out?.result?.ok) {
-      return { ...out.result, sequencerId: out.id, seq: out.seq };
-    } else {
-      const err = new Error(out?.error || out?.result?.error || 'Sequencer cashout failed');
-      err.statusCode = out?.result?.statusCode || (out?.status === 429 ? 429 : 500);
-      throw err;
+    try {
+      const { executeHouseJob } = await import('./dos/client.js');
+      const out = await executeHouseJob(env, {
+        type: 'cashout',
+        id: entryId || undefined,
+        payload: {
+          recipient,
+          tickets,
+          entryId,
+          costUsdc,
+          stake,
+        },
+      });
+      if (out?.missingBinding) {
+        // fall through
+      } else if (out?.already && out?.result?.ok) {
+        return { ...out.result, already: true, sequencerId: out.id };
+      } else if (out?.ok && out?.result?.ok) {
+        return { ...out.result, sequencerId: out.id, seq: out.seq };
+      } else {
+        console.warn(
+          'sequencer cashout fallback',
+          out?.error || out?.result?.error || out,
+        );
+        // fall through to direct buy
+      }
+    } catch (e) {
+      console.warn('sequencer cashout error, direct buy', e?.message || e);
     }
   }
 
@@ -54,6 +62,9 @@ async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake
  * @param {number} opts.stake
  * @param {string|null} opts.entryId
  * @param {number} [opts.arrivalMs]
+ * @param {number} [opts.clientCashoutAt] client click time (ms)
+ * @param {number} [opts.claimedMult] client mult at click
+ * @param {number} [opts.roundId] round being cashed
  * @param {boolean} [opts.auto] server auto-bank
  */
 export async function executeCashoutSettlement(env, opts) {
@@ -61,6 +72,10 @@ export async function executeCashoutSettlement(env, opts) {
   const stake = Number(opts.stake);
   const entryId = opts.entryId != null ? String(opts.entryId) : null;
   const arrivalMs = opts.arrivalMs != null ? Number(opts.arrivalMs) : Date.now();
+  const clientCashoutAt =
+    opts.clientCashoutAt != null ? Number(opts.clientCashoutAt) : null;
+  const claimedMult = opts.claimedMult != null ? Number(opts.claimedMult) : null;
+  const roundId = opts.roundId != null ? Number(opts.roundId) : null;
   const auto = !!opts.auto;
 
   if (!isAddr(recipient)) {
@@ -70,7 +85,12 @@ export async function executeCashoutSettlement(env, opts) {
   let settlement;
   try {
     const { settleCashoutAt } = await import('./round.js');
-    settlement = await settleCashoutAt(env, arrivalMs);
+    settlement = await settleCashoutAt(env, {
+      arrivalMs,
+      clientCashoutAt,
+      claimedMult,
+      roundId,
+    });
   } catch (e) {
     return { ok: false, error: e?.message || 'Could not resolve round settlement', status: 500 };
   }
@@ -111,156 +131,377 @@ export async function executeCashoutSettlement(env, opts) {
     return { ok: false, error: 'Invalid settlement mult or stake', status: 400 };
   }
 
-  // floor(stake × mult) whole tickets; remainder → progress
+  // Strict payout: tickets = floor(stake × mult) ONLY.
+  // Remainder → progress AFTER settle is committed. NEVER refund stake for a settled win.
+  // Progress free-tickets (floor(progressUsdc) ≥ 1) mint in background — buy failure must
+  // NOT refund the stake (that was the "progress ticket refunds stake" bug).
   const split = splitPayoutToTickets(stake, multiplier);
-  let tickets = split.tickets;
-  if (!(tickets > 0)) {
-    // Still bank remainder into progress even if < 1 ticket
-    let progress = null;
+  let cashoutTickets = split.tickets;
+  if (cashoutTickets > 50) cashoutTickets = 50;
+
+  const baseOk = {
+    recipient,
+    stake,
+    multiplier,
+    valueUsdc: split.valueUsdc,
+    remainderUsdc: split.remainderUsdc,
+    progressUsdc: null,
+    settlement: {
+      mult: multiplier,
+      roundId: settlement.roundId,
+      arrivalMs: settlement.arrivalMs,
+      effectiveAt: settlement.effectiveAt,
+      graceApplied: settlement.graceApplied,
+    },
+    payoutUnit: 'USDC_TICKETS',
+    entryId: entryId || undefined,
+    auto,
+  };
+
+  /**
+   * Credit remainder to progress ledger; return { progressUsdc, freeTickets }.
+   * freeTickets = whole dollars already banked (including this remainder).
+   * Buy failure after this MUST never refund stake.
+   */
+  async function commitProgress() {
     try {
-      const { applyTicketProgress } = await import('./bank.js');
-      progress = await applyTicketProgress(recipient, split.remainderUsdc, env);
-    } catch (_) {}
-    if (entryId) {
-      try {
-        const { roundDoSettleEntry } = await import('./dos/client.js');
-        await roundDoSettleEntry(env, {
-          entryId,
-          mult: multiplier,
-          tickets: 0,
-          payoutUsdc: split.valueUsdc,
-        });
-      } catch (_) {}
-      await markEntryConsumed(env, recipient, entryId, 'settled');
-    }
-    return {
-      ok: true,
-      tickets: 0,
-      requested: 0,
-      recipient,
-      stake,
-      multiplier,
-      remainderUsdc: split.remainderUsdc,
-      progressUsdc: progress?.progressUsdc,
-      freeTickets: progress?.freeTickets || 0,
-      settlement: { mult: multiplier, roundId: settlement.roundId, arrivalMs: settlement.arrivalMs },
-      payoutUnit: 'USDC_TICKETS',
-      entryId: entryId || undefined,
-      auto,
-      note: 'Below one ticket — remainder to progress only',
-    };
-  }
-
-  if (tickets > 50) tickets = 50;
-
-  try {
-    let freeTickets = 0;
-    let progressUsdc = null;
-
-    try {
-      const { applyTicketProgress } = await import('./bank.js');
-      const prog = await applyTicketProgress(recipient, split.remainderUsdc, env);
-      freeTickets = prog.freeTickets || 0;
-      progressUsdc = prog.progressUsdc;
+      const bankMod = await import('./bank.js');
+      if (split.remainderUsdc > 0 && typeof bankMod.applyTicketProgress === 'function') {
+        const prog = await bankMod.applyTicketProgress(
+          recipient,
+          split.remainderUsdc,
+          env,
+        );
+        return {
+          progressUsdc: prog.progressUsdc,
+          freeTickets: Math.max(0, Math.floor(Number(prog.freeTickets) || 0)),
+        };
+      }
+      // Remainder 0 — still surface free tickets from existing progress ledger
+      if (typeof bankMod.applyTicketProgress === 'function') {
+        const prog0 = await bankMod.applyTicketProgress(recipient, 0, env);
+        return {
+          progressUsdc: prog0.progressUsdc,
+          freeTickets: Math.max(0, Math.floor(Number(prog0.freeTickets) || 0)),
+        };
+      }
+      return { progressUsdc: null, freeTickets: 0 };
     } catch (pe) {
       console.warn('progress', pe?.message || pe);
+      return { progressUsdc: null, freeTickets: 0 };
     }
+  }
 
-    const totalBuy = tickets + freeTickets;
-    const buy = await runBuyTickets(env, {
-      recipient,
-      tickets: totalBuy,
-      entryId,
-      stake: Number.isFinite(stake) ? stake : undefined,
-    });
+  // ── Commit win immediately (stake spent → tickets/progress only; no refund path) ──
+  if (entryId) {
+    try {
+      const { roundDoSettleEntry } = await import('./dos/client.js');
+      await roundDoSettleEntry(env, {
+        entryId,
+        mult: multiplier,
+        tickets: cashoutTickets,
+        payoutUsdc: split.valueUsdc,
+      });
+    } catch (_) {}
+    await markEntryConsumed(env, recipient, entryId, 'settled');
+  }
 
-    // Only debit progress after successful on-chain free tickets
-    if (freeTickets > 0) {
-      try {
-        const { consumeProgressTickets } = await import('./bank.js');
-        const c = await consumeProgressTickets(recipient, freeTickets, env);
-        progressUsdc = c.progressUsdc;
-      } catch (_) {}
-    }
+  const prog = await commitProgress();
+  const freeTickets = Math.min(50, Math.max(0, Math.floor(Number(prog.freeTickets) || 0)));
+  // Cap total on-chain buy
+  // Prefer cashout tickets when hitting the 50-ticket buy cap; leftover progress stays banked
+  const totalBuy = Math.min(50, cashoutTickets + freeTickets);
+  const freeToBuy = Math.max(0, totalBuy - cashoutTickets);
 
-    if (entryId) {
-      try {
-        const { roundDoSettleEntry } = await import('./dos/client.js');
-        await roundDoSettleEntry(env, {
-          entryId,
-          mult: multiplier,
-          tickets: buy.tickets || totalBuy,
-          payoutUsdc: split.valueUsdc,
-        });
-      } catch (_) {}
-      await markEntryConsumed(env, recipient, entryId, 'settled');
-    }
-
+  if (cashoutTickets > 0) {
     try {
       const { recordScore } = await import('./leaderboard.js');
       await recordScore(
         {
           player: recipient,
           multiplier,
-          tickets: buy.tickets || totalBuy,
-          entryId: entryId || buy.txHash,
+          tickets: cashoutTickets,
+          entryId: entryId || `pending:${Date.now()}`,
         },
         env,
       );
     } catch (_) {}
+  }
+
+  // Nothing to mint on-chain — progress-only win (or empty free)
+  if (!(totalBuy > 0)) {
+    return {
+      ok: true,
+      tickets: 0,
+      cashoutTickets: 0,
+      freeTickets: 0,
+      returned: 0,
+      requested: 0,
+      pendingOnchain: false,
+      pendingTickets: 0,
+      ...baseOk,
+      progressUsdc: prog.progressUsdc,
+      instant: true,
+      note: 'Below one ticket — remainder to progress only',
+    };
+  }
+
+  const buyJob = {
+    recipient,
+    tickets: totalBuy,
+    entryId: entryId || undefined,
+    stake: Number.isFinite(stake) ? stake : undefined,
+    multiplier,
+    freeTickets: freeToBuy,
+  };
+
+  /** After a successful on-chain buy, debit progress for free tickets delivered. */
+  async function afterBuySuccess(buyResult) {
+    if (!(freeToBuy > 0)) return prog.progressUsdc;
+    try {
+      const { consumeProgressTickets } = await import('./bank.js');
+      // Only consume free tickets that were part of the buy (not cashout tickets)
+      const delivered = Math.floor(Number(buyResult?.tickets) || totalBuy);
+      const freeDelivered = Math.min(freeToBuy, Math.max(0, delivered - cashoutTickets));
+      if (freeDelivered > 0) {
+        const c = await consumeProgressTickets(recipient, freeDelivered, env);
+        return c.progressUsdc;
+      }
+    } catch (ce) {
+      console.warn('consume progress', ce?.message || ce);
+    }
+    return prog.progressUsdc;
+  }
+
+  const wantSync = opts.sync === true || opts.deferBuy === false;
+  if (!wantSync) {
+    try {
+      await queuePendingTickets(env, buyJob);
+    } catch (qe) {
+      console.error('queue pending tickets', qe?.message || qe);
+    }
+
+    const bgBuy = (async () => {
+      try {
+        const buyRes = await runBuyTickets(env, buyJob);
+        try {
+          await afterBuySuccess(buyRes);
+        } catch (_) {}
+        try {
+          await removePendingTickets(env, buyJob.entryId, buyJob.recipient);
+        } catch (_) {}
+      } catch (e) {
+        console.error('bg ticket buy', e?.shortMessage || e?.message || e);
+        // NEVER refund stake — queue for retry only
+        try {
+          await fulfillPendingTickets(env, { recipient, entryId });
+        } catch (_) {}
+      }
+    })();
+
+    if (opts.ctx && typeof opts.ctx.waitUntil === 'function') {
+      opts.ctx.waitUntil(bgBuy);
+    } else {
+      bgBuy.catch(() => {});
+    }
 
     return {
       ok: true,
-      txHash: buy.txHash,
-      buyTxs: buy.buyTxs,
-      tickets: buy.tickets || totalBuy,
-      cashoutTickets: tickets,
-      freeTickets,
+      txHash: null,
+      tickets: totalBuy,
+      cashoutTickets,
+      freeTickets: freeToBuy,
+      returned: 0,
       requested: totalBuy,
-      recipient,
-      stake,
-      multiplier,
-      valueUsdc: split.valueUsdc,
-      remainderUsdc: split.remainderUsdc,
-      progressUsdc,
-      settlement: {
-        mult: multiplier,
-        roundId: settlement.roundId,
-        arrivalMs: settlement.arrivalMs,
-      },
-      payoutUnit: 'USDC_TICKETS',
-      entryId: entryId || undefined,
-      already: buy.already,
-      auto,
+      pendingOnchain: true,
+      pendingTickets: totalBuy,
+      ...baseOk,
+      progressUsdc: prog.progressUsdc,
+      instant: true,
+      note:
+        freeToBuy > 0
+          ? 'Cashed out · tickets (+ progress free) buying in background'
+          : 'Cashed out · tickets buying in background',
+    };
+  }
+
+  // Sync path (tests / ops): await buy before responding — still never refunds stake
+  try {
+    const buyCash = await runBuyTickets(env, buyJob);
+    const progressAfter = await afterBuySuccess(buyCash);
+    const kept =
+      buyCash.tickets != null && buyCash.tickets > 0
+        ? Math.min(totalBuy, Math.floor(Number(buyCash.tickets)))
+        : totalBuy;
+    return {
+      ok: true,
+      txHash: buyCash.txHash || null,
+      buyTxs: buyCash.buyTxs,
+      tickets: kept,
+      cashoutTickets: Math.min(cashoutTickets, kept),
+      freeTickets: freeToBuy,
+      returned: 0,
+      requested: totalBuy,
+      pendingOnchain: false,
+      pendingTickets: 0,
+      ...baseOk,
+      progressUsdc: progressAfter,
+      already: buyCash.already,
+      instant: false,
     };
   } catch (e) {
-    // Ticket buy failed — return stake to deposited (never converted to tickets)
-    let refundToBank = null;
-    if (Number.isFinite(stake) && stake > 0 && isAddr(recipient)) {
-      try {
-        const { creditPlayBank } = await import('./bank.js');
-        refundToBank = await creditPlayBank(recipient, stake, entryId, env);
-      } catch (re) {
-        console.error('bank refund failed', re?.message || re);
+    // Buy failed — tickets stay queued. Stake is NOT refunded (win already committed).
+    try {
+      await queuePendingTickets(env, buyJob);
+    } catch (_) {}
+    return {
+      ok: true,
+      txHash: null,
+      tickets: totalBuy,
+      cashoutTickets,
+      freeTickets: freeToBuy,
+      returned: 0,
+      requested: totalBuy,
+      pendingOnchain: true,
+      pendingTickets: totalBuy,
+      ...baseOk,
+      progressUsdc: prog.progressUsdc,
+      instant: false,
+      note: 'Cashed out · tickets queued after buy error',
+      buyError: e?.message || String(e),
+    };
+  }
+}
+
+async function removePendingTickets(env, entryId, recipient) {
+  if (!env?.BANK_KV) return;
+  let list = [];
+  try {
+    list = (await env.BANK_KV.get(PENDING_TICKETS_KEY, { type: 'json' })) || [];
+  } catch (_) {
+    return;
+  }
+  if (!Array.isArray(list)) return;
+  const next = list.filter((j) => {
+    if (!j) return false;
+    if (entryId && String(j.entryId) === String(entryId)) return false;
+    return true;
+  });
+  await env.BANK_KV.put(PENDING_TICKETS_KEY, JSON.stringify(next.slice(-100)));
+}
+
+const PENDING_TICKETS_KEY = 'pending_ticket_buys_v1';
+
+async function queuePendingTickets(env, job) {
+  if (!env?.BANK_KV || !(Number(job?.tickets) > 0) || !isAddr(job?.recipient)) return;
+  let list = [];
+  try {
+    list = (await env.BANK_KV.get(PENDING_TICKETS_KEY, { type: 'json' })) || [];
+  } catch (_) {
+    list = [];
+  }
+  if (!Array.isArray(list)) list = [];
+  // Dedupe by entryId
+  if (job.entryId) {
+    list = list.filter((x) => !x || String(x.entryId) !== String(job.entryId));
+  }
+  list.push({
+    recipient: String(job.recipient).toLowerCase(),
+    tickets: Math.floor(Number(job.tickets)),
+    entryId: job.entryId || null,
+    stake: job.stake != null ? Number(job.stake) : null,
+    multiplier: job.multiplier != null ? Number(job.multiplier) : null,
+    freeTickets: job.freeTickets != null ? Math.floor(Number(job.freeTickets)) : 0,
+    at: Date.now(),
+    tries: 0,
+  });
+  list = list.slice(-100);
+  await env.BANK_KV.put(PENDING_TICKETS_KEY, JSON.stringify(list));
+}
+
+/** Retry queued ticket deliveries (no stake refunds — ever). */
+export async function fulfillPendingTickets(env, only = null) {
+  if (!env?.BANK_KV) return { ok: false, error: 'no kv' };
+  let list = [];
+  try {
+    list = (await env.BANK_KV.get(PENDING_TICKETS_KEY, { type: 'json' })) || [];
+  } catch (_) {
+    list = [];
+  }
+  if (!Array.isArray(list) || !list.length) return { ok: true, done: 0 };
+
+  const keep = [];
+  let done = 0;
+  for (const job of list) {
+    if (!job || !(Number(job.tickets) > 0) || !isAddr(job.recipient)) continue;
+    if (
+      only?.entryId &&
+      job.entryId &&
+      String(only.entryId) !== String(job.entryId)
+    ) {
+      keep.push(job);
+      continue;
+    }
+    if (
+      only?.recipient &&
+      String(only.recipient).toLowerCase() !== String(job.recipient).toLowerCase()
+    ) {
+      keep.push(job);
+      continue;
+    }
+    try {
+      const buyRes = await runBuyTickets(env, {
+        recipient: job.recipient,
+        tickets: job.tickets,
+        entryId: job.entryId || undefined,
+      });
+      // Debit progress for free tickets that were part of this job
+      const freeN = Math.max(0, Math.floor(Number(job.freeTickets) || 0));
+      if (freeN > 0) {
+        try {
+          const { consumeProgressTickets } = await import('./bank.js');
+          const delivered = Math.floor(Number(buyRes?.tickets) || job.tickets);
+          const cashoutPart = Math.max(0, Math.floor(Number(job.tickets) || 0) - freeN);
+          const freeDelivered = Math.min(freeN, Math.max(0, delivered - cashoutPart));
+          if (freeDelivered > 0) {
+            await consumeProgressTickets(job.recipient, freeDelivered, env);
+          }
+        } catch (_) {}
+      }
+      done += 1;
+    } catch (e) {
+      job.tries = (Number(job.tries) || 0) + 1;
+      job.lastError = e?.message || String(e);
+      // Keep retrying; never auto-refund stake
+      if (job.tries < 20) keep.push(job);
+      else {
+        console.error('pending tickets abandoned after tries', job);
+        keep.push(job);
       }
     }
-    const msg = e?.shortMessage || e?.message || String(e);
-    const safe =
-      /service unavailable|house usdc|rate limit|max_payout|busy|retry/i.test(msg)
-        ? msg
-        : 'Cashout failed';
-    return {
-      ok: false,
-      error: safe,
-      status: e?.statusCode || 500,
-      recipient,
-      tickets,
-      stake,
-      refundToBank: refundToBank?.ok ? true : false,
-      playBalance: refundToBank?.balance,
-      deposited: refundToBank?.deposited,
-      progressUsdc: refundToBank?.progressUsdc,
-    };
+  }
+  await env.BANK_KV.put(PENDING_TICKETS_KEY, JSON.stringify(keep.slice(-100)));
+  return { ok: true, done, remaining: keep.length };
+}
+
+/** Background on-chain buy after instant settle. Never refunds stake. */
+export async function fulfillDeferredTicketBuy(env, job) {
+  if (!job?.recipient || !(Number(job.tickets) > 0)) return;
+  try {
+    await runBuyTickets(env, {
+      recipient: job.recipient,
+      tickets: job.tickets,
+      entryId: job.entryId,
+      stake: job.stake,
+    });
+    try {
+      await removePendingTickets(env, job.entryId, job.recipient);
+    } catch (_) {}
+  } catch (e) {
+    console.error('deferred ticket buy failed', e?.message || e);
+    try {
+      await queuePendingTickets(env, job);
+    } catch (_) {}
   }
 }
 
@@ -279,7 +520,7 @@ async function markEntryConsumed(env, player, entryId, status) {
   } catch (_) {}
 }
 
-export async function handleCashout(request, env) {
+export async function handleCashout(request, env, ctx) {
   if (request.method !== 'POST') return json({ ok: false, error: 'Use POST' }, 405);
 
   let body = {};
@@ -289,13 +530,53 @@ export async function handleCashout(request, env) {
     body = {};
   }
 
+  // Prefer body.multiplier / claimedMult as the client's displayed mult at click
+  const claimedMult =
+    body.claimedMult != null
+      ? Number(body.claimedMult)
+      : body.multiplier != null
+        ? Number(body.multiplier)
+        : body.mult != null
+          ? Number(body.mult)
+          : null;
+
+  const clientCashoutAt =
+    body.clientCashoutAt != null
+      ? Number(body.clientCashoutAt)
+      : body.cashoutAt != null
+        ? Number(body.cashoutAt)
+        : body.clientAt != null
+          ? Number(body.clientAt)
+          : null;
+
+  const roundId =
+    body.roundId != null
+      ? Number(body.roundId)
+      : body.round_id != null
+        ? Number(body.round_id)
+        : null;
+
   const result = await executeCashoutSettlement(env, {
     recipient: body.recipient,
     stake: body.stake,
     entryId: body.entryId != null ? String(body.entryId) : null,
     arrivalMs: Date.now(),
+    clientCashoutAt,
+    claimedMult,
+    roundId,
     auto: false,
+    // Default instant: settle + return; buy tickets in waitUntil.
+    // Pass sync:true only for tests/ops that need the on-chain hash in the response.
+    sync: body.sync === true,
+    ctx,
   });
+
+  // Opportunistically drain older pending ticket buys for this player
+  if (result.ok && isAddr(body.recipient) && ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(
+      fulfillPendingTickets(env, { recipient: body.recipient }).catch(() => {}),
+    );
+  }
 
   if (!result.ok) {
     return json(
@@ -307,6 +588,8 @@ export async function handleCashout(request, env) {
         lost: result.lost,
         crashMult: result.crashMult,
         arrivalMs: result.arrivalMs,
+        effectiveAt: result.effectiveAt,
+        graceApplied: result.graceApplied,
         recipient: result.recipient,
         refundToBank: result.refundToBank,
         playBalance: result.playBalance,
@@ -317,5 +600,6 @@ export async function handleCashout(request, env) {
     );
   }
 
+  delete result._buyJob;
   return json(result, 200);
 }

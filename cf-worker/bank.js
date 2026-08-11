@@ -298,23 +298,25 @@ async function resolveHouseSet(env) {
   const set = new Set([DEFAULT_HOUSE.toLowerCase()]);
   const fromEnv = envGet(env, 'HOUSE_TREASURY', 'HOUSE_ADDRESS');
   if (isAddr(fromEnv)) set.add(fromEnv.toLowerCase());
-  const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
-  if (key) {
-    try {
+  try {
+    const { resolveHousePrivateKey } = await import('./house-tx.js');
+    const key = await resolveHousePrivateKey(env);
+    if (key) {
       const { privateKeyToAccount } = await import('viem/accounts');
       const pk = key.startsWith('0x') ? key : `0x${key}`;
       set.add(privateKeyToAccount(/** @type {`0x${string}`} */ (pk)).address.toLowerCase());
-    } catch (_) {}
-  }
+    }
+  } catch (_) {}
   return set;
 }
 
 async function houseAddress(env) {
   const fromEnv = envGet(env, 'HOUSE_TREASURY', 'HOUSE_ADDRESS');
   if (isAddr(fromEnv)) return fromEnv;
-  const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
-  if (!key) return DEFAULT_HOUSE;
   try {
+    const { resolveHousePrivateKey } = await import('./house-tx.js');
+    const key = await resolveHousePrivateKey(env);
+    if (!key) return DEFAULT_HOUSE;
     const { privateKeyToAccount } = await import('viem/accounts');
     const pk = key.startsWith('0x') ? key : `0x${key}`;
     return privateKeyToAccount(/** @type {`0x${string}`} */ (pk)).address;
@@ -619,42 +621,98 @@ async function reconcileDepositsFromChain(env, player, { lookbackBlocks = 4000 }
 }
 
 /**
+ * Normalize entry ids so retries (…-r1, …:r2) share one refund bucket.
+ * Prevents double-credit when cashout buy retries used different entryId suffixes.
+ */
+export function baseEntryId(entryId) {
+  let e = entryId != null ? String(entryId) : '';
+  if (!e) return '';
+  // strip :rN / -rN retry suffixes (possibly repeated)
+  e = e.replace(/(:r\d+|-\s*r\d+)$/i, '');
+  e = e.replace(/(:r\d+|-r\d+)$/i, '');
+  return e;
+}
+
+/**
  * Return stake to deposited (withdrawable) — cancel / failed ticket buy only.
  * Never use for cashout "winnings" (those are tickets + progress only).
+ * Idempotent per base entryId — never refund the same stake twice.
  */
 export async function creditPlayBank(player, stakeUsd, entryId, env) {
   if (!isAddr(player)) return { ok: false, error: 'bad player' };
-  const stake = Math.floor(Number(stakeUsd) || 0);
+  let stake = Math.floor(Number(stakeUsd) || 0);
   if (!(stake > 0)) return { ok: false, error: 'bad stake' };
   const bank = await loadBank(player, env);
-  if (entryId && bank.entries[entryId]?.status === 'refunded') {
-    return {
-      ok: true,
-      already: true,
-      balance: bank.deposited,
-      deposited: bank.deposited,
-      progressUsdc: bank.progressUsdc,
-      toBank: true,
-    };
+  const baseId = baseEntryId(entryId);
+
+  // Already refunded / settled / lost under base or any retry variant → no-op
+  if (baseId) {
+    const statuses = new Set();
+    let originalStake = null;
+    for (const [id, row] of Object.entries(bank.entries || {})) {
+      if (!row) continue;
+      if (id === baseId || baseEntryId(id) === baseId) {
+        statuses.add(String(row.status || ''));
+        if (row.stake != null && Number(row.stake) > 0) {
+          originalStake = Math.floor(Number(row.stake));
+        }
+      }
+    }
+    // History check: any prior refund for this base entry
+    const alreadyRefundedHist = (bank.history || []).some((h) => {
+      if (!h || h.type !== 'refund') return false;
+      const hid = baseEntryId(h.entryId);
+      return hid && hid === baseId;
+    });
+    if (
+      statuses.has('refunded') ||
+      statuses.has('settled') ||
+      statuses.has('lost') ||
+      alreadyRefundedHist
+    ) {
+      return {
+        ok: true,
+        already: true,
+        balance: bank.deposited,
+        deposited: bank.deposited,
+        progressUsdc: bank.progressUsdc,
+        toBank: true,
+      };
+    }
+    // Cap credit to original stake (never invent a larger refund)
+    if (originalStake != null && originalStake > 0) {
+      stake = Math.min(stake, originalStake);
+    }
   }
+
   bank.deposited = money2(bank.deposited + stake);
   syncDeposited(bank);
-  if (entryId) {
-    bank.entries[entryId] = {
-      ...(bank.entries[entryId] || {}),
-      stake,
+  if (baseId) {
+    bank.entries[baseId] = {
+      ...(bank.entries[baseId] || {}),
+      stake: bank.entries[baseId]?.stake ?? stake,
       status: 'refunded',
       at: Date.now(),
     };
+    // Mark retry variants too so later -r1 paths no-op
+    for (const id of Object.keys(bank.entries || {})) {
+      if (id !== baseId && baseEntryId(id) === baseId) {
+        bank.entries[id] = {
+          ...bank.entries[id],
+          status: 'refunded',
+          at: Date.now(),
+        };
+      }
+    }
     try {
       const { roundDoReleaseStake } = await import('./dos/client.js');
-      await roundDoReleaseStake(env, { entryId: String(entryId), reason: 'cashout_refund' });
+      await roundDoReleaseStake(env, { entryId: baseId, reason: 'cashout_refund' });
     } catch (_) {}
   }
   pushHistory(bank, {
     type: 'refund',
     amount: stake,
-    entryId: entryId || null,
+    entryId: baseId || entryId || null,
     at: Date.now(),
   });
   const saved = await saveBank(player, bank, env);
@@ -1184,42 +1242,17 @@ export async function handleBank(request, env) {
       }, 400);
     }
     if (!(stake > 0)) return json({ ok: false, error: 'Invalid stake' }, 400);
+    // Shared idempotent path (strips -r1 / :rN retry suffixes)
+    const result = await creditPlayBank(player, stake, entryId, env);
+    if (!result.ok) return json(result, 400);
     const bank = await loadBank(player, env);
-    if (entryId && bank.entries[entryId]?.status === 'refunded') {
-      return json({
-        ok: true,
-        already: true,
-        ...bankPublicView(bank),
-        history: bank.history || [],
-      });
-    }
-    bank.deposited = money2(bank.deposited + stake);
-    syncDeposited(bank);
-    if (entryId) {
-      bank.entries[entryId] = {
-        ...(bank.entries[entryId] || {}),
-        stake,
-        status: 'refunded',
-        at: Date.now(),
-      };
-      try {
-        const { roundDoReleaseStake } = await import('./dos/client.js');
-        await roundDoReleaseStake(env, { entryId, reason: body.reason || 'refund' });
-      } catch (_) {}
-    }
-    pushHistory(bank, {
-      type: 'refund',
-      amount: stake,
-      entryId: entryId || null,
-      at: Date.now(),
-    });
-    const saved = await saveBank(player, bank, env);
     return json({
       ok: true,
-      ...bankPublicView(saved),
-      credited: stake,
+      already: !!result.already,
+      ...bankPublicView(bank),
+      credited: result.already ? 0 : result.credited,
       toBank: true,
-      history: saved.history,
+      history: bank.history || [],
     });
   }
 
@@ -1249,12 +1282,15 @@ export async function handleBank(request, env) {
       }, 400);
     }
 
-    const key = envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
-    if (!key && !env?.TX_SEQUENCER_DO) {
-      return json({
-        ok: false,
-        error: 'Withdraw unavailable',
-      }, 503);
+    {
+      const { resolveHousePrivateKey } = await import('./house-tx.js');
+      const key = await resolveHousePrivateKey(env);
+      if (!key && !env?.TX_SEQUENCER_DO) {
+        return json({
+          ok: false,
+          error: 'Withdraw unavailable',
+        }, 503);
+      }
     }
 
     try {

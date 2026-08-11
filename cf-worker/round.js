@@ -1,6 +1,6 @@
 /**
  * Provably fair global rounds — one synchronized TV curve.
- * Public /api/round merges RoundDO lifecycle (exposure, window) when available.
+ * Live authority: RoundDO (future Base block entropy + exposure).
  */
 
 import {
@@ -8,14 +8,11 @@ import {
   BET_MS,
   RESULT_MS,
   GROWTH_PER_MS,
-  MAX_HANDS,
   FAIR_SCHEME,
-  handTiming,
-  resolveLiveHand,
   masterSecret,
   hasRoundSecret,
   unconfiguredRoundState,
-  settlementFromArrival,
+  TARGET_BLOCK_OFFSET,
 } from './hand-timing.js';
 import { roundStub, doFetch } from './dos/client.js';
 
@@ -30,111 +27,18 @@ function json(data, status = 200) {
   });
 }
 
-export { handTiming, masterSecret, hasRoundSecret };
+export { masterSecret, hasRoundSecret };
 
 /**
- * Resolve public or settlement state at nowMs.
- * @param {{ revealSecrets?: boolean }} opts
+ * Settlement via RoundDO (block-hash crash + client-intent grace).
+ * @param {object} env
+ * @param {number|object} [arrivalOrOpts] legacy arrivalMs number, or opts bag
+ * @param {number} [arrivalOrOpts.arrivalMs]
+ * @param {number} [arrivalOrOpts.clientCashoutAt]
+ * @param {number} [arrivalOrOpts.claimedMult]
+ * @param {number} [arrivalOrOpts.roundId]
  */
-export async function getRoundStateSafe(nowMs, secret, opts = {}) {
-  const revealSecrets = !!opts.revealSecrets;
-  const live = await resolveLiveHand(nowMs, secret);
-
-  if (!live.timing) {
-    return {
-      ok: true,
-      global: true,
-      provablyFair: true,
-      serverNow: nowMs,
-      roundId: live.roundId,
-      slotId: live.slotId,
-      hand: live.hand,
-      phase: live.phase,
-      acceptingBets: false,
-      mult: 1,
-      crashMult: null,
-      serverSeedHash: live.serverSeedHash,
-      serverSeed: null,
-      fair: {
-        scheme: FAIR_SCHEME,
-        commit: live.serverSeedHash,
-        reveal: null,
-        verify: 'POST /api/verify after reveal',
-      },
-      roundStart: null,
-      bettingEndsAt: null,
-      flyStart: null,
-      crashAt: null,
-      resultEnd: null,
-      cycleEnd: live.slotEnd,
-      slotEnd: live.slotEnd,
-      nextRoundId: live.nextRoundId,
-      nextRoundStart: live.nextRoundStart,
-      growthPerMs: GROWTH_PER_MS,
-      cycleMs: CYCLE_MS,
-      betMs: BET_MS,
-      resultMs: RESULT_MS,
-    };
-  }
-
-  const timing = live.timing;
-  const phase = live.phase;
-  const revealed = phase === 'crashed' || phase === 'intermission';
-  const showCrash = revealed || revealSecrets;
-  const showSeed = revealed;
-
-  const base = {
-    ok: true,
-    global: true,
-    provablyFair: true,
-    serverNow: nowMs,
-    roundId: live.roundId,
-    slotId: live.slotId,
-    hand: live.hand,
-    phase,
-    acceptingBets: phase === 'betting',
-    mult: live.mult,
-    serverSeedHash: live.serverSeedHash,
-    crashMult: showCrash ? live.crashMult : null,
-    serverSeed: showSeed ? live.serverSeed : null,
-    fair: {
-      scheme: FAIR_SCHEME,
-      commit: live.serverSeedHash,
-      reveal: showSeed ? live.serverSeed : null,
-      verify: showSeed
-        ? 'POST /api/verify { serverSeed, serverSeedHash, crashMult }'
-        : 'Seed revealed after crash; commit published during betting',
-    },
-    roundStart: timing.handStart,
-    bettingEndsAt: timing.flyStart,
-    flyStart: timing.flyStart,
-    crashAt: showCrash ? timing.crashAt : null,
-    resultEnd: revealed || revealSecrets ? timing.resultEnd : null,
-    cycleEnd: live.nextRoundStart,
-    slotEnd: live.slotEnd,
-    nextRoundId: live.nextRoundId,
-    nextRoundStart: live.nextRoundStart,
-    growthPerMs: GROWTH_PER_MS,
-    cycleMs: CYCLE_MS,
-    betMs: BET_MS,
-    resultMs: RESULT_MS,
-    _timing: revealSecrets ? timing : undefined,
-  };
-
-  if ((phase === 'flying' || phase === 'betting') && !revealSecrets) {
-    return {
-      ...base,
-      crashAt: null,
-      crashMult: null,
-      serverSeed: null,
-      resultEnd: phase === 'flying' ? null : base.resultEnd,
-      _timing: undefined,
-    };
-  }
-  return base;
-}
-
-export async function settleCashoutAt(env, arrivalMs = Date.now()) {
+export async function settleCashoutAt(env, arrivalOrOpts = Date.now()) {
   if (!hasRoundSecret(env)) {
     return {
       ok: false,
@@ -142,103 +46,92 @@ export async function settleCashoutAt(env, arrivalMs = Date.now()) {
       phase: 'intermission',
     };
   }
-  const secret = masterSecret(env);
-  const state = await getRoundStateSafe(arrivalMs, secret, { revealSecrets: true });
-  if (!state._timing) {
+  if (!env?.ROUND_DO) {
     return {
       ok: false,
-      error: 'No active hand timing',
-      phase: state.phase,
-      roundId: state.roundId,
+      error: 'RoundDO binding missing',
+      phase: 'intermission',
     };
   }
-  const settlement = settlementFromArrival(state._timing, arrivalMs);
-  return {
-    ...settlement,
-    roundId: state.roundId,
-    slotId: state.slotId,
-    hand: state.hand,
-    serverSeedHash: state.serverSeedHash,
-    serverSeed:
-      state.phase === 'crashed' || state.phase === 'intermission' ? state.serverSeed : null,
-    serverNow: arrivalMs,
-    acceptingBets: state.acceptingBets,
-  };
-}
-
-async function getRoundHistory(nowMs, secret, limit = 20) {
-  const max = Math.min(50, Math.max(1, Math.floor(Number(limit) || 20)));
-  const out = [];
-  let slotId = Math.floor(nowMs / CYCLE_MS);
-
-  for (let s = 0; s < 40 && out.length < max; s++) {
-    const sid = slotId - s;
-    if (sid < 0) break;
-    const slotStart = sid * CYCLE_MS;
-    const slotEnd = slotStart + CYCLE_MS;
-    let handStart = slotStart;
-    const completed = [];
-
-    for (let hand = 0; hand < MAX_HANDS; hand++) {
-      const timing = await handTiming(sid, hand, handStart, slotEnd, secret);
-      if (!timing.fits) break;
-      if (timing.crashAt != null && timing.crashAt <= nowMs) {
-        completed.push({
-          roundId: sid * 1000 + hand,
-          slotId: sid,
-          hand,
-          crashMult: timing.crashMult,
-          crashAt: timing.crashAt,
-          flyStart: timing.flyStart,
-          bettingEndsAt: timing.flyStart,
-          serverSeedHash: timing.serverSeedHash,
-          serverSeed: timing.serverSeed,
-        });
-      }
-      handStart = timing.handEnd;
-      if (handStart >= slotEnd) break;
-    }
-
-    for (let i = completed.length - 1; i >= 0 && out.length < max; i--) {
-      out.push(completed[i]);
-    }
+  const opts =
+    arrivalOrOpts != null && typeof arrivalOrOpts === 'object'
+      ? arrivalOrOpts
+      : { arrivalMs: arrivalOrOpts };
+  const out = await doFetch(roundStub(env), '/settlement', {
+    method: 'POST',
+    body: JSON.stringify({
+      arrivalMs: opts.arrivalMs != null ? Number(opts.arrivalMs) : Date.now(),
+      clientCashoutAt:
+        opts.clientCashoutAt != null ? Number(opts.clientCashoutAt) : undefined,
+      claimedMult: opts.claimedMult != null ? Number(opts.claimedMult) : undefined,
+      roundId: opts.roundId != null ? Number(opts.roundId) : undefined,
+    }),
+  });
+  if (!out || out.missingBinding) {
+    return { ok: false, error: 'RoundDO unavailable', phase: 'intermission' };
   }
-
   return out;
 }
 
-/** Merge RoundDO lifecycle fields into public round payload. */
-async function mergeRoundDo(env, publicState) {
-  if (!env?.ROUND_DO) return publicState;
-  const doState = await doFetch(roundStub(env), '/state');
-  if (!doState?.ok) {
-    return publicState;
+/**
+ * Public live state from RoundDO.
+ */
+export async function getLiveRound(env) {
+  if (!hasRoundSecret(env)) {
+    return unconfiguredRoundState(Date.now());
   }
-
-  // DO is authority for acceptingBets when kill or windowClosed
-  const acceptingBets =
-    publicState.phase === 'betting' &&
-    !doState.windowClosed &&
-    !doState.kill &&
-    doState.acceptingBets !== false;
-
-  return {
-    ...publicState,
-    acceptingBets,
-    windowClosed: !!doState.windowClosed || publicState.phase !== 'betting',
-    kill: !!doState.kill,
-    exposureUsdc: doState.exposureUsdc,
-    remainingExposureUsdc: doState.remainingExposureUsdc,
-    maxRoundExposureUsdc: doState.maxRoundExposureUsdc,
-    maxPayoutMult: doState.maxPayoutMult,
-    maxPayoutPerEntryUsdc: doState.maxPayoutPerEntryUsdc,
-    stakeCount: doState.stakeCount,
-  };
+  if (!env?.ROUND_DO) {
+    return {
+      ...unconfiguredRoundState(Date.now()),
+      error: 'RoundDO binding missing',
+    };
+  }
+  const live = await doFetch(roundStub(env), '/live');
+  if (!live?.ok) {
+    return {
+      ok: false,
+      global: true,
+      serverNow: Date.now(),
+      phase: 'intermission',
+      acceptingBets: false,
+      mult: 1,
+      error: live?.error || 'RoundDO error',
+    };
+  }
+  return live;
 }
 
 export async function handleRound(request, env) {
   const url = new URL(request.url);
   const histQ = url.searchParams.get('history');
+  const chainQ = url.searchParams.get('chain');
+
+  // Public chain status (no secrets in response) — works even if betting is closed
+  if (chainQ === '1' || chainQ === 'true') {
+    if (!env?.ROUND_DO) {
+      return json({
+        ok: true,
+        serverNow: Date.now(),
+        chainReady: false,
+        chainHead: null,
+        chainAnchorTx: null,
+        error: 'RoundDO binding missing',
+      });
+    }
+    const chain = await doFetch(roundStub(env), '/chain');
+    return json(
+      chain?.ok
+        ? chain
+        : {
+            ok: true,
+            serverNow: Date.now(),
+            chainReady: false,
+            chainHead: null,
+            chainAnchorTx: null,
+            error: chain?.error || 'chain not initialized yet',
+          },
+    );
+  }
 
   if (!hasRoundSecret(env)) {
     if (histQ != null && histQ !== '0' && histQ !== 'false') {
@@ -253,20 +146,42 @@ export async function handleRound(request, env) {
     return json(unconfiguredRoundState(Date.now()));
   }
 
-  const secret = masterSecret(env);
   if (histQ != null && histQ !== '0' && histQ !== 'false') {
     const limit = histQ === '1' || histQ === 'true' ? 20 : Number(histQ);
-    const now = Date.now();
-    const rounds = await getRoundHistory(now, secret, limit);
+    if (!env?.ROUND_DO) {
+      return json({ ok: true, serverNow: Date.now(), count: 0, rounds: [] });
+    }
+    const hist = await doFetch(
+      roundStub(env),
+      `/history?limit=${encodeURIComponent(String(limit || 20))}`,
+    );
+    if (hist?.ok && Array.isArray(hist.rounds)) {
+      return json(hist);
+    }
     return json({
       ok: true,
-      serverNow: now,
-      count: rounds.length,
-      rounds,
+      serverNow: Date.now(),
+      count: 0,
+      rounds: [],
+      error: hist?.error || 'history unavailable',
     });
   }
-  const state = await getRoundStateSafe(Date.now(), secret, { revealSecrets: false });
-  const { _timing, ...publicState } = state;
-  const merged = await mergeRoundDo(env, publicState);
-  return json(merged);
+
+  const live = await getLiveRound(env);
+  // Annotate constants for clients
+  if (live && live.ok !== false) {
+    live.betMs = live.betMs ?? BET_MS;
+    live.resultMs = live.resultMs ?? RESULT_MS;
+    live.growthPerMs = live.growthPerMs ?? GROWTH_PER_MS;
+    live.cycleMs = live.cycleMs ?? CYCLE_MS;
+    live.targetBlockOffset = live.targetBlockOffset ?? TARGET_BLOCK_OFFSET;
+    live.fair = live.fair || {
+      scheme: FAIR_SCHEME,
+      commit: live.serverSeedHash,
+      targetBlock: live.targetBlock,
+      chainHead: live.chainHead,
+      chainAnchorTx: live.chainAnchorTx,
+    };
+  }
+  return json(live);
 }

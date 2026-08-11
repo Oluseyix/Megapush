@@ -9,7 +9,8 @@ preview_urls = true
 [assets]
 directory = "./public"
 binding = "ASSETS"
-run_worker_first = ["/api/*"]
+# Worker runs first so /api/* works and game HTML can inject edge-cached prize pool
+run_worker_first = true
 
 [[kv_namespaces]]
 binding = "BANK_KV"
@@ -33,3 +34,5 @@ MAX_PAYOUT_MULT = "50"
 MAX_PAYOUT_PER_ENTRY = "200"
 MAX_PAYOUT_PER_HOUR = "2000"
 MAX_HOUSE_JOBS_PER_MINUTE = "40"
+# Reverse hash-chain length (seeds). Exhausted chain refuses new rounds (no silent re-seed).
+SEED_CHAIN_LENGTH = "10000"

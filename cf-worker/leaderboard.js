@@ -1,11 +1,12 @@
 /**
- * Live cash-out leaderboard — highest multipliers only (privacy-first).
+ * Live cash-out leaderboard — highest cash-out multipliers (privacy-first).
  * Durable store: Cloudflare KV (BANK_KV) with Cache API as L1.
  *
  * GET  /api/leaderboard?period=today|week|month&tzOffset=<getTimezoneOffset()>
  * POST /api/leaderboard { player, multiplier, tickets, entryId?, at? }
  *
- * Privacy: never returns full wallet addresses. Handles only. No cash-out counts.
+ * Scores are cash-out mult only (capped by MAX_PAYOUT_MULT). Crash-point
+ * mults and timestamps must never land on the board.
  */
 
 function json(data, status = 200) {
@@ -21,6 +22,23 @@ function json(data, status = 200) {
 
 function isAddr(a) {
   return typeof a === 'string' && /^0x[a-fA-F0-9]{40}$/.test(a);
+}
+
+/** Max cash-out mult shown/stored (matches house payout cap). */
+function maxPayoutMult(env) {
+  const n = Number(env?.MAX_PAYOUT_MULT);
+  if (Number.isFinite(n) && n >= 1 && n <= 1000) return n;
+  return 50;
+}
+
+/** Reject junk: NaN, ≤1, or above payout ceiling (e.g. 10000× crash-point posts). */
+function sanitizeMult(raw, env) {
+  const mult = Number(raw);
+  const max = maxPayoutMult(env);
+  if (!Number.isFinite(mult) || mult <= 1) return null;
+  // Timestamps mistakenly used as mult are huge
+  if (mult > max) return null;
+  return Math.round(mult * 100) / 100;
 }
 
 /** Stable anonymous handle — not reverse-engineerable to a wallet easily. */
@@ -42,26 +60,30 @@ function privacyHandle(addr) {
   return names[n % names.length] + '-' + a.slice(-3);
 }
 
-const CACHE_URL = 'https://megapush.lb.internal/v2/entries';
-const KV_KEY = 'leaderboard:v2:entries';
+const CACHE_URL = 'https://megapush.lb.internal/v3/entries';
+const KV_KEY = 'leaderboard:v3:entries';
+const LEGACY_KEYS = ['leaderboard:v2:entries'];
 const MAX_ENTRIES = 5000;
 
 /**
  * @param {string} period
- * @param {number} tzOffsetMin - from Date.getTimezoneOffset() (min to add to local → UTC)
+ * @param {number} tzOffsetMin - from Date.getTimezoneOffset()
  */
 function periodStartMs(period, tzOffsetMin = 0) {
   const now = Date.now();
   const p = String(period || 'today').toLowerCase();
   if (p === 'week') return now - 7 * 24 * 60 * 60 * 1000;
   if (p === 'month') return now - 30 * 24 * 60 * 60 * 1000;
-  // "today" = local calendar day using client timezone offset
+  // Local calendar day using client timezone offset
   const off = Number(tzOffsetMin);
   const offsetMs = Number.isFinite(off) ? off * 60 * 1000 : 0;
-  const localNow = now - offsetMs;
-  const d = new Date(localNow);
-  const localMidnightAsUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-  return localMidnightAsUtc + offsetMs;
+  // Shift so UTC getters read local wall-clock date
+  const shifted = new Date(now - offsetMs);
+  const y = shifted.getUTCFullYear();
+  const m = shifted.getUTCMonth();
+  const d = shifted.getUTCDate();
+  // Local midnight as UTC ms
+  return Date.UTC(y, m, d) + offsetMs;
 }
 
 function normalizePeriod(period) {
@@ -71,31 +93,62 @@ function normalizePeriod(period) {
   return 'today';
 }
 
+function isValidEntry(e, env) {
+  if (!e || !e.id || !isAddr(e.player)) return false;
+  const mult = sanitizeMult(e.mult, env);
+  if (mult == null) return false;
+  const at = Number(e.at) || 0;
+  // Drop future / absurd timestamps
+  if (at > Date.now() + 120_000) return false;
+  if (at > 0 && at < 1_600_000_000_000) return false; // pre-2020
+  return true;
+}
+
+function normalizeEntry(e, env) {
+  const mult = sanitizeMult(e.mult, env);
+  if (mult == null || !isAddr(e.player)) return null;
+  return {
+    id: String(e.id),
+    player: String(e.player).toLowerCase(),
+    mult,
+    tickets: Math.max(0, Math.floor(Number(e.tickets) || 0)),
+    at: Number(e.at) > 0 ? Number(e.at) : Date.now(),
+  };
+}
+
 async function loadEntries(env) {
   const byId = new Map();
   const absorb = (list) => {
-    for (const e of list || []) {
-      if (!e || !e.id) continue;
+    for (const raw of list || []) {
+      const e = normalizeEntry(raw, env);
+      if (!e || !isValidEntry(e, env)) continue;
       const prev = byId.get(e.id);
       if (!prev || Number(e.at) >= Number(prev.at)) byId.set(e.id, e);
     }
   };
 
-  // KV (durable)
   try {
     const kv = env?.BANK_KV;
     if (kv && typeof kv.get === 'function') {
       const raw = await kv.get(KV_KEY, { type: 'json' });
       if (raw && Array.isArray(raw.entries)) absorb(raw.entries);
       else if (Array.isArray(raw)) absorb(raw);
+      // One-time absorb legacy v2 (then we only write v3)
+      for (const leg of LEGACY_KEYS) {
+        try {
+          const old = await kv.get(leg, { type: 'json' });
+          if (old && Array.isArray(old.entries)) absorb(old.entries);
+          else if (Array.isArray(old)) absorb(old);
+        } catch (_) {}
+      }
     }
   } catch (e) {
     console.warn('lb kv get', e);
   }
 
-  // Cache (legacy v1 + v2) — merge, then write back to KV
   for (const url of [
     CACHE_URL,
+    'https://megapush.lb.internal/v2/entries',
     'https://megapush.lb.internal/v1/entries',
   ]) {
     try {
@@ -111,22 +164,29 @@ async function loadEntries(env) {
     (a, b) => (Number(a.at) || 0) - (Number(b.at) || 0),
   );
 
-  // Persist merged set to KV when possible
+  // Persist cleaned set (drops junk 10000× / 5281× / etc.)
   if (entries.length) {
     try {
-      const kv = env?.BANK_KV;
-      if (kv?.put) {
-        await kv.put(KV_KEY, JSON.stringify({ entries, updatedAt: Date.now() }));
-      }
+      await saveEntries(entries, env);
+    } catch (_) {}
+  } else {
+    // Empty cleaned board — still overwrite legacy junk in KV
+    try {
+      await saveEntries([], env);
     } catch (_) {}
   }
   return entries;
 }
 
 async function saveEntries(entries, env) {
+  const cleaned = (entries || [])
+    .map((e) => normalizeEntry(e, env))
+    .filter(Boolean)
+    .slice(-MAX_ENTRIES);
   const body = {
-    entries: (entries || []).slice(-MAX_ENTRIES),
+    entries: cleaned,
     updatedAt: Date.now(),
+    version: 3,
   };
   try {
     const kv = env?.BANK_KV;
@@ -155,9 +215,14 @@ async function saveEntries(entries, env) {
 /** Record a successful cash-out (best-effort). */
 export async function recordScore({ player, multiplier, tickets, entryId, at } = {}, env) {
   if (!isAddr(player)) return { ok: false, error: 'Invalid player' };
-  const mult = Number(multiplier);
+  const mult = sanitizeMult(multiplier, env);
+  if (mult == null) {
+    return {
+      ok: false,
+      error: `Invalid multiplier (must be > 1 and ≤ ${maxPayoutMult(env)}× cash-out)`,
+    };
+  }
   const tix = Math.max(0, Math.floor(Number(tickets) || 0));
-  if (!(mult > 0) || !Number.isFinite(mult)) return { ok: false, error: 'Invalid multiplier' };
 
   const entries = await loadEntries(env);
   const id =
@@ -172,18 +237,19 @@ export async function recordScore({ player, multiplier, tickets, entryId, at } =
   entries.push({
     id,
     player: player.toLowerCase(),
-    mult: Math.round(mult * 100) / 100,
+    mult,
     tickets: tix,
-    at: Number(at) > 0 ? Number(at) : Date.now(),
+    at: Number(at) > 0 && Number(at) < Date.now() + 120_000 ? Number(at) : Date.now(),
   });
   await saveEntries(entries, env);
-  return { ok: true, id };
+  return { ok: true, id, mult };
 }
 
-function aggregate(entries, period, tzOffsetMin, viewer) {
+function aggregate(entries, period, tzOffsetMin, viewer, env) {
   const start = periodStartMs(period, tzOffsetMin);
   const now = Date.now();
   const filtered = entries.filter((e) => {
+    if (!isValidEntry(e, env)) return false;
     const t = Number(e.at) || 0;
     return t >= start && t <= now + 60_000;
   });
@@ -227,7 +293,6 @@ function aggregate(entries, period, tzOffsetMin, viewer) {
     period: normalizePeriod(period),
     since: start,
     until: now,
-    // period-scoped stats only (not all-time)
     events: filtered.length,
     players: rows.length,
     top: topMult > 0 ? { mult: topMult, at: topAt } : null,
@@ -245,11 +310,11 @@ export async function handleLeaderboard(request, env) {
   if (request.method === 'GET') {
     const url = new URL(request.url);
     const period = normalizePeriod(url.searchParams.get('period') || 'today');
-    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
     const player = url.searchParams.get('player');
     const tzOffset = Number(url.searchParams.get('tzOffset'));
     const entries = await loadEntries(env);
-    const agg = aggregate(entries, period, tzOffset, player);
+    const agg = aggregate(entries, period, tzOffset, player, env);
     const rows = agg.rows.slice(0, limit);
 
     let you = null;
@@ -266,13 +331,14 @@ export async function handleLeaderboard(request, env) {
 
     return json({
       ok: true,
-      durable: !!(env?.BANK_KV),
+      durable: !!env?.BANK_KV,
       period: agg.period,
       since: agg.since,
       until: agg.until,
       events: agg.events,
       players: agg.players,
       top: agg.top,
+      maxMult: maxPayoutMult(env),
       rows,
       you,
     });
@@ -285,10 +351,12 @@ export async function handleLeaderboard(request, env) {
     } catch {
       body = {};
     }
+    // Never use body.at (timestamp) as multiplier
+    const multRaw = body.multiplier ?? body.mult ?? body.cashoutMult ?? body.cashout_mult;
     const result = await recordScore(
       {
         player: body.player || body.recipient || body.address,
-        multiplier: body.multiplier ?? body.mult ?? body.at,
+        multiplier: multRaw,
         tickets: body.tickets ?? body.count,
         entryId: body.entryId ?? body.id,
         at: body.at ?? body.ts,
