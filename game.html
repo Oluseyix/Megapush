@@ -111,13 +111,13 @@ nav a.tab.docs-tab:hover{background:rgba(23,161,139,.1)}
 .sound-btn:active{transform:scale(.96)}
 .sound-btn.muted{opacity:.75;color:var(--mid)}
 .sound-btn .sound-ico{display:block;pointer-events:none}
-/* Cashout snackbar — fixed, compact, never blocks stake UI */
+/* Cashout banner — top of screen (not bottom), clickable Tickets + Base link */
 .cashout-receipt{
-  display:none;position:fixed;left:50%;bottom:calc(72px + var(--safe-b,0px));
-  transform:translateX(-50%) translateY(10px);z-index:90;
-  width:min(400px, calc(100% - 24px));padding:10px 12px;border-radius:14px;
-  background:rgba(255,255,255,.97);border:1px solid var(--line);
-  box-shadow:0 10px 28px rgba(30,38,87,.16);backdrop-filter:blur(10px);
+  display:none;position:fixed;left:50%;top:calc(12px + var(--safe-t, env(safe-area-inset-top, 0px)));
+  transform:translateX(-50%) translateY(-8px);z-index:120;
+  width:min(420px, calc(100% - 20px));padding:12px 14px;border-radius:14px;
+  background:rgba(255,255,255,.98);border:1px solid var(--line);
+  box-shadow:0 12px 32px rgba(30,38,87,.2);backdrop-filter:blur(12px);
   pointer-events:auto;opacity:0;transition:opacity .2s ease, transform .22s cubic-bezier(.2,1.1,.4,1);
 }
 .cashout-receipt.show{
@@ -133,8 +133,7 @@ nav a.tab.docs-tab:hover{background:rgba(23,161,139,.1)}
   color:var(--mid);font-size:15px;line-height:1;flex:none;cursor:pointer
 }
 .cashout-receipt .cr-meta{
-  display:none; /* keep layout light — details live in title/sub */
-  flex-wrap:wrap;gap:8px 12px;align-items:center;
+  display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
   font-size:12px;font-weight:700;color:var(--ink);margin:6px 0 0
 }
 .cashout-receipt .cr-meta span{color:var(--mid);font-weight:600}
@@ -437,7 +436,9 @@ nav a.tab.docs-tab:hover{background:rgba(23,161,139,.1)}
 .tix-scroll::-webkit-scrollbar{width:5px}
 .tix-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 .tix-list{display:flex;flex-direction:column;gap:6px}
-.tix-row{display:flex;align-items:center;gap:12px;padding:12px;background:var(--wash);border-radius:12px;flex:none}
+.tix-row{display:flex;align-items:center;gap:12px;padding:12px;background:var(--wash);border-radius:12px;flex:none;cursor:pointer;transition:border-color .12s,box-shadow .12s;border:1px solid transparent;width:100%;text-align:left;font:inherit;color:inherit}
+.tix-row:hover,.tix-row:focus-visible{border-color:rgba(14,111,98,.3);box-shadow:0 2px 10px rgba(14,111,98,.08);outline:none;background:#F7FDFB}
+.tix-row .tix-open{margin-left:auto;font-size:10px;font-weight:800;color:var(--teal);flex:none}
 .tix-id{min-width:52px;height:36px;padding:0 8px;background:#fff;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--soft);flex:none;letter-spacing:.2px}
 .tix-nums{display:flex;gap:4px;flex-wrap:wrap;flex:1}
 .tix-nums span{width:26px;height:26px;background:#fff;border:1px solid var(--line);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
@@ -1124,7 +1125,7 @@ button:focus:not(:focus-visible){outline:none}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
         <div>
           <div class="card-lab">Live drawing</div>
-          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets in current draw · 5 + bonus</div>
+          <div style="font-size:13px;color:var(--mid);font-weight:600"><span id="tixCount">0</span> tickets in current draw · 5 numbers + 1 bonus</div>
         </div>
         <div style="background:var(--wash);padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:var(--ink);text-align:right">
           <div style="font-size:10px;font-weight:700;color:var(--mid);letter-spacing:.3px;text-transform:uppercase;margin-bottom:2px">Draw in</div>
@@ -1676,16 +1677,25 @@ function renderTickets(){
       : '<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to load on-chain tickets</div>';
     return;
   }
-  list.innerHTML=ticketData.map((t,i)=>`
-    <div class="tix-row">
-      <div class="tix-id">#${i+1}</div>
-      <div class="tix-nums">
-        ${(t.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
-        <span class="bonus">${pad(t.bonus)}</span>
-      </div>
-      <div class="tix-meta live">${t.drawingLabel || 'Live'}</div>
-    </div>
-  `).join('');
+  list.innerHTML=ticketData.map((t,i)=>{
+    const tid = t.tokenId != null ? String(t.tokenId) : (t.id != null ? String(t.id) : '');
+    const tx = t.txHash ? String(t.txHash) : '';
+    const nft = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
+    const href = tx && /^0x[a-fA-F0-9]{64}$/i.test(tx)
+      ? ('https://sepolia.basescan.org/tx/'+tx)
+      : (tid ? ('https://sepolia.basescan.org/nft/'+nft+'/'+encodeURIComponent(tid)) : 'https://sepolia.basescan.org');
+    return (
+    '<button type="button" class="tix-row" data-basescan="'+href.replace(/"/g,'')+'" aria-label="View ticket on Base">' +
+      '<div class="tix-id">#'+(i+1)+'</div>'+
+      '<div class="tix-nums">'+
+        (t.picks||[]).map(n=>'<span>'+pad(n)+'</span>').join('')+
+        '<span class="bonus">'+pad(t.bonus)+'</span>'+
+      '</div>'+
+      '<div class="tix-meta live">'+(t.drawingLabel || 'Live')+'</div>'+
+      '<div class="tix-open">Base ↗</div>'+
+    '</button>'
+    );
+  }).join('');
 }
 
 function renderPast(){
@@ -1711,15 +1721,23 @@ function renderPast(){
       else if(d.tier==='Unclaimed') meta = (d.prize || 'Won') + ' · Claim';
       else meta = d.prize || 'Won';
     }
-    return `
-    <div class="tix-row${isWon?' tix-win':''}">
-      <div class="tix-id">${d.date}</div>
-      <div class="tix-nums">
-        ${(d.picks||[]).map(n=>`<span>${pad(n)}</span>`).join('')}
-        ${d.bonus!=null?`<span class="bonus">${pad(d.bonus)}</span>`:''}
-      </div>
-      <div class="tix-meta ${metaClass}">${meta}</div>
-    </div>`;
+    const tid = d.tokenId != null ? String(d.tokenId) : '';
+    const tx = d.txHash ? String(d.txHash) : '';
+    const nft = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
+    const href = tx && /^0x[a-fA-F0-9]{64}$/i.test(tx)
+      ? ('https://sepolia.basescan.org/tx/'+tx)
+      : (tid ? ('https://sepolia.basescan.org/nft/'+nft+'/'+encodeURIComponent(tid)) : 'https://sepolia.basescan.org');
+    return (
+    '<button type="button" class="tix-row'+(isWon?' tix-win':'')+'" data-basescan="'+href.replace(/"/g,'')+'" aria-label="View ticket on Base">' +
+      '<div class="tix-id">'+String(d.date||'').replace(/</g,'&lt;')+'</div>'+
+      '<div class="tix-nums">'+
+        (d.picks||[]).map(n=>'<span>'+pad(n)+'</span>').join('')+
+        (d.bonus!=null?'<span class="bonus">'+pad(d.bonus)+'</span>':'')+
+      '</div>'+
+      '<div class="tix-meta '+metaClass+'">'+String(meta).replace(/</g,'&lt;')+'</div>'+
+      '<div class="tix-open">Base ↗</div>'+
+    '</button>'
+    );
   }).join('');
 }
 
@@ -2120,7 +2138,6 @@ function openRoundDetail(r){
   const tb=r.targetBlock!=null?String(r.targetBlock):'';
   const seed=r.serverSeed?String(r.serverSeed):'';
   const seedH=r.serverSeedHash?String(r.serverSeedHash):'';
-  const blockHash=r.blockHash?String(r.blockHash):'';
   const blockUrl=tb?('https://sepolia.basescan.org/block/'+encodeURIComponent(tb)):'';
   const hand=r.hand!=null?String(r.hand):(r.slotId!=null?String(r.slotId):'');
 
@@ -2130,36 +2147,27 @@ function openRoundDetail(r){
       : ('Round '+rid+(Number.isFinite(mult)?' · '+mult.toFixed(2)+'×':''));
   }
   if($('roundDetailSub')){
-    $('roundDetailSub').textContent = fmtRoundTime(r.crashAt||r.at)+(voided?' · voided':' · tap Verify to check fairness');
+    $('roundDetailSub').textContent = fmtRoundTime(r.crashAt||r.at)+(voided?' · voided':'');
   }
 
-  // Full detail rows so the card is useful (not just title + buttons)
+  // Minimal card — no seed/hash dump (users just want crash mult + Base link)
   const rows=[];
   rows.push(['Crash mult', voided ? 'VOID' : (Number.isFinite(mult) ? mult.toFixed(2)+'×' : '—')]);
   rows.push(['Time', fmtRoundTime(r.crashAt||r.at)]);
   if(hand) rows.push(['Hand', hand]);
-  if(tb) rows.push(['Target block', tb]);
-  if(blockHash) rows.push(['Block hash', shortHex(blockHash, 8)]);
-  if(seedH) rows.push(['Server seed hash', shortHex(seedH, 8)]);
-  if(seed) rows.push(['Server seed (reveal)', shortHex(seed, 8)]);
   if(r.voidReason) rows.push(['Void reason', String(r.voidReason)]);
   const host=$('roundDetailRows');
   if(host){
     host.innerHTML=rows.map(([lab,val])=>{
-      const isLink = lab==='Target block' && blockUrl;
-      if(isLink){
-        return '<div class="rh-detail-row"><div class="rd-lab">'+lab+'</div>'+
-          '<a class="rd-val" href="'+blockUrl+'" target="_blank" rel="noopener noreferrer">'+String(val).replace(/</g,'&lt;')+' ↗</a></div>';
-      }
       return '<div class="rh-detail-row"><div class="rd-lab">'+lab+'</div>'+
-        '<div class="rd-val'+(lab==='Crash mult'||lab==='Time'?' plain':'')+'">'+String(val).replace(/</g,'&lt;')+'</div></div>';
+        '<div class="rd-val plain">'+String(val).replace(/</g,'&lt;')+'</div></div>';
     }).join('');
   }
 
   const vEl=$('roundDetailVerify');
   if(vEl){
     vEl.className='rh-verify-status';
-    vEl.textContent = (seed && seedH) ? 'Checking…' : (voided ? 'Round voided' : 'Missing data for this round');
+    vEl.textContent = voided ? 'Round voided' : ((seed && seedH) ? 'Checking…' : 'Ready');
   }
   const blk=$('roundDetailBlockLink');
   if(blk){
@@ -2168,7 +2176,9 @@ function openRoundDetail(r){
       blk.style.display='block';
       blk.textContent='View on Base ↗';
     }else{
-      blk.style.display='none';
+      blk.href='https://sepolia.basescan.org';
+      blk.style.display='block';
+      blk.textContent='View on Base ↗';
     }
   }
   const vBtn=$('roundDetailVerifyBtn');
@@ -2440,15 +2450,26 @@ function multAt(g, now){
   if(ph==='intermission' || ph==='betting' || ph==='waiting' || ph==='voided') return 1;
   if(ph==='crashed' && g.crashMult!=null) return Number(g.crashMult);
   const growth=Number(g.growthPerMs)||0.00018;
-  if(g.flyStart==null || now < g.flyStart) return 1;
+  // Local exponential curve is authoritative for display.
+  // Never cap by lagging server mult — that froze the climb at ~1.00× on both mobile and desktop.
+  if(g.flyStart==null){
+    const sm = Number(g.mult);
+    return (Number.isFinite(sm) && sm >= 1) ? sm : 1;
+  }
+  if(now < g.flyStart) return 1;
   let end = now;
   if(g.crashAt!=null) end = Math.min(now, g.crashAt);
-  const raw=Math.exp(growth * Math.max(0, end - g.flyStart));
-  let m = Math.round(raw*100)/100;
-  if(ph==='flying' && g.mult!=null && Number(g.mult)>0){
-    const cap = Number(g.mult) * 1.2 + 0.05;
-    if(m > cap) m = Math.round(cap*100)/100;
+  const elapsed = Math.max(0, end - Number(g.flyStart));
+  let m = Math.round(Math.exp(growth * elapsed) * 100) / 100;
+  if(g.crashMult!=null && Number(g.crashMult) > 0){
+    m = Math.min(m, Number(g.crashMult));
   }
+  // Soft pull-up if server is ahead (clock skew) — never pull down
+  const sm = Number(g.mult);
+  if(ph==='flying' && Number.isFinite(sm) && sm > m){
+    m = sm;
+  }
+  if(!(m >= 1)) m = 1;
   return m;
 }
 
@@ -2809,16 +2830,32 @@ function showCashoutReceipt({ tickets, at, txHash }){
   tickDrawTimers();
   const a=$('crTx');
   if(a){
-    setBasescanTxLink(a, txHash);
     a.textContent = 'View on Base ↗';
+    a.hidden = false;
+    a.style.display = '';
+    // Always show Base control — real tx when available, explorer home otherwise
+    if(txHash && /^0x[a-fA-F0-9]{64}$/i.test(String(txHash))){
+      setBasescanTxLink(a, txHash);
+      a.hidden = false;
+      a.style.display = '';
+    }else{
+      a.href = 'https://sepolia.basescan.org';
+      a.hidden = false;
+      a.style.display = '';
+      a.textContent = 'View on Base ↗';
+    }
+  }
+  const tixBtn = $('crTixBtn');
+  if(tixBtn){
+    tixBtn.disabled = false;
+    tixBtn.style.pointerEvents = 'auto';
   }
   box.hidden = false;
-  // reflow so transition plays when re-shown
   void box.offsetWidth;
   box.classList.add('show');
-  // Auto-dismiss so it never blocks the next stake
+  // Keep banner up long enough to tap Tickets / Base
   if(cashoutReceiptTimer) clearTimeout(cashoutReceiptTimer);
-  cashoutReceiptTimer = setTimeout(()=>hideCashoutReceipt(), 3800);
+  cashoutReceiptTimer = setTimeout(()=>hideCashoutReceipt(), 8000);
 }
 
 function hideCashoutReceipt(){
@@ -2979,7 +3016,8 @@ async function cashOut(b){
         b.payoutFailed = false;
         b.payoutPending = false; // never show long "locking" state
         paintBet(b);
-        if(res.txHash) showCashoutReceipt({ tickets: keep, at: b.at, txHash: res.txHash });
+        // Always show top banner with Tickets + Base link (hash when mint confirms)
+        showCashoutReceipt({ tickets: keep, at: b.at, txHash: res.txHash || null });
         // Update progress bar from server remainder ledger
         if(res.progressUsdc != null){
           try{ setProgressUi(res.progressUsdc); }catch(_){}
@@ -3311,11 +3349,8 @@ function globalFrame(){
 
   if(phase==='flying'){
     running=true;
+    // Local curve only — do not clamp to stale server mult (that hung the climb)
     m=multAt(g, now);
-    if(g.mult!=null && g.phase==='flying'){
-      const sm=Number(g.mult);
-      if(sm>=1 && m>sm*1.25) m=sm;
-    }
     paint();
     if(Math.random()<0.08) playTick();
     bets.forEach(b=>{
@@ -4035,13 +4070,32 @@ if($('previewViewTix')){
 if($('tixChip')){
   $('tixChip').onclick=()=>goToTicketsPage();
 }
-if($('crClose')) $('crClose').onclick=()=>hideCashoutReceipt();
-if($('crTixBtn')){
-  $('crTixBtn').onclick=()=>{
+// Cashout banner is rendered AFTER this script in the DOM — use delegation
+// so Tickets / Base / Close always work.
+document.addEventListener('click', (e)=>{
+  const t = e.target;
+  if(!t) return;
+  if(t.id === 'crClose' || t.closest?.('#crClose')){
+    e.preventDefault();
+    hideCashoutReceipt();
+    return;
+  }
+  if(t.id === 'crTixBtn' || t.closest?.('#crTixBtn')){
+    e.preventDefault();
     hideCashoutReceipt();
     goToTicketsPage();
-  };
-}
+    return;
+  }
+  // Ticket / past-draw cards → Base explorer
+  const row = t.closest?.('[data-basescan]');
+  if(row && (row.classList.contains('tix-row') || row.hasAttribute('data-basescan'))){
+    const href = row.getAttribute('data-basescan');
+    if(href && href.startsWith('http')){
+      e.preventDefault();
+      try{ window.open(href, '_blank', 'noopener,noreferrer'); }catch(_){ location.href = href; }
+    }
+  }
+});
 $('shareClose').onclick=()=>$('shareBg').classList.remove('show');
 $('shareCopy').onclick=()=>{
   const t=`Just cashed out at ${$('shareMult').textContent} on MegaPush ${$('shareSub').textContent} 🎟️`;
@@ -5382,56 +5436,33 @@ function openTxDetail(row){
     }
   }
 
-  // Rich detail rows — especially for deposits
+  // Clean deposit/tx card: Type · Amount · Network · Time · Play balance after
   const rows = [
     ['Type', histTypeLabel(type)],
-    ['Amount', text],
+    ['Amount', type === 'deposit' ? amtPretty : text],
+    ['Network', 'Base Sepolia'],
+    ['Time', when],
+    ['Play balance after', bal],
   ];
-  if(type === 'deposit'){
-    rows.push(['Credited', amtPretty]);
-    rows.push(['Network', 'Base Sepolia']);
-    rows.push(['Status', hasTx ? 'Confirmed on Base' : 'Recorded']);
-  }else if(type === 'withdraw'){
-    rows.push(['Network', 'Base Sepolia']);
-    rows.push(['Status', hasTx ? 'Sent on Base' : 'Recorded']);
-  }
-  rows.push(['When', when]);
-  rows.push(['Play balance after', bal]);
-  if(hasTx){
-    rows.push(['Tx hash', shortTx(txHash)]);
-    rows.push(['Full hash', txHash]);
-  }
-  if(entryId){
-    rows.push(['Entry', entryId.length > 28 ? entryId.slice(0, 12) + '…' + entryId.slice(-8) : entryId]);
-  }
 
   const host = $('txDetailRows');
   if(host){
-    host.innerHTML = rows.map(([k, v]) => {
-      // Full hash: monospace breakable
-      const isHash = k === 'Full hash' || k === 'Tx hash';
-      const style = isHash ? ' style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:600"' : '';
-      return '<div class="td-row"><span>'+k+'</span><b'+style+'>'+String(v).replace(/</g,'&lt;')+'</b></div>';
-    }).join('');
+    host.innerHTML = rows.map(([k, v]) =>
+      '<div class="td-row"><span>'+k+'</span><b>'+String(v).replace(/</g,'&lt;')+'</b></div>'
+    ).join('');
   }
 
-  // "View on Base" — real explorer link (not "baselink" placeholder)
+  // View on Base — real explorer link when tx exists
   const txBtn = $('txDetailBaseScan');
-  const linkFn = window.setBasescanTxLink;
   if(txBtn){
     txBtn.className = 'go secondary';
     txBtn.textContent = 'View on Base ↗';
-    if(typeof linkFn === 'function' && linkFn(txBtn, hasTx ? txHash : null)){
-      txBtn.style.display = 'block';
-      txBtn.hidden = false;
-      txBtn.textContent = 'View on Base ↗';
-    }else if(hasTx){
+    if(hasTx){
       txBtn.href = (typeof BASESCAN_TX !== 'undefined' ? BASESCAN_TX : 'https://sepolia.basescan.org/tx/') + txHash;
       txBtn.target = '_blank';
       txBtn.rel = 'noopener noreferrer';
       txBtn.style.display = 'block';
       txBtn.hidden = false;
-      txBtn.textContent = 'View on Base ↗';
     }else{
       txBtn.style.display = 'none';
       txBtn.hidden = true;
@@ -5439,10 +5470,7 @@ function openTxDetail(row){
     }
   }
   const copyBtn = $('txDetailCopyHash');
-  if(copyBtn){
-    copyBtn.style.display = hasTx ? 'block' : 'none';
-    copyBtn.textContent = 'Copy tx hash';
-  }
+  if(copyBtn) copyBtn.style.display = 'none';
 
   // Stack above bank sheet; stay in-app
   const bg = $('txDetailBg');
@@ -5516,14 +5544,23 @@ document.getElementById('txDetailBg')?.addEventListener('click', (e)=>{
 function guardBasescanClick(e){
   const a = e.currentTarget;
   const href = a?.getAttribute('href') || '';
-  if(!href || href === '#' || href.endsWith('/tx/') || !/\/tx\/0x[a-fA-F0-9]{64}/i.test(href)){
+  // Allow explorer home or real /tx/0x… links — only block empty/hash junk
+  if(!href || href === '#' || href.endsWith('/tx/')){
     e.preventDefault();
     e.stopPropagation();
   }
 }
 document.getElementById('txDetailBaseScan')?.addEventListener('click', guardBasescanClick);
-document.getElementById('crTx')?.addEventListener('click', guardBasescanClick);
-document.getElementById('previewTx')?.addEventListener('click', guardBasescanClick);
+// crTx is after the main script — bind via capture delegation
+document.addEventListener('click', (e)=>{
+  const a = e.target?.closest?.('#crTx, #previewTx');
+  if(!a) return;
+  const href = a.getAttribute('href') || '';
+  if(!href || href === '#' || href.endsWith('/tx/')){
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
 function pushLocalHistory(addr, row){
   if(!addr || !row) return;
   try{

@@ -146,13 +146,16 @@ export class TxSequencerDO {
     const rateErr = await this.checkRateLimits(type, payload);
     if (rateErr) return json(rateErr, rateErr.statusCode || 429);
 
-    // Stale "processing" lock can strand all cashouts — clear if older than 90s
+    // Stale "processing" lock can strand withdraws/cashouts — clear if older than 15s
+    // (long RPC no longer holds the lock; 15s is enough to detect a crashed mid-job)
     const lockAt = Number((await this.state.storage.get(KEY.processingAt)) || 0);
-    if ((await this.state.storage.get(KEY.processing)) && lockAt > 0 && Date.now() - lockAt > 90_000) {
+    if ((await this.state.storage.get(KEY.processing)) && lockAt > 0 && Date.now() - lockAt > 15_000) {
       console.warn('TxSequencerDO clearing stale processing lock', { lockAt });
       await this.state.storage.put(KEY.processing, false);
+      await this.state.storage.delete(KEY.processingAt);
     }
     if (await this.state.storage.get(KEY.processing)) {
+      // Soft busy — callers (cashout/withdraw) fall through to direct house path
       return json({ ok: false, error: 'House sequencer busy — retry', retry: true }, 503);
     }
 

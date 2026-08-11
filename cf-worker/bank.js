@@ -1395,20 +1395,37 @@ export async function handleBank(request, env) {
 
       try {
         let hash;
+        // Prefer sequencer for nonce safety; on busy/rate-limit fall through to direct
+        // house transfer so withdraw never hard-fails with "House sequencer busy".
+        let usedDirect = false;
         if (env?.TX_SEQUENCER_DO) {
-          const { executeHouseJob } = await import('./dos/client.js');
-          const out = await executeHouseJob(env, {
-            type: 'usdc_transfer',
-            id: `withdraw:${player.toLowerCase()}:${amount}:${Date.now()}`,
-            payload: { to: player, amountUsdc: amount },
-          });
-          if (!out?.ok || !out?.result?.ok) {
-            throw new Error(out?.error || out?.result?.error || 'Sequencer withdraw failed');
+          try {
+            const { executeHouseJob } = await import('./dos/client.js');
+            const out = await executeHouseJob(env, {
+              type: 'usdc_transfer',
+              id: `withdraw:${player.toLowerCase()}:${amount}:${Date.now()}`,
+              payload: { to: player, amountUsdc: amount },
+            });
+            if (out?.ok && out?.result?.ok && out.result.txHash) {
+              hash = out.result.txHash;
+            } else {
+              const errMsg = String(out?.error || out?.result?.error || '');
+              if (/busy|retry|rate|503|429/i.test(errMsg) || out?.retry || out?.missingBinding) {
+                usedDirect = true;
+              } else {
+                throw new Error(errMsg || 'Sequencer withdraw failed');
+              }
+            }
+          } catch (seqErr) {
+            const msg = String(seqErr?.message || seqErr || '');
+            if (/busy|retry|rate|503|429|sequencer/i.test(msg)) usedDirect = true;
+            else throw seqErr;
           }
-          hash = out.result.txHash;
         } else {
-          const { transferUsdcFromHouse } = await import('./house-tx.js');
-          const { withHouseLock } = await import('./house-tx.js');
+          usedDirect = true;
+        }
+        if (usedDirect || !hash) {
+          const { transferUsdcFromHouse, withHouseLock } = await import('./house-tx.js');
           const tx = await withHouseLock(() =>
             transferUsdcFromHouse(env, { to: player, amountUsdc: amount }),
           );
