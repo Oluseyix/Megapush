@@ -159,36 +159,32 @@ export async function executeCashoutSettlement(env, opts) {
   };
 
   /**
-   * Credit remainder to progress ledger; return { progressUsdc, freeTickets }.
-   * freeTickets = whole dollars already banked (including this remainder).
+   * Credit remainder only (always < $1). Free tickets reserved inside applyTicketProgress
+   * are at most 1 per cashout — never floor(total progress) which caused $7 free mints.
    * Buy failure after this MUST never refund stake.
    */
   async function commitProgress() {
     try {
       const bankMod = await import('./bank.js');
-      if (split.remainderUsdc > 0 && typeof bankMod.applyTicketProgress === 'function') {
-        const prog = await bankMod.applyTicketProgress(
-          recipient,
-          split.remainderUsdc,
-          env,
-        );
-        return {
-          progressUsdc: prog.progressUsdc,
-          freeTickets: Math.max(0, Math.floor(Number(prog.freeTickets) || 0)),
-        };
+      if (typeof bankMod.applyTicketProgress !== 'function') {
+        return { progressUsdc: null, freeTickets: 0, remainderAdded: 0 };
       }
-      // Remainder 0 — still surface free tickets from existing progress ledger
-      if (typeof bankMod.applyTicketProgress === 'function') {
-        const prog0 = await bankMod.applyTicketProgress(recipient, 0, env);
-        return {
-          progressUsdc: prog0.progressUsdc,
-          freeTickets: Math.max(0, Math.floor(Number(prog0.freeTickets) || 0)),
-        };
-      }
-      return { progressUsdc: null, freeTickets: 0 };
+      // Always call — also sanitizes corrupt whole-dollar progress, even with 0 remainder
+      const prog = await bankMod.applyTicketProgress(
+        recipient,
+        split.remainderUsdc,
+        env,
+      );
+      // Hard cap: remainder maths ⇒ at most 1 free ticket per cashout
+      const free = Math.min(1, Math.max(0, Math.floor(Number(prog.freeTickets) || 0)));
+      return {
+        progressUsdc: prog.progressUsdc,
+        freeTickets: free,
+        remainderAdded: prog.remainderAdded != null ? prog.remainderAdded : split.remainderUsdc,
+      };
     } catch (pe) {
       console.warn('progress', pe?.message || pe);
-      return { progressUsdc: null, freeTickets: 0 };
+      return { progressUsdc: null, freeTickets: 0, remainderAdded: 0 };
     }
   }
 
@@ -207,11 +203,10 @@ export async function executeCashoutSettlement(env, opts) {
   }
 
   const prog = await commitProgress();
-  const freeTickets = Math.min(50, Math.max(0, Math.floor(Number(prog.freeTickets) || 0)));
-  // Cap total on-chain buy
-  // Prefer cashout tickets when hitting the 50-ticket buy cap; leftover progress stays banked
-  const totalBuy = Math.min(50, cashoutTickets + freeTickets);
-  const freeToBuy = Math.max(0, totalBuy - cashoutTickets);
+  // freeTickets already reserved (debited from progress). At most 1.
+  const freeToBuy = Math.min(1, Math.max(0, Math.floor(Number(prog.freeTickets) || 0)));
+  // Prefer cashout tickets when hitting the 50-ticket buy cap
+  const totalBuy = Math.min(50, cashoutTickets + freeToBuy);
 
   if (cashoutTickets > 0) {
     try {
@@ -255,22 +250,21 @@ export async function executeCashoutSettlement(env, opts) {
     freeTickets: freeToBuy,
   };
 
-  /** After a successful on-chain buy, debit progress for free tickets delivered. */
-  async function afterBuySuccess(buyResult) {
-    if (!(freeToBuy > 0)) return prog.progressUsdc;
-    try {
-      const { consumeProgressTickets } = await import('./bank.js');
-      // Only consume free tickets that were part of the buy (not cashout tickets)
-      const delivered = Math.floor(Number(buyResult?.tickets) || totalBuy);
-      const freeDelivered = Math.min(freeToBuy, Math.max(0, delivered - cashoutTickets));
-      if (freeDelivered > 0) {
-        const c = await consumeProgressTickets(recipient, freeDelivered, env);
-        return c.progressUsdc;
-      }
-    } catch (ce) {
-      console.warn('consume progress', ce?.message || ce);
-    }
+  /**
+   * Free tickets were reserved (debited) in applyTicketProgress already.
+   * On success: nothing to do. On hard buy failure: return reservation to progress.
+   */
+  async function afterBuySuccess(_buyResult) {
     return prog.progressUsdc;
+  }
+  async function afterBuyFailReturnFree() {
+    if (!(freeToBuy > 0)) return;
+    try {
+      const { returnProgressReservation } = await import('./bank.js');
+      await returnProgressReservation(recipient, freeToBuy, env);
+    } catch (ce) {
+      console.warn('return progress reservation', ce?.message || ce);
+    }
   }
 
   const wantSync = opts.sync === true || opts.deferBuy === false;
@@ -292,7 +286,7 @@ export async function executeCashoutSettlement(env, opts) {
         } catch (_) {}
       } catch (e) {
         console.error('bg ticket buy', e?.shortMessage || e?.message || e);
-        // NEVER refund stake — queue for retry only
+        // NEVER refund stake — queue for retry; free reservation stays until mint or abandon
         try {
           await fulfillPendingTickets(env, { recipient, entryId });
         } catch (_) {}
@@ -411,7 +405,8 @@ async function queuePendingTickets(env, job) {
     entryId: job.entryId || null,
     stake: job.stake != null ? Number(job.stake) : null,
     multiplier: job.multiplier != null ? Number(job.multiplier) : null,
-    freeTickets: job.freeTickets != null ? Math.floor(Number(job.freeTickets)) : 0,
+    // freeTickets already reserved in progress ledger — at most 1
+    freeTickets: Math.min(1, Math.max(0, Math.floor(Number(job.freeTickets) || 0))),
     at: Date.now(),
     tries: 0,
   });
@@ -450,33 +445,30 @@ export async function fulfillPendingTickets(env, only = null) {
       continue;
     }
     try {
-      const buyRes = await runBuyTickets(env, {
+      await runBuyTickets(env, {
         recipient: job.recipient,
         tickets: job.tickets,
         entryId: job.entryId || undefined,
       });
-      // Debit progress for free tickets that were part of this job
-      const freeN = Math.max(0, Math.floor(Number(job.freeTickets) || 0));
-      if (freeN > 0) {
-        try {
-          const { consumeProgressTickets } = await import('./bank.js');
-          const delivered = Math.floor(Number(buyRes?.tickets) || job.tickets);
-          const cashoutPart = Math.max(0, Math.floor(Number(job.tickets) || 0) - freeN);
-          const freeDelivered = Math.min(freeN, Math.max(0, delivered - cashoutPart));
-          if (freeDelivered > 0) {
-            await consumeProgressTickets(job.recipient, freeDelivered, env);
-          }
-        } catch (_) {}
-      }
+      // Free tickets were reserved at cashout time — no second consume
       done += 1;
     } catch (e) {
       job.tries = (Number(job.tries) || 0) + 1;
       job.lastError = e?.message || String(e);
       // Keep retrying; never auto-refund stake
-      if (job.tries < 20) keep.push(job);
-      else {
-        console.error('pending tickets abandoned after tries', job);
+      if (job.tries < 20) {
         keep.push(job);
+      } else {
+        // Abandon free reservation → return progress only (not stake)
+        const freeN = Math.min(1, Math.max(0, Math.floor(Number(job.freeTickets) || 0)));
+        if (freeN > 0) {
+          try {
+            const { returnProgressReservation } = await import('./bank.js');
+            await returnProgressReservation(job.recipient, freeN, env);
+          } catch (_) {}
+        }
+        console.error('pending tickets abandoned after tries', job);
+        // Drop job — cashout tickets may still be owed ops-side; free progress returned
       }
     }
   }

@@ -119,12 +119,18 @@ function normalizeBank(j) {
   const lastFreeAt = j.lastFreeAt != null ? Number(j.lastFreeAt) : null;
   const bonus = money2(j.bonusUsdc);
   const spendable = money2(d + bonus);
+  // Progress is only the fractional bar toward the next free ticket ∈ [0, 1).
+  // Strip corrupt whole dollars (e.g. $7 progress from a past bug) without minting.
+  let progressUsdc = money2(j.progressUsdc);
+  if (progressUsdc >= 1) {
+    progressUsdc = money2(progressUsdc % 1);
+  }
   return {
     deposited: d,
     bonusUsdc: bonus,
     /** Spendable for stakes = deposited + bonus (not all withdrawable) */
     balance: spendable,
-    progressUsdc: money2(j.progressUsdc),
+    progressUsdc,
     lastFreeAt: Number.isFinite(lastFreeAt) && lastFreeAt > 0 ? lastFreeAt : null,
     freeDailyMigrated: !!j.freeDailyMigrated,
     usedTx: Array.isArray(j.usedTx) ? j.usedTx.map((t) => String(t).toLowerCase()) : [],
@@ -728,20 +734,76 @@ export async function creditPlayBank(player, stakeUsd, entryId, env) {
 }
 
 /**
+ * Clamp remainder to [0, 1). A single cashout can never add a whole dollar of progress
+ * (whole dollars are always whole tickets from stake×mult).
+ */
+function clampProgressRemainder(remainderUsdc) {
+  let r = money2(remainderUsdc);
+  if (!(r > 0)) return 0;
+  if (r >= 1) r = money2(r % 1);
+  return r;
+}
+
+/**
  * Add cashout remainder to ticket progress (never withdrawable USDC).
- * Does not mint tickets — use consumeProgressTickets after a successful buy.
+ *
+ * Correct maths:
+ *   remainder = (stake × mult) − floor(stake × mult)   ∈ [0, 1)
+ *   progress  += remainder
+ *   freeTickets THIS call = 0 or 1 when the bar fills past $1
+ *
+ * Free tickets are reserved immediately (progress debited) so a later cashout
+ * cannot re-mint the same whole dollars (the "$2 stake → $7 progress free" bug).
+ *
+ * Corrupt pre-existing whole-dollar progress (e.g. 7.00) is sanitized to the
+ * fractional part only — those whole dollars are NOT minted as free tickets.
  */
 export async function applyTicketProgress(player, remainderUsdc, env) {
-  if (!isAddr(player)) return { ok: false, progressUsdc: 0, freeTickets: 0 };
-  const add = money2(remainderUsdc);
+  if (!isAddr(player)) return { ok: false, progressUsdc: 0, freeTickets: 0, remainderAdded: 0 };
   const bank = await loadBank(player, env);
-  bank.progressUsdc = money2(bank.progressUsdc + add);
+
+  let before = money2(bank.progressUsdc);
+  // Sanitize corrupt whole-dollar backlog (never mint free for it)
+  const wholeBefore = Math.floor(before + 1e-9);
+  if (wholeBefore > 0) {
+    console.warn('progress sanitize whole dollars stripped (no free mint)', {
+      player: String(player).toLowerCase(),
+      before,
+      stripped: wholeBefore,
+    });
+    before = money2(before - wholeBefore);
+    bank.progressUsdc = before;
+  }
+
+  const add = clampProgressRemainder(remainderUsdc);
+  bank.progressUsdc = money2(before + add);
+
+  // At most 1 free ticket per cashout (remainder < 1 ⇒ floor can rise by at most 1)
+  let freeTickets = Math.max(0, Math.floor(bank.progressUsdc + 1e-9) - Math.floor(before + 1e-9));
+  if (freeTickets > 1) freeTickets = 1;
+
+  // Reserve free tickets immediately — debit progress so they cannot re-mint
+  if (freeTickets > 0) {
+    bank.progressUsdc = money2(bank.progressUsdc - freeTickets);
+  }
+
+  // Final clamp: progress toward next ticket is always [0, 1)
+  if (bank.progressUsdc >= 1) {
+    bank.progressUsdc = money2(bank.progressUsdc % 1);
+  }
+
   syncDeposited(bank);
-  const freeTickets = Math.floor(bank.progressUsdc);
   if (add > 0) {
     pushHistory(bank, {
       type: 'progress',
       amount: add,
+      at: Date.now(),
+    });
+  }
+  if (freeTickets > 0) {
+    pushHistory(bank, {
+      type: 'progress_ticket',
+      amount: freeTickets,
       at: Date.now(),
     });
   }
@@ -750,17 +812,46 @@ export async function applyTicketProgress(player, remainderUsdc, env) {
     ok: true,
     progressUsdc: saved.progressUsdc,
     freeTickets,
+    remainderAdded: add,
     deposited: saved.deposited,
     balance: saved.deposited,
   };
 }
 
-/** After free tickets are bought on-chain, debit progress by whole dollars. */
-export async function consumeProgressTickets(player, freeTickets, env) {
+/**
+ * Re-credit reserved free-ticket dollars if on-chain mint permanently fails.
+ * Only used for free progress tickets — never for stake refunds.
+ */
+export async function returnProgressReservation(player, freeTickets, env) {
   const n = Math.floor(Number(freeTickets) || 0);
   if (!isAddr(player) || n <= 0) return { ok: true, progressUsdc: 0 };
   const bank = await loadBank(player, env);
-  const take = Math.min(n, Math.floor(bank.progressUsdc));
+  // Only return fractional progress capacity — free ticket = $1 reserved
+  // Putting $1 back means progress may go ≥ 1; next cashout will re-reserve (max 1).
+  bank.progressUsdc = money2(bank.progressUsdc + n);
+  // Keep display sensible: leave whole dollars for next free reserve
+  syncDeposited(bank);
+  const saved = await saveBank(player, bank, env);
+  return { ok: true, progressUsdc: saved.progressUsdc, returned: n };
+}
+
+/**
+ * @deprecated Free tickets are reserved in applyTicketProgress.
+ * Kept for older callers — no-ops if progress already debited (floor < n).
+ */
+export async function consumeProgressTickets(player, freeTickets, env) {
+  const n = Math.floor(Number(freeTickets) || 0);
+  if (!isAddr(player) || n <= 0) {
+    const bank = isAddr(player) ? await loadBank(player, env) : null;
+    return { ok: true, progressUsdc: bank ? bank.progressUsdc : 0, consumed: 0 };
+  }
+  const bank = await loadBank(player, env);
+  const available = Math.floor(bank.progressUsdc + 1e-9);
+  // If already reserved (progress < 1), nothing left to consume
+  if (available <= 0) {
+    return { ok: true, progressUsdc: bank.progressUsdc, consumed: 0, alreadyReserved: true };
+  }
+  const take = Math.min(n, available);
   bank.progressUsdc = money2(bank.progressUsdc - take);
   syncDeposited(bank);
   if (take > 0) {
@@ -789,13 +880,17 @@ export function bankPublicView(bank) {
   const deposited = money2(bank.deposited);
   const bonusUsdc = money2(bank.bonusUsdc);
   const spendable = money2(deposited + bonusUsdc);
+  // Progress bar is always fractional [0, 1) toward the next free ticket
+  let progressUsdc = money2(bank.progressUsdc);
+  if (progressUsdc >= 1) progressUsdc = money2(progressUsdc % 1);
   return {
     balance: spendable,
     deposited,
     bonusUsdc,
     withdrawable: deposited,
-    progressUsdc: money2(bank.progressUsdc),
-    progressTowardTicket: money2(bank.progressUsdc),
+    progressUsdc,
+    progressTowardTicket: progressUsdc,
+    progressPct: Math.min(100, Math.round(progressUsdc * 100)),
     lastFreeAt: bank.lastFreeAt || null,
     ...freeDailyInfo(bank),
   };
