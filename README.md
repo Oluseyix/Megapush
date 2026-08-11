@@ -26,6 +26,6 @@ Let it run too long and the round crashes. The stake is gone.
 * **Ready to play?** [How to play](playing/how-to-play.md)
 * **Want the numbers?** [Odds and payouts](learn/odds-and-payouts.md)
 
-Currently on Base Sepolia testnet.** Testnet tickets don't enter real drawings and carry no value. Don't send mainnet USDC to any MegaPush address.
+Currently on Base Sepolia testnet. Testnet tickets don't enter real drawings and carry no value. Don't send mainnet USDC to any MegaPush address.
 
 MegaPush is a game of chance. Stake only what you can afford to lose. [Odds and payouts](learn/odds-and-payouts.md) · [Play responsibly](appendix/responsible-gaming.md)
