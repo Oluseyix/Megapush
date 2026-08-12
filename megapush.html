@@ -4870,6 +4870,8 @@ function bindProviderListeners(provider){
       if(b){ b.textContent = 'Connect'; b.classList.remove('on'); b.title = 'Connect wallet'; }
       setBalUi(null);
       resetLoggedOutUi();
+      // Disconnected from the wallet side — same rule as the in-app disconnect.
+      try{ forgetLastWallet(); }catch(_){}
       try{ clearTicketsUi({ dropCache: false }); }catch(_){}
       return;
     }
@@ -6449,6 +6451,18 @@ function saveTicketCache(addr, mapped){
   }catch(_){}
 }
 
+/**
+ * Forget which wallet was last seen, without dropping its ticket cache.
+ *
+ * Both logged-out restore paths (first paint, and loadUserTickets with no account) key off
+ * mp_last_wallet, so clearing it is what makes a disconnect actually look disconnected —
+ * otherwise opening Tickets repaints the previous wallet's tickets. The per-address cache
+ * survives, so reconnecting the same wallet still paints instantly from it.
+ */
+function forgetLastWallet(){
+  try{ localStorage.removeItem('mp_last_wallet'); }catch(_){}
+}
+
 function readTicketCache(addr){
   try{
     const raw = localStorage.getItem(ticketCacheKey(addr));
@@ -6517,7 +6531,8 @@ async function loadUserTickets(opts = {}){
   const lookback = Math.max(1, Math.min(16, Number(opts.lookback) || 12));
 
   if(!account){
-    // Do NOT wipe — restore last wallet cache if present
+    // Not connected YET (first paint before the wallet attaches) — restore the last
+    // session's tickets. A disconnect clears mp_last_wallet, so this stays blank after one.
     try{
       const last = localStorage.getItem('mp_last_wallet');
       if(last) restoreTicketCacheFor(last);
@@ -6525,11 +6540,16 @@ async function loadUserTickets(opts = {}){
     return [];
   }
 
+  // Wallet this load belongs to — a disconnect or account switch mid-load must not paint.
+  const loadingFor = account;
+
   // Instant paint from cache while chain loads
   restoreTicketCacheFor(account);
 
   let lastMapped = [];
   for(let attempt = 0; attempt <= retries; attempt++){
+    // Retry loops outlive a disconnect (a cashout schedules ~12s of them) — stop early.
+    if(account !== loadingFor) return [];
     try{
       drawingId = await publicClient.readContract({ address: JACKPOT, abi, functionName: 'currentDrawingId' });
       const current = typeof drawingId === 'bigint' ? drawingId : BigInt(drawingId);
@@ -6605,6 +6625,10 @@ async function loadUserTickets(opts = {}){
           }
         }
       }
+
+      // Wallet disconnected or switched while this load was running — drop the result
+      // rather than paint the old wallet's tickets over a cleared UI.
+      if(account !== loadingFor) return [];
 
       // Live tickets UI = current open draw only
       lastMapped = live.map((t, i) => ({ ...t, n: i + 1 }));
@@ -6805,7 +6829,9 @@ function disconnectWallet(){
   if(typeof window.setUnclaimedWinnings === 'function'){
     window.setUnclaimedWinnings({ totalUsd: 0, count: 0, address: null });
   }
-  // Clear live UI but keep localStorage cache so refresh can restore
+  // Keep the per-address cache for a quick reconnect, but stop the logged-out restore
+  // from painting this wallet's tickets back over the cleared UI.
+  forgetLastWallet();
   clearTicketsUi({ dropCache: false });
   if($('status')) $('status').textContent = 'Wallet disconnected';
   showToast('Wallet disconnected', 'info');
