@@ -81,6 +81,21 @@ function isTransient(e) {
   );
 }
 
+/**
+ * A buy tx was broadcast but we could not learn whether it landed. Callers must treat this
+ * as "may already be minted" and never re-buy automatically.
+ */
+export function unconfirmedBuyError(hash) {
+  const err = new Error(`Ticket buy ${hash} broadcast but unconfirmed — not retrying`);
+  err.unconfirmed = true;
+  err.txHash = hash;
+  return err;
+}
+
+export function isUnconfirmedBuy(e) {
+  return !!e?.unconfirmed;
+}
+
 export function makeTransport(env) {
   const urls = [
     envGet(env, 'RPC_URL'),
@@ -273,12 +288,37 @@ export function ticketIdsFromReceipt(receipt, toAddr) {
 
 /**
  * Buy one chunk with simulate + generous gas. Retries on revert/transient errors.
+ *
+ * Duplicate safety: once a buy tx is broadcast we NEVER send another for the same chunk
+ * until that tx is known to have reverted. A timed-out / errored receipt wait is not proof
+ * the buy did not happen — re-sending there is what minted extra tickets.
  */
 async function buyTicketChunk(clients, { recipient, chunk, maxAttempts = 4 }) {
   const { publicClient, walletClient, account, house } = clients;
   let lastErr;
+  /** Hash of a broadcast buy whose outcome we have not yet resolved. */
+  let sentHash = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
+      // Resolve a previous broadcast before considering another send.
+      if (sentHash) {
+        const prior = await publicClient
+          .waitForTransactionReceipt({
+            hash: sentHash,
+            confirmations: 1,
+            timeout: 30_000,
+            pollingInterval: 500,
+          })
+          .catch(() => null);
+        if (prior?.status === 'success') return sentHash;
+        if (!prior) {
+          // Still unknown — keep waiting on the same tx, never buy again.
+          lastErr = unconfirmedBuyError(sentHash);
+          await sleep(1000 + attempt * 500);
+          continue;
+        }
+        sentHash = null; // confirmed reverted — safe to send a replacement
+      }
       if (attempt === 1 || attempt === 3) {
         try {
           await ensureMaxAllowance(clients, RANDOM_BUYER);
@@ -320,6 +360,7 @@ async function buyTicketChunk(clients, { recipient, chunk, maxAttempts = 4 }) {
         gas,
         nonce,
       });
+      sentHash = hash;
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
         confirmations: 1,
@@ -327,6 +368,7 @@ async function buyTicketChunk(clients, { recipient, chunk, maxAttempts = 4 }) {
         pollingInterval: 500,
       });
       if (receipt.status !== 'success') {
+        sentHash = null; // reverted on-chain — nothing minted, retry is safe
         throw new Error(`Transaction reverted: ${hash}`);
       }
       return hash;
@@ -408,6 +450,17 @@ export async function buyTicketsForPlayer(env, { recipient, tickets }) {
       remaining -= chunk;
       if (remaining > 0) await sleep(250);
     } catch (e) {
+      // Broadcast but unresolved — the chunk may already be minted. Stop here rather than
+      // shrink-and-retry, which is how one cashout turned into several ticket buys.
+      if (isUnconfirmedBuy(e)) {
+        console.error('buyTickets unconfirmed — stopping to avoid duplicate mint', {
+          recipient,
+          chunk,
+          txHash: e.txHash,
+        });
+        if (buyTxs.length > 0) break;
+        throw e;
+      }
       if (chunkSize > 1) {
         // shrink chunk and retry same remaining
         chunkSize = 1;

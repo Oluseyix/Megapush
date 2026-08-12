@@ -3,8 +3,116 @@
  * tickets = floor(stake × mult); remainder → ticket progress ledger.
  * Settlement mult is server-authoritative.
  */
-import { isAddr, withHouseLock, buyTicketsForPlayer } from './house-tx.js';
+import { isAddr, withHouseLock, buyTicketsForPlayer, isUnconfirmedBuy } from './house-tx.js';
 import { splitPayoutToTickets } from './tickets.js';
+
+/**
+ * One entry = one ticket buy, ever.
+ *
+ * A single cashout reaches the buy path from several directions — the inline background
+ * buy, the pending-queue drain, a client POST retry after its 12s abort, and the direct
+ * fallback when the sequencer is busy or unbound. The sequencer's idempotency cache only
+ * fills once a job COMPLETES, so overlapping attempts all sailed past it and each bought a
+ * full set of tickets. This claim is taken before any buy and closes that window.
+ */
+const BUY_CLAIM_PREFIX = 'ticket_buy_claim:';
+/** A buy that has not resolved within the lease is assumed dead and may be re-attempted. */
+const BUY_CLAIM_LEASE_MS = 5 * 60 * 1000;
+const BUY_CLAIM_TTL_S = 7 * 24 * 60 * 60;
+
+function buyClaimKey(entryId) {
+  return BUY_CLAIM_PREFIX + String(entryId);
+}
+
+/** Settle time for a KV write before the claim is read back. */
+const BUY_CLAIM_READBACK_MS = 80;
+
+/**
+ * KV has no compare-and-set, so a plain read-then-write lets two simultaneous callers both
+ * see an empty key and both buy. Instead every caller writes its own token and reads the key
+ * back: last write wins, so exactly one caller finds its own token and owns the buy.
+ *
+ * @returns {'claimed'|'done'|'in_flight'} plus the cached result for 'done'.
+ */
+async function claimTicketBuy(env, entryId) {
+  if (!env?.BANK_KV || !entryId) return { state: 'claimed', guarded: false };
+  const key = buyClaimKey(entryId);
+  let cur = null;
+  try {
+    cur = await env.BANK_KV.get(key, { type: 'json' });
+  } catch (_) {
+    return { state: 'claimed', guarded: false };
+  }
+  if (cur?.done) return { state: 'done', guarded: true, result: cur.result || null };
+  if (cur?.at && Date.now() - Number(cur.at) < BUY_CLAIM_LEASE_MS) {
+    return { state: 'in_flight', guarded: true };
+  }
+
+  const token =
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    await env.BANK_KV.put(key, JSON.stringify({ at: Date.now(), token, done: false }), {
+      expirationTtl: BUY_CLAIM_TTL_S,
+    });
+  } catch (_) {
+    return { state: 'claimed', guarded: false };
+  }
+
+  await new Promise((r) => setTimeout(r, BUY_CLAIM_READBACK_MS));
+  let back = null;
+  try {
+    back = await env.BANK_KV.get(key, { type: 'json' });
+  } catch (_) {
+    return { state: 'claimed', guarded: false };
+  }
+  if (back?.done) return { state: 'done', guarded: true, result: back.result || null };
+  // Someone else's token is on the key — they own this buy.
+  if (back?.token && back.token !== token) return { state: 'in_flight', guarded: true };
+  return { state: 'claimed', guarded: true, token };
+}
+
+async function settleTicketBuyClaim(env, entryId, result) {
+  if (!env?.BANK_KV || !entryId) return;
+  try {
+    await env.BANK_KV.put(
+      buyClaimKey(entryId),
+      JSON.stringify({
+        at: Date.now(),
+        done: true,
+        result: {
+          ok: true,
+          txHash: result?.txHash || null,
+          buyTxs: result?.buyTxs || undefined,
+          tickets: Math.max(0, Math.floor(Number(result?.tickets) || 0)),
+        },
+      }),
+      { expirationTtl: BUY_CLAIM_TTL_S },
+    );
+  } catch (_) {}
+}
+
+/**
+ * Release so a genuine retry can proceed. Never called for unconfirmed broadcasts —
+ * those keep the claim so nothing re-buys tickets that may already be minted.
+ * Only the holder may release, so a loser cannot clear the winner's claim.
+ */
+async function releaseTicketBuyClaim(env, entryId, token) {
+  if (!env?.BANK_KV || !entryId) return;
+  const key = buyClaimKey(entryId);
+  try {
+    const cur = await env.BANK_KV.get(key, { type: 'json' });
+    if (cur?.done) return;
+    if (token && cur?.token && cur.token !== token) return;
+    await env.BANK_KV.delete(key);
+  } catch (_) {}
+}
+
+function inFlightBuyError(entryId) {
+  const err = new Error(`Ticket buy already in flight for ${entryId}`);
+  err.inFlight = true;
+  return err;
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -18,6 +126,40 @@ function json(data, status = 200) {
 }
 
 async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake }) {
+  const claim = await claimTicketBuy(env, entryId);
+  if (claim.state === 'done') {
+    // Already bought for this entry — return the recorded buy, never mint again.
+    return { ok: true, already: true, ...(claim.result || {}) };
+  }
+  if (claim.state === 'in_flight') {
+    // Another path owns this buy. Throwing keeps the queued job for a later drain
+    // instead of letting a second buy run alongside the first.
+    throw inFlightBuyError(entryId);
+  }
+  try {
+    const out = await runBuyTicketsUnguarded(env, { recipient, tickets, entryId, costUsdc, stake });
+    if (out?.ok) await settleTicketBuyClaim(env, entryId, out);
+    else await releaseTicketBuyClaim(env, entryId, claim.token);
+    return out;
+  } catch (e) {
+    if (isUnconfirmedBuy(e)) {
+      // Tickets may already be minted. Close the claim permanently — an automatic retry
+      // here is exactly the double-mint we are fixing. Needs an ops eye, not a re-buy.
+      await settleTicketBuyClaim(env, entryId, { txHash: e.txHash, tickets: 0 });
+      console.error('ticket buy unconfirmed — claim closed, no auto-retry', {
+        entryId,
+        recipient,
+        tickets,
+        txHash: e.txHash,
+      });
+    } else {
+      await releaseTicketBuyClaim(env, entryId, claim.token);
+    }
+    throw e;
+  }
+}
+
+async function runBuyTicketsUnguarded(env, { recipient, tickets, entryId, costUsdc, stake }) {
   // Prefer sequencer (nonce safety). On busy/rate-limit/failure, fall through to
   // direct house buy so cashouts still complete.
   if (env?.TX_SEQUENCER_DO) {
@@ -414,6 +556,12 @@ async function queuePendingTickets(env, job) {
   await env.BANK_KV.put(PENDING_TICKETS_KEY, JSON.stringify(list));
 }
 
+/**
+ * A freshly queued job is still owned by the inline background buy that queued it.
+ * Draining it before that buy resolves is what made every cashout mint twice.
+ */
+const PENDING_GRACE_MS = 2 * 60 * 1000;
+
 /** Retry queued ticket deliveries (no stake refunds — ever). */
 export async function fulfillPendingTickets(env, only = null) {
   if (!env?.BANK_KV) return { ok: false, error: 'no kv' };
@@ -444,6 +592,19 @@ export async function fulfillPendingTickets(env, only = null) {
       keep.push(job);
       continue;
     }
+    if (
+      only?.excludeEntryId &&
+      job.entryId &&
+      String(only.excludeEntryId) === String(job.entryId)
+    ) {
+      keep.push(job);
+      continue;
+    }
+    // Untargeted drain: leave fresh jobs to the background buy that queued them.
+    if (!only?.entryId && Date.now() - Number(job.at || 0) < PENDING_GRACE_MS) {
+      keep.push(job);
+      continue;
+    }
     try {
       await runBuyTickets(env, {
         recipient: job.recipient,
@@ -453,6 +614,16 @@ export async function fulfillPendingTickets(env, only = null) {
       // Free tickets were reserved at cashout time — no second consume
       done += 1;
     } catch (e) {
+      // Another path holds the buy claim — keep the job untouched, don't burn a try.
+      if (e?.inFlight) {
+        keep.push(job);
+        continue;
+      }
+      // Broadcast but unresolved — dropping is deliberate; retrying may mint twice.
+      if (isUnconfirmedBuy(e)) {
+        console.error('pending ticket buy unconfirmed — dropped, needs manual check', job);
+        continue;
+      }
       job.tries = (Number(job.tries) || 0) + 1;
       job.lastError = e?.message || String(e);
       // Keep retrying; never auto-refund stake
@@ -563,10 +734,15 @@ export async function handleCashout(request, env, ctx) {
     ctx,
   });
 
-  // Opportunistically drain older pending ticket buys for this player
+  // Opportunistically drain OLDER pending ticket buys for this player. The entry we just
+  // settled is excluded — its buy is already running in the background, and draining it
+  // here bought a second set of tickets for the same cashout.
   if (result.ok && isAddr(body.recipient) && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(
-      fulfillPendingTickets(env, { recipient: body.recipient }).catch(() => {}),
+      fulfillPendingTickets(env, {
+        recipient: body.recipient,
+        excludeEntryId: body.entryId != null ? String(body.entryId) : undefined,
+      }).catch(() => {}),
     );
   }
 
