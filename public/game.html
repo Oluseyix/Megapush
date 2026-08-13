@@ -1106,7 +1106,7 @@ button:focus:not(:focus-visible){outline:none}
     <div class="card" id="claimCard">
       <div class="card-lab" id="claimLab">Unclaimed wins</div>
       <div class="card-val" id="claimVal">—</div>
-      <div class="card-sub" id="claimSub">No unclaimed wins right now</div>
+      <div class="card-sub" id="claimSub">Connect wallet to load wins</div>
       <button class="go secondary" style="margin-top:10px;display:none" type="button" id="claimGoWinnings">Claim on Winnings →</button>
     </div>
 
@@ -1666,6 +1666,7 @@ syncTixUI(); syncMission();
 const ticketData=[]; // filled only from on-chain getUserTickets
 const pastDraws=[]; // on-chain past tickets + optional wins API overlay
 let pastFilter='all';
+let seenLiveTokenIds=new Set(); // detects newly-minted tickets to upgrade an open cashout receipt link
 
 function renderTickets(){
   const list=$('tixList');
@@ -1701,6 +1702,10 @@ function renderTickets(){
 function renderPast(){
   const el=$('pastList');
   if(!el) return;
+  if(!(window.Megapot && window.Megapot.account)){
+    el.innerHTML='<div style="padding:16px;text-align:center;color:var(--mid);font-size:13px">Connect wallet to view past drawings</div>';
+    return;
+  }
   // won filter includes unclaimed + claimed wins; lost = no prize
   const list=pastDraws.filter(d=>{
     if(pastFilter==='all') return true;
@@ -1748,6 +1753,16 @@ window.MegaPushUI = {
   get pastDraws(){ return pastDraws; },
   applyTickets(mapped){
     const list = Array.isArray(mapped) ? mapped : [];
+    // Newest ticket not seen before this call — if the cash-out receipt is still open,
+    // this is the mint it was waiting on. Piggybacks on the retry-poll that already runs
+    // after every cash-out (loadUserTickets) — no extra requests.
+    let freshTokenId = null;
+    for(const t of list){
+      const tid = t?.tokenId != null ? String(t.tokenId) : '';
+      if(tid && !seenLiveTokenIds.has(tid)) freshTokenId = tid;
+    }
+    seenLiveTokenIds = new Set(list.map(t => t?.tokenId != null ? String(t.tokenId) : '').filter(Boolean));
+    if(freshTokenId != null) upgradeCashoutReceiptLink(freshTokenId);
     ticketData.length = 0;
     list.forEach(x => ticketData.push(x));
     ticketCount = list.length;
@@ -1761,6 +1776,13 @@ window.MegaPushUI = {
     syncTixUI();
     renderTickets();
   },
+  clearPastDraws(){
+    pastDraws.length = 0;
+    demoLotteryActive = false;
+    demoUnclaimedUsd = 0;
+    demoUnclaimedCount = 0;
+    renderPast();
+  },
   bumpTickets(n){
     // Allow negative deltas so failed cashouts can reverse optimistic credits
     const delta = Math.trunc(Number(n) || 0);
@@ -1770,8 +1792,25 @@ window.MegaPushUI = {
     return ticketCount;
   },
   applyPastDraws(rows){
-    pastDraws.length = 0;
-    (rows || []).forEach(r => pastDraws.push(r));
+    // Upsert by tokenId instead of wipe-and-replace: the post-cashout retry loop calls
+    // this repeatedly while on-chain reads are still converging, and per-drawing RPC
+    // calls can transiently fail (see loadUserTickets' inner try/catch continue). A
+    // destructive replace made the list flicker empty / shrink / grow across retries —
+    // upsert only ever adds or updates rows, so the list stays static once populated.
+    const byId = new Map();
+    pastDraws.forEach((d, i) => {
+      const key = d.tokenId != null ? String(d.tokenId) : `#${i}`;
+      byId.set(key, d);
+    });
+    (rows || []).forEach(r => {
+      const key = r.tokenId != null ? String(r.tokenId) : null;
+      const existing = key ? byId.get(key) : null;
+      if(existing) Object.assign(existing, r);
+      else {
+        pastDraws.push(r);
+        if(key) byId.set(key, r);
+      }
+    });
     renderPast();
     return pastDraws.length;
   },
@@ -2830,19 +2869,18 @@ function showCashoutReceipt({ tickets, at, txHash }){
   tickDrawTimers();
   const a=$('crTx');
   if(a){
-    a.textContent = 'View on Base ↗';
-    a.hidden = false;
-    a.style.display = '';
-    // Always show Base control — real tx when available, explorer home otherwise
+    // Ticket buy is a background job — no real tx/ticket link exists at this instant.
+    // A link to the bare explorer homepage looks broken, so stay hidden until
+    // upgradeCashoutReceiptLink() finds the real mint (usually within a couple seconds);
+    // the "Tickets" button already covers "go see it" in the meantime.
     if(txHash && /^0x[a-fA-F0-9]{64}$/i.test(String(txHash))){
       setBasescanTxLink(a, txHash);
+      a.textContent = 'View on Base ↗';
       a.hidden = false;
       a.style.display = '';
     }else{
-      a.href = 'https://sepolia.basescan.org';
-      a.hidden = false;
-      a.style.display = '';
-      a.textContent = 'View on Base ↗';
+      a.hidden = true;
+      a.style.display = 'none';
     }
   }
   const tixBtn = $('crTixBtn');
@@ -2856,6 +2894,23 @@ function showCashoutReceipt({ tickets, at, txHash }){
   // Keep banner up long enough to tap Tickets / Base
   if(cashoutReceiptTimer) clearTimeout(cashoutReceiptTimer);
   cashoutReceiptTimer = setTimeout(()=>hideCashoutReceipt(), 8000);
+}
+
+/**
+ * Reveal the real "View on Base" link once the ticket actually mints. Called from
+ * applyTickets() as a side effect of the polling that already runs post-cash-out —
+ * fires no requests of its own, so it can't add load or lag.
+ */
+function upgradeCashoutReceiptLink(tokenId){
+  const box=$('cashoutReceipt');
+  const a=$('crTx');
+  if(!box || !a || box.hidden || !box.classList.contains('show')) return;
+  if(tokenId == null) return;
+  const nft = '0x45084829ac63f9dC6a3D4981A46FA896f9180ECd';
+  a.href = 'https://sepolia.basescan.org/nft/'+nft+'/'+encodeURIComponent(String(tokenId));
+  a.textContent = 'View on Base ↗';
+  a.hidden = false;
+  a.style.display = '';
 }
 
 function hideCashoutReceipt(){
@@ -3590,6 +3645,7 @@ function seedDemoLotteryUi(opts = {}){
   const addr = opts.address
     || (window.Megapot && window.Megapot.account)
     || null;
+  if(!addr) return pastDraws.length; // never seed wins/history before wallet connects
   const claimed = readClaimedTixSet(addr);
 
   // If user already claimed all demo wins, never re-inflate claim card
@@ -6807,6 +6863,7 @@ function disconnectWallet(){
   }
   // Clear live UI but keep localStorage cache so refresh can restore
   clearTicketsUi({ dropCache: false });
+  window.MegaPushUI?.clearPastDraws?.();
   if($('status')) $('status').textContent = 'Wallet disconnected';
   showToast('Wallet disconnected', 'info');
   return true;
