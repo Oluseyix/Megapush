@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { RoundDO } from '../cf-worker/dos/round-do.js';
 import { handleCashout } from '../cf-worker/cashout.js';
+import { handleBootstrap } from '../cf-worker/bootstrap.js';
 import {
   elapsedForMult, settlementFromIntent, sha256Hex, verifyRound,
 } from '../cf-worker/crash-curve.js';
@@ -113,6 +114,15 @@ function noSecrets(value) {
     if (item && typeof item === 'object') noSecrets(item);
   }
 }
+
+test('house-key bootstrap is closed unless explicitly enabled', async () => {
+  const response = await handleBootstrap(
+    new Request('https://offline.invalid/api/bootstrap/house'),
+    { BOOTSTRAP_TOKEN: 'this-token-is-long-enough-but-disabled' },
+  );
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { ok: false, error: 'Not found' });
+});
 
 test('invalid cashout cannot reveal a live crash point, with or without an entry', async () => {
   const f = fixture();

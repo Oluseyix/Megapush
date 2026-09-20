@@ -29,6 +29,8 @@ tag = "v1"
 new_sqlite_classes = ["RoundDO", "TxSequencerDO"]
 
 [vars]
+# Bootstrap is intentionally absent/disabled. Set BOOTSTRAP_ENABLED=true only
+# during a controlled one-time migration, then remove it and BOOTSTRAP_TOKEN.
 MAX_ROUND_EXPOSURE = "500"
 MAX_PAYOUT_MULT = "50"
 MAX_PAYOUT_PER_ENTRY = "200"

@@ -6,7 +6,8 @@
  * Headers: X-Bootstrap-Token: <BOOTSTRAP_TOKEN>
  * Body: { "housePrivateKey": "0x…" }
  *
- * After success, remove BOOTSTRAP_TOKEN and the temporary Pages sync function.
+ * This route is fail-closed. It requires both BOOTSTRAP_ENABLED=true and a
+ * strong BOOTSTRAP_TOKEN. After success, remove both variables and the route.
  */
 import { storeHousePrivateKey, resolveHousePrivateKey, envGet } from './house-tx.js';
 // envGet is exported from house-tx
@@ -23,6 +24,12 @@ function json(data, status = 200) {
 }
 
 export async function handleBootstrap(request, env) {
+  const enabled = String(envGet(env, 'BOOTSTRAP_ENABLED')).trim().toLowerCase() === 'true';
+  const expected = envGet(env, 'BOOTSTRAP_TOKEN');
+  if (!enabled || expected.length < 32) {
+    return json({ ok: false, error: 'Not found' }, 404);
+  }
+
   if (request.method === 'GET') {
     const hasEnv = !!envGet(env, 'HOUSE_PRIVATE_KEY', 'HOUSE_KEY');
     let hasKv = false;
@@ -42,17 +49,12 @@ export async function handleBootstrap(request, env) {
       fromEnv: hasEnv,
       fromKv: hasKv && !hasEnv,
       house,
-      bootstrapOpen: !!envGet(env, 'BOOTSTRAP_TOKEN'),
+      bootstrapOpen: true,
     });
   }
 
   if (request.method !== 'POST') {
     return json({ ok: false, error: 'Use GET or POST' }, 405);
-  }
-
-  const expected = envGet(env, 'BOOTSTRAP_TOKEN');
-  if (!expected || expected.length < 16) {
-    return json({ ok: false, error: 'Bootstrap closed' }, 403);
   }
 
   const hdr =
