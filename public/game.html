@@ -3062,7 +3062,7 @@ async function cashOut(b){
           0,
           wholeTickets(res.cashoutTickets != null ? res.cashoutTickets : null),
         );
-        if(!(cashoutTix > 0)) cashoutTix = tickets; // client estimate if server omitted
+        if(res.cashoutTickets == null) cashoutTix = tickets; // estimate only when omitted
         // Prefer cashoutTickets + free (0|1), not inflated res.tickets
         const keep = Math.max(0, cashoutTix + freeTix);
         const delta = keep - tickets;
@@ -6375,7 +6375,7 @@ async function refundStake(entryId, amountUsd){
  * House settles cashout + buys Megapot tickets for the PLAYER wallet only.
  * Instant: server locks win + returns immediately; on-chain buy continues in background.
  * count may be 0 (progress-only remainder) — still settles stake, never client-refunds.
- * Sends clientCashoutAt / claimedMult / roundId so late RTT still settles under crash.
+ * Server arrival determines cashout; retries recover the entry's stored receipt.
  */
 async function houseBuyTickets(count, recipient, meta = {}){
   count = Math.max(0, Math.floor(Number(count) || 0));
@@ -6430,7 +6430,7 @@ async function houseBuyTickets(count, recipient, meta = {}){
           Math.floor(Number(j.cashoutTickets != null ? j.cashoutTickets : 0) || 0),
         );
         // Prefer explicit cashoutTickets; fall back to request count (not inflated total)
-        if(!(cashoutTix > 0) && count > 0) cashoutTix = count;
+        if(j.cashoutTickets == null && count > 0) cashoutTix = count;
         const totalTix = cashoutTix + freeTix;
         // Refresh tickets immediately while chain buy finishes in background
         if(totalTix > 0){

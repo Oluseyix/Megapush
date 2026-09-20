@@ -6,7 +6,7 @@
  *   seed[i]  = sha256(seed[i+1])  for i = length-1 … 0
  *   head     = seed[0]            // published on-chain once
  *
- * Consumption: forward index 0, 1, 2, … length-1
+ * Consumption: forward index 1, 2, … length-1. Index 0 is public, never played.
  * Link: sha256(seed[i]) === seed[i-1]  (and after i steps of hashing → head)
  *
  * When exhausted: refuse to open rounds (no silent re-generation).
@@ -40,7 +40,7 @@ export const CHAIN_KEY = 'seed_chain_v1';
 
 export function chainLengthFromEnv(env) {
   const n = Number(env?.SEED_CHAIN_LENGTH);
-  if (Number.isFinite(n) && n >= 1) {
+  if (Number.isFinite(n) && n >= 2) {
     return Math.min(MAX_CHAIN_LENGTH, Math.floor(n));
   }
   return DEFAULT_CHAIN_LENGTH;
@@ -90,7 +90,7 @@ export async function createSeedChain(env) {
     length,
     terminal,
     head,
-    nextIndex: 0,
+    nextIndex: 1,
     anchorTxHash: null,
     anchorBlockNumber: null,
     createdAt: Date.now(),
@@ -233,8 +233,14 @@ export function chainPublicView(chain) {
 export async function loadOrCreateChain(storage, env) {
   let chain = await storage.get(CHAIN_KEY);
   if (chain && chain.version === 1 && chain.terminal && chain.head) {
+    // Preserve existing anchors while skipping an unused legacy public head.
+    if (chain.nextIndex === 0) {
+      chain.nextIndex = 1;
+      await storage.put(CHAIN_KEY, chain);
+    }
     return chain;
   }
+  if (chain) throw new Error('Invalid stored seed chain — operator recovery required');
   chain = await createSeedChain(env);
   await storage.put(CHAIN_KEY, chain);
   console.log('SEED_CHAIN_CREATED', {
@@ -253,22 +259,13 @@ export async function ensureChainReady(storage, env) {
   let chain = await loadOrCreateChain(storage, env);
 
   if (chain.nextIndex >= chain.length) {
-    if (!chain.exhaustedAt) {
-      chain.exhaustedAt = Date.now();
-      await storage.put(CHAIN_KEY, chain);
-    }
-    console.error('SEED_CHAIN_EXHAUSTED', {
+    console.warn('SEED_CHAIN_EXHAUSTED', {
       length: chain.length,
       nextIndex: chain.nextIndex,
       head: chain.head,
       anchorTxHash: chain.anchorTxHash,
     });
-    return {
-      ok: false,
-      error:
-        'Seed chain exhausted — refusing to open rounds. Deploy a new chain and publish a new on-chain head (no silent re-seed).',
-      chain,
-    };
+    return { ok: false, error: 'Seed chain exhausted — explicit anchored rotation required', chain };
   }
 
   if (!chain.anchorTxHash) {
@@ -285,12 +282,12 @@ export async function ensureChainReady(storage, env) {
         blockNumber: pub.blockNumber,
       });
     } catch (e) {
-      // Do not freeze the game: chain head is still fixed in DO storage and public via API.
-      // Retry on-chain publish on later opens when HOUSE_PRIVATE_KEY + gas are available.
+      // Never accept bets without the promised independently published anchor.
       console.warn('SEED_CHAIN_ANCHOR_DEFERRED', e?.message || e);
       chain.anchorDeferred = true;
       chain.anchorError = String(e?.message || e || 'anchor failed');
       await storage.put(CHAIN_KEY, chain);
+      return { ok: false, error: 'Seed chain anchor unavailable — betting closed', chain };
     }
   }
 
@@ -303,6 +300,10 @@ export async function ensureChainReady(storage, env) {
  * @returns {Promise<{ serverSeed: string, chainIndex: number, prevSeed: string|null, chain: SeedChain }>}
  */
 export async function consumeNextSeed(storage, chain) {
+  if (!chain.anchorTxHash) throw new Error('Seed chain must be anchored before use');
+  if (!Number.isInteger(chain.nextIndex) || chain.nextIndex < 1) {
+    throw new Error('Public chain head cannot be used as a round seed');
+  }
   if (chain.nextIndex >= chain.length) {
     throw new Error('Seed chain exhausted');
   }

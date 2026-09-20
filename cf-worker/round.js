@@ -30,7 +30,7 @@ function json(data, status = 200) {
 export { masterSecret, hasRoundSecret };
 
 /**
- * Settlement via RoundDO (block-hash crash + client-intent grace).
+ * Settlement via the internal RoundDO binding (trusted arrival + durable receipt).
  * @param {object} env
  * @param {number|object} [arrivalOrOpts] legacy arrivalMs number, or opts bag
  * @param {number} [arrivalOrOpts.arrivalMs]
@@ -60,6 +60,9 @@ export async function settleCashoutAt(env, arrivalOrOpts = Date.now()) {
   const out = await doFetch(roundStub(env), '/settlement', {
     method: 'POST',
     body: JSON.stringify({
+      entryId: opts.entryId,
+      recipient: opts.recipient,
+      auto: opts.auto === true,
       arrivalMs: opts.arrivalMs != null ? Number(opts.arrivalMs) : Date.now(),
       clientCashoutAt:
         opts.clientCashoutAt != null ? Number(opts.clientCashoutAt) : undefined,

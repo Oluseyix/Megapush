@@ -30,14 +30,14 @@ export function makePublicClient(env, { timeoutMs = 12_000, retryCount = 1 } = {
 /** Current head block number (number). */
 export async function getBlockNumber(env, opts = {}) {
   const client = makePublicClient(env, opts);
-  const n = await client.getBlockNumber();
+  const n = await client.getBlockNumber({ cacheTime: 0 });
   return Number(n);
 }
 
 /**
  * Fetch block by number. Returns null if not mined yet or RPC error.
  * Fast path: if head < target, skip the full block fetch (avoids long DO stalls at 1×).
- * @returns {Promise<{ number: number, hash: string } | null>}
+ * @returns {Promise<{ number: number, hash: string, timestamp: number } | null>}
  */
 export async function getBlockByNumber(env, blockNumber, opts = {}) {
   const n = Number(blockNumber);
@@ -59,6 +59,7 @@ export async function getBlockByNumber(env, blockNumber, opts = {}) {
     return {
       number: Number(block.number),
       hash: String(block.hash).toLowerCase(),
+      timestamp: Number(block.timestamp),
     };
   } catch (e) {
     // eth_getBlockByNumber returns null for future blocks on some nodes; viem may throw

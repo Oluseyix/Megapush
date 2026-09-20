@@ -644,7 +644,7 @@ export function baseEntryId(entryId) {
  * Never use for cashout "winnings" (those are tickets + progress only).
  * Idempotent per base entryId — never refund the same stake twice.
  */
-export async function creditPlayBank(player, stakeUsd, entryId, env) {
+export async function creditPlayBank(player, stakeUsd, entryId, env, { roundAlreadyReleased = false } = {}) {
   if (!isAddr(player)) return { ok: false, error: 'bad player' };
   let stake = Math.floor(Number(stakeUsd) || 0);
   if (!(stake > 0)) return { ok: false, error: 'bad stake' };
@@ -712,7 +712,9 @@ export async function creditPlayBank(player, stakeUsd, entryId, env) {
     }
     try {
       const { roundDoReleaseStake } = await import('./dos/client.js');
-      await roundDoReleaseStake(env, { entryId: baseId, reason: 'cashout_refund' });
+      if (!roundAlreadyReleased) {
+        await roundDoReleaseStake(env, { entryId: baseId, reason: 'cashout_refund' });
+      }
     } catch (_) {}
   }
   pushHistory(bank, {

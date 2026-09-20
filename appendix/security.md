@@ -14,18 +14,19 @@
 
 Nobody with access to round seeds is permitted to stake on MegaPush: not the team, not contractors, not friends or family.
 
-This matters because the server generates the seed and can therefore compute the crash point during the betting window. The commitment stops us changing it; policy stops anyone acting on it. We consider a breach of this the most serious thing that could happen to the product, and we'd disclose it publicly. [More detail](../playing/provably-fair.md)
+Once the target Base block is available, the server can combine it with its secret seed to compute the crash point during flight. A saved commitment lets players detect a changed seed; it cannot prove nobody learned the outcome early. We consider insider play a serious breach. [More detail](../playing/provably-fair.md)
 
 ## Key separation
 
-MegaPush uses two independent secrets:
+MegaPush uses separate fairness material and payment credentials:
 
 | Secret              | Role                                                                                                     |
 | ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `ROUND_SECRET`      | Fairness seed material. Determines crash points. The server refuses to open a betting window without it. |
+| Chain `terminal`    | Random 32-byte secret in RoundDO storage from which future seeds are derived.                            |
+| `ROUND_SECRET`      | Required runtime configuration gate. It is not the source of seeds in the current hash-chain engine.     |
 | `HOUSE_PRIVATE_KEY` | Signs ticket purchases and house USDC outflows.                                                          |
 
-The fairness seed is **not derived from the house key**. Compromising one does not give an attacker the other. Predicting crash points and moving funds are separate capabilities requiring separate breaches.
+The fairness seed is **not derived from the house key**. They serve separate purposes, but both are currently accessible to the Worker deployment. A compromise of that runtime can expose both; independent secret generation is not operational isolation.
 
 ## Known risk, stated plainly
 

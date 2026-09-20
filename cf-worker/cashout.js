@@ -18,37 +18,53 @@ function json(data, status = 200) {
 }
 
 async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake }) {
-  // Prefer sequencer (nonce safety). On busy/rate-limit/failure, fall through to
-  // direct house buy so cashouts still complete.
+  // Prefer sequencer (nonce safety + per-entryId idempotency cache, cross-request-safe
+  // because it's a Durable Object). On a genuine hard failure, fall through to direct
+  // house buy so cashouts still complete — but withHouseLock is only an isolate-local
+  // in-memory mutex, so it does NOT dedupe against another isolate's concurrent buy for
+  // this same entry. "Busy" (another job — often this SAME entryId racing itself, e.g.
+  // a client retry or auto-bank racing a manual cashout) must retry the sequencer, not
+  // bypass it: bypassing on "busy" is what let two concurrent buys for one win both
+  // land as separate on-chain purchases (double-minted tickets).
   if (env?.TX_SEQUENCER_DO) {
-    try {
-      const { executeHouseJob } = await import('./dos/client.js');
-      const out = await executeHouseJob(env, {
-        type: 'cashout',
-        id: entryId || undefined,
-        payload: {
-          recipient,
-          tickets,
-          entryId,
-          costUsdc,
-          stake,
-        },
-      });
-      if (out?.missingBinding) {
-        // fall through
-      } else if (out?.already && out?.result?.ok) {
-        return { ...out.result, already: true, sequencerId: out.id };
-      } else if (out?.ok && out?.result?.ok) {
-        return { ...out.result, sequencerId: out.id, seq: out.seq };
-      } else {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const { executeHouseJob } = await import('./dos/client.js');
+        const out = await executeHouseJob(env, {
+          type: 'cashout',
+          id: entryId || undefined,
+          payload: {
+            recipient,
+            tickets,
+            entryId,
+            costUsdc,
+            stake,
+          },
+        });
+        if (out?.missingBinding) {
+          break; // no sequencer at all — direct buy is the only option
+        }
+        if (out?.already && out?.result?.ok) {
+          return { ...out.result, already: true, sequencerId: out.id };
+        }
+        if (out?.ok && out?.result?.ok) {
+          return { ...out.result, sequencerId: out.id, seq: out.seq };
+        }
+        if (out?.retry) {
+          // Another job (possibly this exact entryId) is mid-flight — wait for it to
+          // finish, then re-check the idempotency cache instead of racing it directly.
+          await new Promise((r) => setTimeout(r, 350 + attempt * 300));
+          continue;
+        }
         console.warn(
           'sequencer cashout fallback',
           out?.error || out?.result?.error || out,
         );
-        // fall through to direct buy
+        break; // hard error — fall through to direct buy
+      } catch (e) {
+        console.warn('sequencer cashout error, direct buy', e?.message || e);
+        break;
       }
-    } catch (e) {
-      console.warn('sequencer cashout error, direct buy', e?.message || e);
     }
   }
 
@@ -69,7 +85,7 @@ async function runBuyTickets(env, { recipient, tickets, entryId, costUsdc, stake
  */
 export async function executeCashoutSettlement(env, opts) {
   const recipient = opts.recipient;
-  const stake = Number(opts.stake);
+  let stake;
   const entryId = opts.entryId != null ? String(opts.entryId) : null;
   const arrivalMs = opts.arrivalMs != null ? Number(opts.arrivalMs) : Date.now();
   const clientCashoutAt =
@@ -81,11 +97,17 @@ export async function executeCashoutSettlement(env, opts) {
   if (!isAddr(recipient)) {
     return { ok: false, error: 'Valid player recipient required', status: 400 };
   }
+  if (!entryId || !Number.isSafeInteger(roundId) || roundId < 1) {
+    return { ok: false, error: 'Registered entryId and roundId required', status: 400 };
+  }
 
   let settlement;
   try {
     const { settleCashoutAt } = await import('./round.js');
     settlement = await settleCashoutAt(env, {
+      entryId,
+      recipient,
+      auto,
       arrivalMs,
       clientCashoutAt,
       claimedMult,
@@ -119,13 +141,13 @@ export async function executeCashoutSettlement(env, opts) {
       ok: false,
       error: 'Round already crashed — cashout too late',
       lost: true,
-      crashMult: settlement.crashMult,
       roundId: settlement.roundId,
       arrivalMs: settlement.arrivalMs,
       status: 409,
     };
   }
 
+  stake = Number(settlement.stake);
   const multiplier = Number(settlement.mult);
   if (!(multiplier > 0) || !(stake > 0)) {
     return { ok: false, error: 'Invalid settlement mult or stake', status: 400 };
@@ -189,16 +211,41 @@ export async function executeCashoutSettlement(env, opts) {
   }
 
   // ── Commit win immediately (stake spent → tickets/progress only; no refund path) ──
+  // RoundDO settle-entry is the single source of truth for "has this entry already been
+  // paid out" — a second cashout call for the same entryId (double-tap, client retry, or
+  // manual cashout racing the server's own auto-bank) must never mint tickets twice.
   if (entryId) {
     try {
       const { roundDoSettleEntry } = await import('./dos/client.js');
-      await roundDoSettleEntry(env, {
+      const settleRes = await roundDoSettleEntry(env, {
         entryId,
         mult: multiplier,
         tickets: cashoutTickets,
         payoutUsdc: split.valueUsdc,
       });
-    } catch (_) {}
+      if (!settleRes?.ok || settleRes?.missing || settleRes?.missingBinding) {
+        return { ok: false, error: 'Could not commit cashout receipt — retry this entry', status: 503 };
+      }
+      if (settleRes.already) {
+        return {
+          ok: true,
+          already: true,
+          tickets: cashoutTickets,
+          cashoutTickets,
+          freeTickets: 0,
+          returned: 0,
+          requested: 0,
+          pendingOnchain: cashoutTickets > 0,
+          pendingTickets: cashoutTickets,
+          ...baseOk,
+          progressUsdc: null,
+          instant: true,
+          note: 'Already settled — no duplicate tickets minted',
+        };
+      }
+    } catch (_) {
+      return { ok: false, error: 'Could not commit cashout receipt — retry this entry', status: 503 };
+    }
     await markEntryConsumed(env, recipient, entryId, 'settled');
   }
 
@@ -444,6 +491,20 @@ export async function fulfillPendingTickets(env, only = null) {
       keep.push(job);
       continue;
     }
+    // Skip the entry this caller already owns a bgBuy for (see handleCashout) — without
+    // this, its own opportunistic drain-for-recipient could double-buy the ticket its
+    // own executeCashoutSettlement is still in the middle of minting.
+    if (only?.except && job.entryId && String(only.except) === String(job.entryId)) {
+      keep.push(job);
+      continue;
+    }
+    // Belt-and-suspenders: only drain jobs old enough that they can't be another
+    // in-flight cashout's own bgBuy (which typically finishes within a couple seconds).
+    // "Opportunistic drain" is for genuinely stuck jobs from past requests, not this one.
+    if (only?.minAgeMs && Date.now() - (Number(job.at) || 0) < only.minAgeMs) {
+      keep.push(job);
+      continue;
+    }
     try {
       await runBuyTickets(env, {
         recipient: job.recipient,
@@ -521,6 +582,9 @@ export async function handleCashout(request, env, ctx) {
   } catch {
     body = {};
   }
+  // Timestamp only after the complete body arrives. An unfinished upload must
+  // not reserve a pre-crash time that can be filled in after seeing the result.
+  const receivedAt = Date.now();
 
   // Prefer body.multiplier / claimedMult as the client's displayed mult at click
   const claimedMult =
@@ -552,7 +616,7 @@ export async function handleCashout(request, env, ctx) {
     recipient: body.recipient,
     stake: body.stake,
     entryId: body.entryId != null ? String(body.entryId) : null,
-    arrivalMs: Date.now(),
+    arrivalMs: receivedAt,
     clientCashoutAt,
     claimedMult,
     roundId,
@@ -563,10 +627,18 @@ export async function handleCashout(request, env, ctx) {
     ctx,
   });
 
-  // Opportunistically drain older pending ticket buys for this player
+  // Opportunistically drain older *stuck* pending ticket buys for this player — never
+  // this request's own entry (its bgBuy inside executeCashoutSettlement already owns
+  // that job) and never anything queued in the last few seconds (too fresh to be
+  // "stuck", more likely a concurrent cashout's own in-flight bgBuy). Racing either of
+  // those against this drain was minting the same ticket batch twice.
   if (result.ok && isAddr(body.recipient) && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(
-      fulfillPendingTickets(env, { recipient: body.recipient }).catch(() => {}),
+      fulfillPendingTickets(env, {
+        recipient: body.recipient,
+        except: result.entryId,
+        minAgeMs: 5000,
+      }).catch(() => {}),
     );
   }
 
@@ -578,7 +650,6 @@ export async function handleCashout(request, env, ctx) {
         phase: result.phase,
         roundId: result.roundId,
         lost: result.lost,
-        crashMult: result.crashMult,
         arrivalMs: result.arrivalMs,
         effectiveAt: result.effectiveAt,
         graceApplied: result.graceApplied,

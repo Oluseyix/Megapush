@@ -1,12 +1,12 @@
 # Provably Fair
 
-Nobody knows where a round will crash before it starts. Not you, and not MegaPush. You can prove that yourself, after every round.
+Every round publishes a seed commitment and a target Base block. After the crash, you can recompute the result and check it against the commitment you saved before playing. This proves consistency of the disclosed inputs; it does not eliminate trust in the operator.
 
 ## The idea in one paragraph
 
-Before betting opens, the server picks a secret seed and publishes its SHA-256 hash, along with the number of a **future Base block** that hasn't been mined yet. The crash point derives from both. Since the block doesn't exist when the commitment goes out, nobody can compute the result during betting, including us. When the round settles we reveal the seed and the block hash, and you can recompute everything.
+Before betting opens, the server selects the next secret seed and publishes its SHA-256 hash, along with the number of a **future Base block**. The crash point derives from both. When the target block is available, the server can calculate the outcome. After the crash it reveals the seed so players can recompute the result.
 
-The commitment stops us changing the outcome. The future block stops us knowing it.
+The commitment lets you detect a changed seed. The future block contributes external data, but the server knows the result during flight. A block hash is not a guarantee against a compromised operator or block producer.
 
 ## Verifying a round
 
@@ -71,16 +71,16 @@ Round seeds aren't generated one at a time. They were pre-generated in reverse b
 seed[i] = sha256(seed[i+1])
 ```
 
-The head of that chain is anchored in a public Base transaction: `[CHAIN_HEAD_TX]`.
+The head is anchored in a public Base transaction. Get the current head and transaction from `/api/round?chain=1` and check it independently. The public head is never used as a playable seed; play starts with its secret preimage at index one.
 
-So every revealed seed can be hashed forward to reach the anchor. That proves the entire sequence was fixed before the first round was ever played. We can't regenerate a seed mid-stream, and we can't swap in a different chain, because the anchor is on-chain and timestamped.
+Every revealed seed can be hashed forward to reach the anchor. This lets you detect replacement of the committed sequence. New rounds stay closed when anchoring fails or the sequence runs out. Rotation requires an explicit new anchor. The anchor alone does not prove correct selection of each round's target block or fair cashout handling.
 
 To check: take any revealed seed, hash it repeatedly, and confirm you arrive at the published head.
 
 ## The shortcut
 
 ```bash
-curl -sS -X POST "https://megapush.vercel.app/api/verify" \
+curl -sS -X POST "https://megapush.xnoxseyi.workers.dev/api/verify" \
   -H 'Content-Type: application/json' \
   -d '{"serverSeed":"...","serverSeedHash":"...","targetBlock":...,"blockHash":"...","crashMult":2.58}'
 ```
@@ -102,7 +102,7 @@ They're reported separately so you can see exactly which property held.
 
 ## When a block is unavailable
 
-If the target block can't be read at settlement, the round is **voided and every stake returned.**
+If the target block cannot be read within 40 seconds after betting closes, or its timestamp is not after that deadline, the round is **voided and its stakes returned.**
 
 We don't fall back to deriving from the seed alone, and we don't substitute a different block. Either would hand us back the ability to know the outcome in advance, which is the whole thing this design exists to prevent. A voided round is an inconvenience. An unverifiable one isn't acceptable.
 
@@ -120,10 +120,12 @@ If the fairness seed were derived from the house wallet key, compromising one wo
 
 Nobody with access to round seeds may stake on MegaPush. Not the team, not contractors, not friends or family.
 
-The block-hash design already makes seed access useless for predicting outcomes, so this is belt and braces rather than a load-bearing safeguard. We keep it because it costs nothing and it's good practice.
+Once the target block is available, anyone with the secret seed can calculate the crash point. Preventing insider access and play is therefore essential. Cryptographic verification after a round cannot prove that its seed was kept secret beforehand.
 
 ## Checking your bank
 
-Pass `flyStart`, `cashoutAt` and `expectedSettlementMult` to the verify endpoint and it confirms the multiplier you were paid sits on the same curve at the moment your instruction reached the server. That's how you check a bank wasn't quietly shaved.
+Manual cashout must reach the server in full before the crash. The server records an immutable settlement receipt for that entry; retries recover the same receipt. A client timestamp cannot establish an earlier click. Auto-cashout targets are recorded with the bet and remain eligible if their target was reached before the crash, even when processing is delayed.
+
+Pass `flyStart`, `cashoutAt` and `expectedSettlementMult` to the verifier to check the curve calculation at the recorded time. This checks the arithmetic, not independent proof of network arrival time.
 
 [Deposits and withdrawals](deposits-and-withdrawals.md)

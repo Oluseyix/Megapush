@@ -54,6 +54,21 @@ export class RoundDO {
     this.env = env;
     // ctx for waitUntil (auto-bank must not run long chain buys inside storage path)
     this.ctx = state;
+    // Single serialization queue for every read-check-mutate-write on shared DO storage
+    // (hand / entries / chain). Concurrent requests — overlapping poll timers, a client
+    // retry after a timeout, or manual cashout racing the server's own auto-bank for the
+    // same entry — must never interleave here: that's what let two concurrent /stake or
+    // /settle-entry calls both observe "not yet settled" and both proceed (duplicate
+    // seed consumption, duplicate ticket mints). All callers chain onto the SAME queue
+    // so ensure()'s hand transitions can't race entries mutations either.
+    this._mutex = Promise.resolve();
+  }
+
+  /** Run fn only after every previously-queued serialized op has finished. */
+  _serialize(fn) {
+    const run = this._mutex.then(fn, fn);
+    this._mutex = run.then(() => {}, () => {});
+    return run;
   }
 
   async fetch(request) {
@@ -136,8 +151,13 @@ export class RoundDO {
 
   /**
    * Advance durable hand: open → betting → waiting (entropy) → flying → crashed | voided → next.
+   * Serialized — see constructor note on _mutex.
    */
   async ensure(nowMs) {
+    return this._serialize(() => this._ensureLocked(nowMs));
+  }
+
+  async _ensureLocked(nowMs) {
     if (!hasRoundSecret(this.env)) {
       const hand = {
         roundId: null,
@@ -277,6 +297,10 @@ export class RoundDO {
     const blk = await getBlockByNumber(this.env, hand.targetBlock, { timeoutMs: 3_500 });
 
     if (blk?.hash) {
+      if (!Number.isFinite(blk.timestamp) || blk.number !== hand.targetBlock ||
+          blk.timestamp * 1000 <= hand.bettingEndsAt) {
+        return this.voidEntropyHand(hand, 'target_block_not_after_betting');
+      }
       try {
         const { crashMult: raw } = await crashFromSeedAndBlock(hand.serverSeed, blk.hash);
         const { flightMs, crashMult } = flightFromCrash(raw);
@@ -309,23 +333,22 @@ export class RoundDO {
         bettingEndsAt: hand.bettingEndsAt,
         nowMs: after,
       });
-      hand.voided = true;
-      hand.phase = 'voided';
-      hand.windowClosed = true;
-      hand.blockHash = null;
-      hand.crashMult = null;
-      hand.flyStart = null;
-      hand.crashAt = null;
-      hand.resultEnd = after + RESULT_MS;
-      hand.voidReason = 'target_block_unavailable';
-      hand.voidedAt = after;
-      return { hand, voided: true };
+      return this.voidEntropyHand(hand, 'target_block_unavailable', after);
     }
 
     // Still waiting
     hand.phase = 'waiting';
     hand.windowClosed = true;
     return { hand, voided: false };
+  }
+
+  voidEntropyHand(hand, reason, at = Date.now()) {
+    Object.assign(hand, {
+      voided: true, phase: 'voided', windowClosed: true,
+      blockHash: null, crashMult: null, flyStart: null, crashAt: null,
+      resultEnd: at + RESULT_MS, voidReason: reason, voidedAt: at,
+    });
+    return { hand, voided: true };
   }
 
   async voidAndRefund(hand, entries, nowMs) {
@@ -336,11 +359,12 @@ export class RoundDO {
       const player = e.player;
       e.status = 'refunded';
       e.releasedAt = nowMs;
-      e.releaseReason = 'void_target_block_unavailable';
+      e.releaseReason = `void_${hand.voidReason}`;
       entries[id] = e;
       if (player && stake > 0) {
         try {
-          await creditPlayBank(player, stake, id, this.env);
+          // This method already owns the RoundDO queue; do not call back into it.
+          await creditPlayBank(player, stake, id, this.env, { roundAlreadyReleased: true });
           console.log('VOID_REFUND', { roundId: hand.roundId, entryId: id, player, stake });
         } catch (err) {
           console.error('VOID_REFUND_FAIL', id, err?.message || err);
@@ -437,6 +461,7 @@ export class RoundDO {
       };
     }
 
+    nowMs = Date.now();
     const targetBlock = openBlock + TARGET_BLOCK_OFFSET;
     const bettingEndsAt = nowMs + BET_MS;
 
@@ -611,32 +636,31 @@ export class RoundDO {
   }
 
   async processAutoBanks(nowMs) {
-    const hand = (await this.state.storage.get(KEY.hand)) || {};
-    if (hand.phase !== 'flying' || hand.flyStart == null || hand.voided) return;
-    let entries = (await this.state.storage.get(KEY.entries)) || {};
-
-    // Collect due auto-banks, mark pending, persist, then run cashouts OUTSIDE the
-    // storage critical path via waitUntil — long on-chain buys inside the DO caused
-    // "Durable Object storage operation exceeded timeout which caused object to be reset".
-    const due = [];
-    for (const id of Object.keys(entries)) {
-      const e = entries[id];
-      if (!e || e.status !== 'open' || !(Number(e.autoMult) > 1) || !e.player) continue;
-      const targetAt = hand.flyStart + elapsedForMult(Number(e.autoMult));
-      if (nowMs + 50 < targetAt) continue;
-      if (hand.crashAt != null && nowMs >= hand.crashAt) continue;
-      e.status = 'auto_pending';
-      entries[id] = e;
-      due.push({
-        id,
-        e,
-        targetAt,
-        settleAt: Math.min(nowMs, Math.max(targetAt, hand.flyStart + 1)),
-        roundId: hand.roundId,
-      });
-    }
+    // A late alarm may run after the crash or archival. Eligibility comes only
+    // from a target registered before flight, never a late client claim.
+    const due = await this._serialize(async () => {
+      if (await this.state.storage.get(KEY.kill)) return [];
+      const hand = (await this.state.storage.get(KEY.hand)) || {};
+      const history = (await this.state.storage.get(KEY.history)) || [];
+      const hands = new Map(history.map((h) => [h.roundId, h]));
+      if (hand.roundId != null) hands.set(hand.roundId, hand);
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      const jobs = [];
+      for (const [id, e] of Object.entries(entries)) {
+        if (!e || e.status !== 'open' || !(Number(e.autoMult) > 1) || !e.player) continue;
+        if (e.cashout && (e.cashout.lost || e.cashout.mode !== 'auto')) continue;
+        const h = hands.get(e.roundId);
+        if (!h || h.voided || h.flyStart == null || h.crashAt == null) continue;
+        const targetAt = h.flyStart + elapsedForMult(Number(e.autoMult));
+        if (Number(e.at) > Number(h.bettingEndsAt) ||
+            targetAt > nowMs || targetAt >= h.crashAt || Number(e.autoMult) >= h.crashMult) continue;
+        e.status = 'auto_pending';
+        jobs.push({ id, e, targetAt, settleAt: nowMs, roundId: h.roundId });
+      }
+      if (jobs.length) await this.state.storage.put(KEY.entries, entries);
+      return jobs;
+    });
     if (!due.length) return;
-    await this.state.storage.put(KEY.entries, entries);
 
     const run = async () => {
       const { executeCashoutSettlement } = await import('../cashout.js');
@@ -653,22 +677,15 @@ export class RoundDO {
             auto: true,
             // Instant settle inside auto-bank too — don't hold the DO on ticket buys
             sync: false,
+            ctx: this.ctx,
           });
           if (!(result?.ok || result?.lost)) {
-            const cur = (await this.state.storage.get(KEY.entries)) || {};
-            if (cur[id] && cur[id].status === 'auto_pending') {
-              cur[id] = { ...cur[id], status: 'open' };
-              await this.state.storage.put(KEY.entries, cur);
-            }
+            await this.retryAutoEntry(id);
           }
         } catch (err) {
           console.error('auto-bank', err?.message || err);
           try {
-            const cur = (await this.state.storage.get(KEY.entries)) || {};
-            if (cur[id] && cur[id].status === 'auto_pending') {
-              cur[id] = { ...cur[id], status: 'open' };
-              await this.state.storage.put(KEY.entries, cur);
-            }
+            await this.retryAutoEntry(id);
           } catch (_) {}
         }
       }
@@ -683,6 +700,16 @@ export class RoundDO {
       // Last resort — still don't block the caller for multi-minute chain work
       run().catch((e) => console.error('auto-bank run', e?.message || e));
     }
+  }
+
+  async retryAutoEntry(id) {
+    return this._serialize(async () => {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      if (entries[id]?.status === 'auto_pending') {
+        entries[id].status = 'open';
+        await this.state.storage.put(KEY.entries, entries);
+      }
+    });
   }
 
   /**
@@ -738,7 +765,7 @@ export class RoundDO {
       bettingEndsAt: hand?.bettingEndsAt ?? null,
       // Hide crashAt until reveal (otherwise clients can infer crash mult from curve)
       crashAt: showReveal && !hand?.voided ? hand?.crashAt ?? null : null,
-      resultEnd: showReveal ? hand?.resultEnd ?? null : (phase === 'flying' ? null : hand?.resultEnd ?? null),
+      resultEnd: showReveal ? hand?.resultEnd ?? null : null,
 
       handStart: hand?.handStart ?? null,
       exposureUsdc: hand?.exposureUsdc ?? 0,
@@ -913,146 +940,104 @@ export class RoundDO {
   }
 
 
-  /**
-   * Resolve the hand a cashout should settle against.
-   * Critical: do NOT open the next hand — late cashouts after resultEnd must still
-   * hit the round the user played (current advanced phase or history by roundId).
-   */
-  async resolveSettlementHand(serverNow, roundId) {
-    let hand = (await this.state.storage.get(KEY.hand)) || null;
-    let entries = (await this.state.storage.get(KEY.entries)) || {};
-
-    if (hand && !hand.unconfigured && hand.roundId != null) {
-      // Advance phase (betting→waiting→flying→crashed) but never open next hand here
-      hand = await this.advanceHand(hand, entries, serverNow);
-      await this.state.storage.put(KEY.hand, hand);
-    }
-
-    const wantId = roundId != null && Number.isFinite(Number(roundId)) ? Number(roundId) : null;
-    const hist = (await this.state.storage.get(KEY.history)) || [];
-    const fromHist = (id) => {
-      if (id == null || !Array.isArray(hist)) return null;
-      const archived = hist.find((h) => h && Number(h.roundId) === Number(id));
-      if (!archived || archived.flyStart == null) return null;
-      return {
-        ...archived,
-        phase: archived.voided ? 'voided' : 'crashed',
-        windowClosed: true,
-        unconfigured: false,
-        crashAt: archived.crashAt,
-        crashMult: archived.crashMult,
-        flyStart: archived.flyStart,
-      };
-    };
-
-    // Preferred: exact round the player cashed (may already be archived)
-    if (wantId != null) {
-      if (hand && Number(hand.roundId) === wantId && hand.flyStart != null && hand.crashAt != null) {
-        return hand;
-      }
-      const archived = fromHist(wantId);
-      if (archived) return archived;
-    }
-
-    // Current hand still in flight / just crashed
-    if (hand && hand.flyStart != null && hand.crashAt != null && !hand.voided) {
-      return hand;
-    }
-
-    // Late cashout with missing/wrong roundId — most recent archived hand within 12s
-    if (Array.isArray(hist) && hist[0] && hist[0].flyStart != null) {
-      const h0 = hist[0];
-      const end = h0.crashAt || h0.resultEnd || h0.at || 0;
-      if (serverNow - Number(end) <= 12_000) {
-        return {
-          ...h0,
-          phase: h0.voided ? 'voided' : 'crashed',
-          windowClosed: true,
-          unconfigured: false,
-        };
-      }
-    }
-
-    return hand;
+  /** A cashout belongs only to the round recorded with its stake. */
+  async resolveSettlementHand(roundId) {
+    const hand = await this.state.storage.get(KEY.hand);
+    if (hand && Number(hand.roundId) === roundId) return hand;
+    const history = (await this.state.storage.get(KEY.history)) || [];
+    return history.find((h) => h && Number(h.roundId) === roundId) || null;
   }
 
   async settlementAt(request) {
-    let body = {};
+    const receivedAt = Date.now();
+    let body;
     try {
       body = await request.json();
     } catch {
-      body = {};
+      return json({ ok: false, error: 'Invalid cashout request' }, 400);
     }
-    // Server clock for arrival — never trust client Date.now as authority
-    const arrivalMs = Date.now();
-    const clientCashoutAt =
-      body.clientCashoutAt != null ? Number(body.clientCashoutAt) : null;
-    const claimedMult = body.claimedMult != null ? Number(body.claimedMult) : null;
-    const roundId =
-      body.roundId != null && body.roundId !== ''
-        ? Number(body.roundId)
-        : null;
-
-    const hand = await this.resolveSettlementHand(arrivalMs, roundId);
-    const kill = !!(await this.state.storage.get(KEY.kill));
-    if (kill) {
-      return json({
-        ok: false,
-        error: 'Round kill switch active',
-        phase: hand?.phase || 'intermission',
-      });
+    const entryId = typeof body.entryId === 'string' ? body.entryId : '';
+    const recipient = typeof body.recipient === 'string' ? body.recipient.toLowerCase() : '';
+    const roundId = Number(body.roundId);
+    // This timestamp is supplied only by the internal Worker binding, never copied
+    // from the public request. The edge records it after the full body arrives,
+    // before queueing; a slow upload cannot reserve an earlier cashout time.
+    const arrivalMs = Number(body.arrivalMs ?? receivedAt);
+    if (!entryId || !/^0x[0-9a-f]{40}$/.test(recipient) ||
+        !Number.isSafeInteger(roundId) || roundId < 1 ||
+        !Number.isFinite(arrivalMs) || arrivalMs <= 0 || arrivalMs > receivedAt) {
+      return json({ ok: false, error: 'Invalid cashout identity or timing' }, 400);
     }
-    if (!hand || hand.unconfigured) {
-      return json({
-        ok: false,
-        error: 'No active round to settle',
-        phase: 'intermission',
-      });
-    }
-    if (hand.voided) {
-      return json({
-        ok: false,
-        error: 'Round voided — stakes returned',
-        voided: true,
-        phase: 'voided',
-        roundId: hand.roundId,
-      });
-    }
-    if (
-      hand.phase === 'waiting' ||
-      hand.phase === 'betting' ||
-      hand.phase === 'intermission' ||
-      !hand.flyStart ||
-      !hand.crashAt
-    ) {
-      return json({
-        ok: false,
-        error:
-          hand.phase === 'waiting'
-            ? 'Waiting for target block entropy'
-            : 'Cashout before round flight',
-        phase: hand.phase,
-        roundId: hand.roundId,
-      });
-    }
-    const timing = timingFromHand(hand);
-    const settlement = settlementFromIntent(timing, {
-      arrivalMs,
-      clientCashoutAt,
-      claimedMult,
-    });
-    return json({
-      ...settlement,
-      roundId: hand.roundId,
-      slotId: hand.slotId,
-      hand: hand.hand,
-      serverSeedHash: hand.serverSeedHash,
-      serverSeed:
-        hand.phase === 'crashed' || hand.phase === 'voided' ? hand.serverSeed : null,
-      targetBlock: hand.targetBlock,
-      blockHash: hand.phase === 'crashed' || hand.phase === 'voided' ? hand.blockHash : null,
-      serverNow: arrivalMs,
-      acceptingBets: false,
+    return this._serialize(async () => {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      const row = entries[entryId];
+      if (!row || row.player !== recipient || Number(row.roundId) !== roundId) {
+        return json({ ok: false, error: 'Cashout does not match a registered entry' }, 400);
+      }
+      // Retry the original receipt, including after a crash or Worker restart.
+      if (row.cashout) return json({ ...row.cashout, replay: true });
+      if (!['open', 'auto_pending'].includes(row.status)) {
+        return json({ ok: false, error: 'Entry is no longer open' }, 409);
+      }
+      if (await this.state.storage.get(KEY.kill)) {
+        return json({ ok: false, error: 'Round kill switch active' }, 503);
+      }
+      const hand = await this.resolveSettlementHand(roundId);
+      if (hand?.voided) {
+        return json({ ok: false, error: 'Round voided — stakes returned', voided: true }, 409);
+      }
+      if (!hand || hand.unconfigured || hand.flyStart == null || hand.crashAt == null) {
+        return json({ ok: false, error: 'Round is not ready for cashout' }, 409);
+      }
+      if (!Number.isFinite(Number(row.stakeUsdc)) || !(Number(row.stakeUsdc) > 0) ||
+          arrivalMs < Number(row.at)) {
+        return json({ ok: false, error: 'Invalid registered stake or arrival time' }, 400);
+      }
+      const timing = timingFromHand(hand);
+      const target = Number(row.autoMult);
+      const targetAt = hand.flyStart + elapsedForMult(target);
+      const autoDue = Number.isFinite(target) && target > 1 &&
+        Number(row.at) <= Number(hand.bettingEndsAt) &&
+        target < hand.crashMult && targetAt < hand.crashAt && targetAt <= arrivalMs;
+      if (body.auto === true && !autoDue) {
+        return json({ ok: false, error: 'No eligible pre-registered auto-cashout' }, 409);
+      }
+      let settlement;
+      if (autoDue) {
+        settlement = {
+          ...settlementFromArrival(timing, targetAt),
+          mult: Math.round(target * 100) / 100,
+          effectiveAt: targetAt,
+          mode: 'auto',
+        };
+      } else {
+        settlement = settlementFromIntent(timing, {
+          arrivalMs,
+          claimedMult: body.claimedMult,
+        });
+      }
+      if (!settlement.ok) {
+        return json({ ok: false, error: settlement.error || 'Cashout rejected' }, 400);
+      }
+      // Explicit allowlist: no seed, crash point, crash time, or block hash in any
+      // cashout response. Stored receipts also contain only these public fields.
+      const receipt = {
+        ok: true,
+        lost: !!settlement.lost,
+        mult: settlement.mult,
+        roundId,
+        entryId,
+        recipient,
+        stake: Number(row.stakeUsdc),
+        arrivalMs,
+        effectiveAt: settlement.effectiveAt ?? arrivalMs,
+        mode: settlement.mode || 'arrival',
+        graceApplied: false,
+      };
+      row.cashout = receipt;
+      entries[entryId] = row;
+      await this.state.storage.put(KEY.entries, entries);
+      return json(receipt);
     });
   }
 
@@ -1075,31 +1060,31 @@ export class RoundDO {
   }
 
   async recordStake(request) {
-    const now = Date.now();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: 'Invalid stake request' }, 400);
+    }
+    return this._serialize(() => this.recordStakeLocked(body));
+  }
+
+  async recordStakeLocked(body) {
+    let now = Date.now();
     if (!hasRoundSecret(this.env)) {
-      return json(
-        { ok: false, error: 'ROUND_SECRET not configured — betting closed', windowClosed: true },
-        503,
-      );
+      return json({ ok: false, error: 'ROUND_SECRET not configured — betting closed' }, 503);
     }
     if (await this.state.storage.get(KEY.kill)) {
       return json({ ok: false, error: 'Round kill switch active', kill: true }, 503);
     }
-
-    let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
-    }
-
     const stake = Math.floor(Number(body.stakeUsdc ?? body.stake) || 0);
     const entryId = body.entryId != null ? String(body.entryId) : '';
     const player = body.player ? String(body.player).toLowerCase() : null;
-    if (!(stake > 0)) return json({ ok: false, error: 'stakeUsdc > 0 required' }, 400);
+    if (!Number.isSafeInteger(stake) || !(stake > 0)) return json({ ok: false, error: 'stakeUsdc > 0 required' }, 400);
+    if (!/^0x[0-9a-f]{40}$/.test(player || '')) return json({ ok: false, error: 'Valid player required' }, 400);
     if (!entryId) return json({ ok: false, error: 'entryId required' }, 400);
 
-    const hand = await this.ensure(now);
+    const hand = await this._ensureLocked(now);
     if (hand.unconfigured || hand.error) {
       return json(
         {
@@ -1111,12 +1096,13 @@ export class RoundDO {
       );
     }
 
+    now = Date.now();
     let targetRoundId = hand.roundId;
     let targetFlyStart = hand.flyStart || hand.bettingEndsAt;
     let exposureBase = Number(hand.exposureUsdc) || 0;
     let queuedNext = false;
 
-    if (hand.phase === 'betting' && !hand.windowClosed) {
+    if (hand.phase === 'betting' && !hand.windowClosed && now < hand.bettingEndsAt) {
       // join live hand
     } else {
       // Queue onto next sequential hand
@@ -1133,90 +1119,112 @@ export class RoundDO {
       }
     }
 
-    let entries = (await this.state.storage.get(KEY.entries)) || {};
-    if (entries[entryId]) {
-      const prev = entries[entryId];
+    const caps = capsFromEnv(this.env);
+    // Serialized: two concurrent /stake calls for the same entryId (client retry) must
+    // not both read "not present yet" before either writes — same class of race that
+    // caused duplicate settle-entry processing.
+    const result = await (async () => {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      if (entries[entryId]) {
+        const prev = entries[entryId];
+        return {
+          already: true,
+          stake: prev.stakeUsdc,
+          exposureAdd: prev.exposureAdd,
+          roundId: prev.roundId,
+        };
+      }
+
+      let exposureAdd = exposureForStake(stake, this.env);
+      if (Number(body.maxMultCap) > 0) {
+        exposureAdd = Math.min(stake * Number(body.maxMultCap), caps.maxPayoutPerEntryUsdc);
+      }
+      exposureAdd = Math.round(exposureAdd * 100) / 100;
+
+      if (exposureBase + exposureAdd > caps.maxRoundExposureUsdc + 1e-9) {
+        return {
+          capExceeded: true,
+          exposureUsdc: exposureBase,
+          requestedAdd: exposureAdd,
+        };
+      }
+
+      const autoMult =
+        body.autoMult != null && Number(body.autoMult) > 1 ? Number(body.autoMult) : null;
+
+      entries[entryId] = {
+        entryId,
+        player,
+        stakeUsdc: stake,
+        exposureAdd,
+        status: 'open',
+        roundId: targetRoundId,
+        autoMult,
+        queuedNext,
+        at: now,
+      };
+      const ids = Object.keys(entries);
+      if (ids.length > 400) {
+        const drop = ids.slice(0, ids.length - 400);
+        for (const id of drop) delete entries[id];
+      }
+
+      let handExposureUsdc = hand.exposureUsdc;
+      if (targetRoundId === hand.roundId) {
+        hand.exposureUsdc = Math.round((exposureBase + exposureAdd) * 100) / 100;
+        hand.stakeCount = (hand.stakeCount || 0) + 1;
+        hand.updatedAt = now;
+        await this.state.storage.put(KEY.hand, hand);
+        handExposureUsdc = hand.exposureUsdc;
+      }
+      await this.state.storage.put(KEY.entries, entries);
+      await this.scheduleAlarm(hand, now);
+
+      return { already: false, exposureAdd, autoMult, handExposureUsdc };
+    })();
+
+    if (result.already) {
       return json({
         ok: true,
         already: true,
         do: 'RoundDO',
         entryId,
-        stake: prev.stakeUsdc,
-        exposureAdd: prev.exposureAdd,
-        roundId: prev.roundId,
+        stake: result.stake,
+        exposureAdd: result.exposureAdd,
+        roundId: result.roundId,
         exposureUsdc: hand.exposureUsdc,
       });
     }
-
-    const caps = capsFromEnv(this.env);
-    let exposureAdd = exposureForStake(stake, this.env);
-    if (Number(body.maxMultCap) > 0) {
-      exposureAdd = Math.min(stake * Number(body.maxMultCap), caps.maxPayoutPerEntryUsdc);
-    }
-    exposureAdd = Math.round(exposureAdd * 100) / 100;
-
-    if (exposureBase + exposureAdd > caps.maxRoundExposureUsdc + 1e-9) {
+    if (result.capExceeded) {
       return json(
         {
           ok: false,
           error: 'MAX_ROUND_EXPOSURE would be exceeded',
-          exposureUsdc: exposureBase,
+          exposureUsdc: result.exposureUsdc,
           maxRoundExposureUsdc: caps.maxRoundExposureUsdc,
-          requestedAdd: exposureAdd,
-          remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - exposureBase),
+          requestedAdd: result.requestedAdd,
+          remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - result.exposureUsdc),
           roundId: targetRoundId,
         },
         409,
       );
     }
 
-    const autoMult =
-      body.autoMult != null && Number(body.autoMult) > 1 ? Number(body.autoMult) : null;
-
-    entries[entryId] = {
-      entryId,
-      player,
-      stakeUsdc: stake,
-      exposureAdd,
-      status: 'open',
-      roundId: targetRoundId,
-      autoMult,
-      queuedNext,
-      at: now,
-    };
-    const ids = Object.keys(entries);
-    if (ids.length > 400) {
-      const drop = ids.slice(0, ids.length - 400);
-      for (const id of drop) delete entries[id];
-    }
-
-    if (targetRoundId === hand.roundId) {
-      hand.exposureUsdc = Math.round((exposureBase + exposureAdd) * 100) / 100;
-      hand.stakeCount = (hand.stakeCount || 0) + 1;
-      hand.updatedAt = now;
-      await this.state.storage.put(KEY.hand, hand);
-    }
-    await this.state.storage.put(KEY.entries, entries);
-    await this.scheduleAlarm(hand, now);
-
+    const finalExposureUsdc =
+      targetRoundId === hand.roundId ? result.handExposureUsdc : exposureBase + result.exposureAdd;
     return json({
       ok: true,
       do: 'RoundDO',
       entryId,
       stake,
-      exposureAdd,
-      autoMult,
+      exposureAdd: result.exposureAdd,
+      autoMult: result.autoMult,
       roundId: targetRoundId,
       phase: hand.phase,
       queuedNext,
-      exposureUsdc:
-        targetRoundId === hand.roundId ? hand.exposureUsdc : exposureBase + exposureAdd,
+      exposureUsdc: finalExposureUsdc,
       maxRoundExposureUsdc: caps.maxRoundExposureUsdc,
-      remainingUsdc: Math.max(
-        0,
-        caps.maxRoundExposureUsdc -
-          (targetRoundId === hand.roundId ? hand.exposureUsdc : exposureBase + exposureAdd),
-      ),
+      remainingUsdc: Math.max(0, caps.maxRoundExposureUsdc - finalExposureUsdc),
       flyStart: targetFlyStart,
       targetBlock: targetRoundId === hand.roundId ? hand.targetBlock : null,
     });
@@ -1233,40 +1241,54 @@ export class RoundDO {
     const entryId = body.entryId != null ? String(body.entryId) : '';
     if (!entryId) return json({ ok: false, error: 'entryId required' }, 400);
 
-    await this.ensure(now);
-    let entries = (await this.state.storage.get(KEY.entries)) || {};
-    const row = entries[entryId];
-    if (!row) {
-      return json({ ok: true, already: true, missing: true, entryId });
-    }
-    if (row.status !== 'open') {
-      return json({ ok: true, already: true, entryId, status: row.status });
-    }
+    // Serialized — same race class as settleEntry/recordStake: two concurrent releases
+    // for the same entryId must not both observe status === 'open' before either writes.
+    const result = await this._serialize(async () => {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      const row = entries[entryId];
+      if (!row) return { already: true, missing: true };
+      if (row.status !== 'open') return { already: true, status: row.status };
+      if (row.cashout?.ok && !row.cashout.lost) {
+        return { already: true, status: 'cashout_accepted' };
+      }
 
-    row.status = body.reason === 'settled' ? 'settled' : 'released';
-    row.releasedAt = now;
-    row.releaseReason = body.reason || 'release';
-    entries[entryId] = row;
+      row.status = body.reason === 'settled' ? 'settled' : 'released';
+      row.releasedAt = now;
+      row.releaseReason = body.reason || 'release';
+      entries[entryId] = row;
 
-    const hand = (await this.state.storage.get(KEY.hand)) || {};
-    if (hand.roundId === row.roundId) {
-      hand.exposureUsdc = Math.max(
-        0,
-        Math.round(((Number(hand.exposureUsdc) || 0) - (Number(row.exposureAdd) || 0)) * 100) / 100,
-      );
-      hand.stakeCount = Math.max(0, (hand.stakeCount || 1) - 1);
-      hand.updatedAt = now;
-      await this.state.storage.put(KEY.hand, hand);
+      const hand = (await this.state.storage.get(KEY.hand)) || {};
+      let exposureUsdc = hand.exposureUsdc ?? 0;
+      if (hand.roundId === row.roundId) {
+        hand.exposureUsdc = Math.max(
+          0,
+          Math.round(((Number(hand.exposureUsdc) || 0) - (Number(row.exposureAdd) || 0)) * 100) / 100,
+        );
+        hand.stakeCount = Math.max(0, (hand.stakeCount || 1) - 1);
+        hand.updatedAt = now;
+        await this.state.storage.put(KEY.hand, hand);
+        exposureUsdc = hand.exposureUsdc;
+      }
+      await this.state.storage.put(KEY.entries, entries);
+      return { already: false, status: row.status, exposureUsdc, released: row.exposureAdd };
+    });
+
+    if (result.already) {
+      return json({
+        ok: true,
+        already: true,
+        entryId,
+        missing: result.missing,
+        status: result.status,
+      });
     }
-    await this.state.storage.put(KEY.entries, entries);
-
     return json({
       ok: true,
       do: 'RoundDO',
       entryId,
-      status: row.status,
-      exposureUsdc: hand.exposureUsdc ?? 0,
-      released: row.exposureAdd,
+      status: result.status,
+      exposureUsdc: result.exposureUsdc,
+      released: result.released,
     });
   }
 
@@ -1281,42 +1303,59 @@ export class RoundDO {
     const entryId = body.entryId != null ? String(body.entryId) : '';
     if (!entryId) return json({ ok: false, error: 'entryId required' }, 400);
 
-    await this.ensure(now);
-    let entries = (await this.state.storage.get(KEY.entries)) || {};
-    const row = entries[entryId];
-    if (!row) {
-      return json({ ok: true, already: true, missing: true, entryId });
-    }
-    if (row.status === 'settled') {
-      return json({ ok: true, already: true, entryId, status: 'settled' });
-    }
+    // Serialized: two concurrent settle calls for the same entryId (client retry after a
+    // timeout, or a manual cashout racing the server's own auto-bank) must not both read
+    // status !== 'settled' before either writes — that let both mint tickets for one win.
+    const result = await this._serialize(async () => {
+      const entries = (await this.state.storage.get(KEY.entries)) || {};
+      const row = entries[entryId];
+      if (!row) return { already: true, missing: true };
+      if (row.status === 'settled') return { already: true, status: 'settled' };
+      if (!['open', 'auto_pending'].includes(row.status) || !row.cashout?.ok ||
+          row.cashout.lost || Number(body.mult) !== row.cashout.mult) {
+        return { rejected: true };
+      }
 
-    const wasOpen = row.status === 'open' || row.status === 'auto_pending';
-    row.status = 'settled';
-    row.settledAt = now;
-    row.settleMult = body.mult != null ? Number(body.mult) : null;
-    row.tickets = body.tickets != null ? Number(body.tickets) : null;
-    row.payoutUsdc = body.payoutUsdc != null ? Number(body.payoutUsdc) : null;
-    entries[entryId] = row;
+      const wasOpen = row.status === 'open' || row.status === 'auto_pending';
+      row.status = 'settled';
+      row.settledAt = now;
+      row.settleMult = body.mult != null ? Number(body.mult) : null;
+      row.tickets = body.tickets != null ? Number(body.tickets) : null;
+      row.payoutUsdc = body.payoutUsdc != null ? Number(body.payoutUsdc) : null;
+      entries[entryId] = row;
 
-    const hand = (await this.state.storage.get(KEY.hand)) || {};
-    if (wasOpen && hand.roundId === row.roundId) {
-      hand.exposureUsdc = Math.max(
-        0,
-        Math.round(((Number(hand.exposureUsdc) || 0) - (Number(row.exposureAdd) || 0)) * 100) / 100,
-      );
-      hand.stakeCount = Math.max(0, (hand.stakeCount || 1) - 1);
-      hand.updatedAt = now;
-      await this.state.storage.put(KEY.hand, hand);
+      const hand = (await this.state.storage.get(KEY.hand)) || {};
+      if (wasOpen && hand.roundId === row.roundId) {
+        hand.exposureUsdc = Math.max(
+          0,
+          Math.round(((Number(hand.exposureUsdc) || 0) - (Number(row.exposureAdd) || 0)) * 100) / 100,
+        );
+        hand.stakeCount = Math.max(0, (hand.stakeCount || 1) - 1);
+        hand.updatedAt = now;
+        await this.state.storage.put(KEY.hand, hand);
+      }
+      await this.state.storage.put(KEY.entries, entries);
+      return { already: false, exposureUsdc: hand.exposureUsdc ?? 0 };
+    });
+
+    if (result.rejected) {
+      return json({ ok: false, error: 'No accepted cashout receipt for entry' }, 409);
     }
-    await this.state.storage.put(KEY.entries, entries);
-
+    if (result.already) {
+      return json({
+        ok: true,
+        already: true,
+        entryId,
+        missing: result.missing,
+        status: result.status,
+      });
+    }
     return json({
       ok: true,
       do: 'RoundDO',
       entryId,
       status: 'settled',
-      exposureUsdc: hand.exposureUsdc ?? 0,
+      exposureUsdc: result.exposureUsdc,
     });
   }
 

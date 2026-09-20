@@ -22,11 +22,10 @@ export const INSTANT_BUST_MOD = 33;
 /**
  * Future-block offset for entropy.
  * Base ~2s/block; BET_MS = 5s is the max betting window (fixed).
- * Offset 3 ≈ 6s from open → ~1s after betting closes on a healthy chain.
- * (Was 5 ≈ ~5s post-bet wait which felt like "stuck at 1×".)
- * Do not lower below 3 without re-checking BET_MS.
+ * Offset 5 leaves margin for block-boundary alignment and RPC latency.
+ * RoundDO also checks the resolved block timestamp against the betting deadline.
  */
-export const TARGET_BLOCK_OFFSET = 3;
+export const TARGET_BLOCK_OFFSET = 5;
 
 /**
  * After betting ends, wait at most this long for targetBlock before voiding the round.
@@ -131,20 +130,17 @@ export function multOnCurve(timing, atMs) {
   return roundMult(Math.min(m, crashMult));
 }
 
-/**
- * Max network / device lag we forgive on cashout.
- * 1.20× → crash 1.24× is only ~175ms on the curve; RTT almost always arrives after crash.
- * Prefer claimedMult (display mult at click) over client wall-clock.
- */
-export const CASHOUT_GRACE_MS = 6_000;
+/** No client-claimed backdating. Retries use a receipt already stored by RoundDO. */
+export const CASHOUT_GRACE_MS = 0;
 
 /**
  * Settlement for a cashout intent that arrived at `arrivalMs` (server clock).
  * Same curve as the TV — only differs by arrival latency.
  */
 export function settlementFromArrival(timing, arrivalMs) {
-  if (!timing || timing.flyStart == null || timing.crashAt == null) {
-    return { ok: false, error: 'Invalid timing', lost: true, mult: 0 };
+  if (!timing || !Number.isFinite(timing.flyStart) || !Number.isFinite(timing.crashAt) ||
+      !Number.isFinite(timing.crashMult) || !Number.isFinite(arrivalMs)) {
+    return { ok: false, error: 'Invalid timing', mult: 0 };
   }
   if (timing.voided) {
     return {
@@ -160,7 +156,7 @@ export function settlementFromArrival(timing, arrivalMs) {
     return {
       ok: false,
       error: 'Cashout before round flight (still in betting window)',
-      lost: true,
+      lost: false,
       mult: 0,
       phase: 'betting',
     };
@@ -170,11 +166,9 @@ export function settlementFromArrival(timing, arrivalMs) {
       ok: true,
       lost: true,
       mult: 0,
-      crashMult: timing.crashMult,
       phase: 'crashed',
       arrivalMs,
       flyStart: timing.flyStart,
-      crashAt: timing.crashAt,
     };
   }
   const mult = multOnCurve(timing, arrivalMs);
@@ -182,153 +176,32 @@ export function settlementFromArrival(timing, arrivalMs) {
     ok: true,
     lost: false,
     mult,
-    crashMult: timing.crashMult,
     phase: 'flying',
     arrivalMs,
     flyStart: timing.flyStart,
-    crashAt: timing.crashAt,
     elapsedMs: arrivalMs - timing.flyStart,
   };
 }
 
 /**
- * Settlement with client intent + latency grace.
- *
- * Authoritative intent is claimedMult (what the player saw when they clicked).
- * Wall-clock clientCashoutAt is optional / often skewed — claimedMult maps onto the
- * shared curve without depending on device time.
- *
- * Never pays above crash or above mult reachable within GRACE of server arrival.
- *
- * @param {object} timing
- * @param {{ arrivalMs?: number, clientCashoutAt?: number|null, claimedMult?: number|null, serverNow?: number }} opts
+ * Manual settlement uses only trusted server arrival time. Client values are
+ * validated for compatibility but cannot select a payout or backdate a request.
+ * RoundDO persists the resulting receipt for idempotent retries.
  */
 export function settlementFromIntent(timing, opts = {}) {
-  const arrivalMs = Number(opts.arrivalMs != null ? opts.arrivalMs : opts.serverNow) || Date.now();
-  const clientAt =
-    opts.clientCashoutAt != null && Number.isFinite(Number(opts.clientCashoutAt))
-      ? Number(opts.clientCashoutAt)
-      : null;
-  const claimedRaw =
-    opts.claimedMult != null && Number.isFinite(Number(opts.claimedMult))
-      ? Number(opts.claimedMult)
-      : null;
-
-  if (!timing || timing.flyStart == null || timing.crashAt == null) {
-    return { ok: false, error: 'Invalid timing', lost: true, mult: 0, arrivalMs };
+  const arrivalMs = Number(opts.arrivalMs ?? opts.serverNow ?? Date.now());
+  if (opts.claimedMult != null &&
+      (!Number.isFinite(Number(opts.claimedMult)) || Number(opts.claimedMult) < 1)) {
+    return { ok: false, error: 'Invalid claimed multiplier', mult: 0, arrivalMs };
   }
-  if (timing.voided) {
-    return {
-      ok: false,
-      error: 'Round voided — stakes returned',
-      lost: false,
-      voided: true,
-      mult: 0,
-      phase: 'voided',
-      arrivalMs,
-    };
-  }
-
-  const flyStart = Number(timing.flyStart);
-  const crashAt = Number(timing.crashAt);
-  const crashMult = Number(timing.crashMult);
-
-  const stillFlying = arrivalMs < crashAt;
-  const lateOk = arrivalMs - crashAt <= CASHOUT_GRACE_MS;
-
-  // Anti-cheat max mult:
-  //  - still flying → cannot claim above curve at arrival
-  //  - crashed but within GRACE → may claim any mult strictly under crash (request just late)
-  //  - past GRACE → no payout (handled below)
-  let maxMult;
-  if (stillFlying) {
-    maxMult = multOnCurve(timing, Math.min(arrivalMs, crashAt - 1));
-  } else if (lateOk) {
-    maxMult = multOnCurve(timing, crashAt - 1);
-  } else {
-    maxMult = 0;
-  }
-
-  let effectiveAt = arrivalMs;
-  if (clientAt != null) {
-    const graceFloor = arrivalMs - CASHOUT_GRACE_MS;
-    effectiveAt = Math.max(graceFloor, Math.min(clientAt, arrivalMs));
-  } else if (!stillFlying && lateOk) {
-    effectiveAt = crashAt - 1;
-  }
-  if (effectiveAt >= crashAt) effectiveAt = crashAt - 1;
-  if (effectiveAt < flyStart) effectiveAt = flyStart;
-
-  // ── Preferred: claimed mult from UI (what player saw — clock-independent) ──
-  // e.g. cash out at 1.20×, rocket crashes 1.24×, request lands after crash → still pay 1.20×
-  if (
-    claimedRaw != null &&
-    claimedRaw >= 1 &&
-    Number.isFinite(crashMult) &&
-    claimedRaw + 0.001 < crashMult &&
-    (stillFlying || lateOk)
-  ) {
-    const mult = roundMult(Math.min(claimedRaw, maxMult, crashMult - 0.01));
-    if (mult >= 1) {
-      const at = Math.min(flyStart + elapsedForMult(mult), crashAt - 1);
-      return {
-        ok: true,
-        lost: false,
-        mult,
-        crashMult,
-        phase: 'flying',
-        arrivalMs,
-        effectiveAt: at,
-        flyStart,
-        crashAt,
-        elapsedMs: at - flyStart,
-        clientCashoutAt: clientAt,
-        claimedMult: claimedRaw,
-        graceMs: CASHOUT_GRACE_MS,
-        graceApplied: !stillFlying,
-        mode: 'claimedMult',
-      };
-    }
-  }
-
-  // ── Fallback: curve at effective wall time ────────────────────────────────
-  let result = settlementFromArrival(timing, effectiveAt);
-  result = {
+  const result = settlementFromArrival(timing, arrivalMs);
+  return {
     ...result,
     arrivalMs,
-    effectiveAt,
-    clientCashoutAt: clientAt,
-    claimedMult: claimedRaw,
-    graceMs: CASHOUT_GRACE_MS,
-  };
-
-  if (result.ok && !result.lost) {
-    let mult = result.mult;
-    if (claimedRaw != null && claimedRaw > 0) {
-      mult = roundMult(Math.min(mult, claimedRaw, maxMult));
-    } else {
-      mult = roundMult(Math.min(mult, maxMult));
-    }
-    if (mult >= 1) {
-      return { ...result, mult, mode: 'arrival' };
-    }
-  }
-
-  // Truly too late (past grace) or no valid claim
-  return {
-    ok: true,
-    lost: true,
-    mult: 0,
-    crashMult,
-    phase: 'crashed',
-    arrivalMs,
-    effectiveAt,
-    flyStart,
-    crashAt,
-    clientCashoutAt: clientAt,
-    claimedMult: claimedRaw,
-    graceMs: CASHOUT_GRACE_MS,
-    mode: 'lost',
+    effectiveAt: arrivalMs,
+    graceMs: 0,
+    graceApplied: false,
+    mode: 'arrival',
   };
 }
 
@@ -419,6 +292,10 @@ export async function verifyRound({
     chainIndex != null;
 
   if (hasChainFields) {
+    if (chainIndex != null && (!Number.isSafeInteger(Number(chainIndex)) ||
+        Number(chainIndex) < 0 || Number(chainIndex) > 50_000)) {
+      return { ok: false, error: 'Invalid chain index', commitOk, crashOk, blockOk, chainOk: false };
+    }
     const checks = [];
     if (chainPrevSeed != null && String(chainPrevSeed).length >= 8) {
       const link = await sha256Hex(normalizeHex(serverSeed));
@@ -446,8 +323,8 @@ export async function verifyRound({
       crashMult: cappedCrash,
     };
     settlement = settlementFromArrival(timing, Number(cashoutAt));
-    if (expectedSettlementMult != null && settlement.ok && !settlement.lost) {
-      settlementOk =
+    if (expectedSettlementMult != null) {
+      settlementOk = settlement.ok && !settlement.lost &&
         Math.abs(settlement.mult - Number(expectedSettlementMult)) < 0.02;
     }
   }
